@@ -1,0 +1,74 @@
+services:
+  db:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.db
+    image: aec-postgres-age:16-1.6.0
+    container_name: aec-db
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_DB: aec
+      POSTGRES_USER: aec
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - D:/AECData/docker/pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aec -d aec"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    image: aec-intelligence-app:latest
+    container_name: aec-api
+    ports:
+      - "58000:8000"
+    environment:
+      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATA_ROOT: /data
+      AEC_EMBEDDING_URL: ""
+    volumes:
+      - D:/AECData:/data
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: aec-intelligence-app:latest
+    container_name: aec-worker-cad
+    command: python -m aec_intelligence.operational.cli worker --queue cad
+    environment:
+      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATA_ROOT: /data
+      AEC_EMBEDDING_URL: ""
+    volumes:
+      - D:/AECData:/data
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ocr-worker:
+    image: aec-intelligence-app:latest
+    container_name: aec-worker-ocr
+    command: python -m aec_intelligence.operational.cli worker --queue ocr
+    environment:
+      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATA_ROOT: /data
+    volumes:
+      - D:/AECData:/data
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - ocr

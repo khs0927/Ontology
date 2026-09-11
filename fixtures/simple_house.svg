@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="7000" viewBox="0 0 10000 7000">
+  <title>Simple House Reference Drawing</title>
+  <rect x="0" y="0" width="10000" height="7000" fill="none" stroke="black"/>
+  <polygon points="300,300 9700,300 9700,6700 300,6700" fill="none" stroke="blue"/>
+  <line x1="4500" y1="0" x2="5500" y2="0" stroke="red"/>
+  <circle cx="1500" cy="1500" r="150" fill="none" stroke="green"/>
+  <text x="500" y="3500">LIVING ROOM</text>
+</svg>

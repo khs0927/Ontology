@@ -1,0 +1,5 @@
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:metric:entity_count", "metric": "entity_count", "project_id": "AEC-2026-000004", "value": 149}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:metric:semantic_score", "metric": "semantic_score", "project_id": "AEC-2026-000004", "value": 0.8488}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:metric:freecad_step_edges", "metric": "freecad_step_edges", "project_id": "AEC-2026-000004", "value": 1055}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:metric:freecad_step_solids", "metric": "freecad_step_solids", "project_id": "AEC-2026-000004", "value": 0}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:metric:blender_geometry", "metric": "blender_geometry", "project_id": "AEC-2026-000004", "value": 149}

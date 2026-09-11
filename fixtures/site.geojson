@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "name": "simple_house_site",
+  "crs": {
+    "type": "name",
+    "properties": {"name": "EPSG:5179"}
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "building-1",
+      "properties": {"kind": "building", "name": "Simple House"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [10, 0], [10, 7], [0, 0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "parcel-1",
+      "properties": {"kind": "parcel", "name": "House Parcel"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-2, -2], [12, -2], [12, 9], [-2, -2]]]
+      }
+    }
+  ]
+}

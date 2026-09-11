@@ -1,0 +1,9 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix omg: <https://w3id.org/omg#> .
+@prefix fog: <https://w3id.org/fog#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+aec:Geometry rdfs:subClassOf omg:Geometry .
+aec:geometryRef rdfs:subPropertyOf omg:hasGeometry .
+aec:CADGeometry rdfs:subClassOf aec:Geometry .
+aec:CADGeometry fog:represents aec:CAIRObject .

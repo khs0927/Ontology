@@ -1,0 +1,20 @@
+[
+  {
+    "last_ingest": "2026-09-01T05:31:41Z",
+    "name": "Simple House",
+    "project_id": "AEC-2026-000001",
+    "status": "ACTIVE"
+  },
+  {
+    "last_ingest": "2026-09-01T05:31:44Z",
+    "name": "Simple House 003",
+    "project_id": "AEC-2026-000003",
+    "status": "ACTIVE"
+  },
+  {
+    "last_ingest": "2026-09-01T07:19:11Z",
+    "name": "ODA House 30 Pyeong",
+    "project_id": "AEC-2026-000004",
+    "status": "ACTIVE"
+  }
+]

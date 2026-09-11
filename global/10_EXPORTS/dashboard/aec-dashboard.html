@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AEC semantic repository status</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, sans-serif; background:#f5f7fa; color:#17202a; }
+body { margin:0; padding:32px; max-width:1440px; margin-inline:auto; }
+.toolbar { display:flex; justify-content:flex-end; gap:12px; margin-bottom:24px; }
+label { font-size:12px; color:#52606d; } select { padding:8px 28px 8px 10px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; }
+.kpis { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:28px; }
+.card { background:#fff; border:1px solid #d9e2ec; border-radius:10px; padding:16px; box-shadow:0 1px 2px #0000000d; }
+.label { color:#52606d; font-size:12px; } .value { font-size:28px; font-weight:650; margin-top:7px; }
+section { margin-top:28px; } h2 { font-size:18px; margin:0 0 12px; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.bars { display:grid; gap:10px; } .bar-row { display:grid; grid-template-columns:minmax(120px,1fr) 3fr 40px; gap:8px; align-items:center; font-size:13px; }
+.track { height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden; } .fill { height:100%; background:#2f6fed; }
+table { width:100%; border-collapse:collapse; font-size:13px; } th,td { text-align:left; padding:10px 8px; border-bottom:1px solid #e5e7eb; } th { color:#52606d; font-size:12px; } .numeric { text-align:right; }
+.status { font-weight:600; } .source { color:#52606d; font-size:12px; margin-top:20px; }
+@media(max-width:800px) { body { padding:16px; } .kpis,.grid { grid-template-columns:1fr 1fr; } .kpis .card:last-child { grid-column:span 2; } }
+@media(max-width:520px) { .kpis,.grid { grid-template-columns:1fr; } .kpis .card:last-child { grid-column:auto; } .bar-row { grid-template-columns:90px 1fr 32px; } }
+</style>
+</head>
+<body>
+<h1 style="position:absolute;left:-10000px">AEC semantic repository status</h1>
+<div class="toolbar"><label for="project">Project scope</label><select id="project"><option value="all">All projects</option></select></div>
+<div class="kpis" id="kpis"></div>
+<div class="grid"><section class="card"><h2>Object types</h2><div class="bars" id="types"></div></section>
+<section class="card"><h2>Projects</h2><table><thead><tr><th>Project</th><th>Status</th><th class="numeric">Objects</th><th class="numeric">Artifacts</th><th>Validation</th></tr></thead><tbody id="projects"></tbody></table></section></div>
+<div class="source" id="source"></div>
+<script>
+const data = {"schema_version":"0.1.0","generated_at":"2026-09-02T03:50:16Z","status":"SUCCESS","metrics":{"project_count":3,"artifact_count":229,"object_count":163,"validated_project_count":3,"average_classification_confidence":0.851717791411043},"object_type_counts":{"Annotation":14,"CADEntity":13,"Column":2,"Door":18,"Wall":100,"Window":16},"projects":[{"project_id":"AEC-2026-000001","name":"Simple House","status":"ACTIVE","object_count":7,"artifact_count":99,"validation_status":"SUCCESS","latest_iteration":null,"type_counts":{"Annotation":1,"Column":1,"Door":2,"Wall":2,"Window":1}},{"project_id":"AEC-2026-000003","name":"Simple House 003","status":"ACTIVE","object_count":7,"artifact_count":75,"validation_status":"SUCCESS","latest_iteration":null,"type_counts":{"Annotation":1,"Column":1,"Door":2,"Wall":2,"Window":1}},{"project_id":"AEC-2026-000004","name":"ODA House 30 Pyeong","status":"ACTIVE","object_count":149,"artifact_count":55,"validation_status":"SUCCESS","latest_iteration":"V001","type_counts":{"Annotation":12,"CADEntity":13,"Door":14,"Wall":96,"Window":14}}],"validation":{"status":"SUCCESS","project_id":null,"scores":{"project_count":3.0,"project_success_rate":1.0,"average_provenance_score":1.0},"checks":{"project_reports":[{"status":"SUCCESS","project_id":"AEC-2026-000001","scores":{"manifest_score":1.0,"cair_score":1.0,"provenance_score":1.0,"geometry_score":1.0,"derived_output_score":1.0},"checks":{"manifest_present":true,"cair_present":true,"cair_schema_version":"0.1.0","object_count":7,"relation_count":7,"global_object_ids":true,"confidence_bounded":true,"provenance_coverage":1.0,"portable_tables":true,"geometry_reference_coverage":1.0,"parse_object_count_match":true,"derived_outputs":{"ontology":true,"jsonld":true,"freecad_exchange":true,"blender_exchange":true,"qgis_exchange":true},"application_runtime_outputs":{"blender_scene":true,"blender_glb":true,"blender_visual_qa":true,"freecad_scene":true,"freecad_step":true}},"errors":[],"warnings":[]},{"status":"SUCCESS","project_id":"AEC-2026-000003","scores":{"manifest_score":1.0,"cair_score":1.0,"provenance_score":1.0,"geometry_score":1.0,"derived_output_score":1.0},"checks":{"manifest_present":true,"cair_present":true,"cair_schema_version":"0.1.0","object_count":7,"relation_count":7,"global_object_ids":true,"confidence_bounded":true,"provenance_coverage":1.0,"portable_tables":true,"geometry_reference_coverage":1.0,"parse_object_count_match":true,"derived_outputs":{"ontology":true,"jsonld":true,"freecad_exchange":true,"blender_exchange":true,"qgis_exchange":true},"application_runtime_outputs":{"blender_scene":false,"blender_glb":false,"blender_visual_qa":false,"freecad_scene":false,"freecad_step":false}},"errors":[],"warnings":[]},{"status":"SUCCESS","project_id":"AEC-2026-000004","scores":{"manifest_score":1.0,"cair_score":1.0,"provenance_score":1.0,"geometry_score":1.0,"derived_output_score":1.0},"checks":{"manifest_present":true,"cair_present":true,"cair_schema_version":"0.1.0","object_count":149,"relation_count":149,"global_object_ids":true,"confidence_bounded":true,"provenance_coverage":1.0,"portable_tables":true,"geometry_reference_coverage":1.0,"parse_object_count_match":true,"derived_outputs":{"ontology":true,"jsonld":true,"freecad_exchange":true,"blender_exchange":true,"qgis_exchange":true},"application_runtime_outputs":{"blender_scene":true,"blender_glb":true,"blender_visual_qa":true,"freecad_scene":true,"freecad_step":true}},"errors":[],"warnings":[]}],"project_count":3},"errors":[],"warnings":[]},"sources":["global/00_GLOBAL/global-project-registry.jsonl","global/00_GLOBAL/global-artifact-registry.jsonl","global/00_GLOBAL/global-object-registry.jsonl","global/08_VALIDATION/repository-validation.json","project 11_VALIDATION/cross-format/project-validation.json"]};
+const projectSelect = document.getElementById('project');
+for (const project of data.projects) { const option=document.createElement('option'); option.value=project.project_id; option.textContent=project.name + ' (' + project.project_id + ')'; projectSelect.appendChild(option); }
+function render() {
+  const selected=projectSelect.value;
+  const rows=selected==='all'?data.projects:data.projects.filter(row=>row.project_id===selected);
+  const metrics=selected==='all'?data.metrics:{project_count:rows.length, artifact_count:rows.reduce((sum,row)=>sum+row.artifact_count,0), object_count:rows.reduce((sum,row)=>sum+row.object_count,0), validated_project_count:rows.filter(row=>row.validation_status==='SUCCESS').length, average_classification_confidence:null};
+  document.getElementById('kpis').innerHTML=[['Projects',metrics.project_count],['Artifacts',metrics.artifact_count],['Objects',metrics.object_count],['Validated projects',metrics.validated_project_count],['Average classification confidence',metrics.average_classification_confidence===null?'—':(metrics.average_classification_confidence*100).toFixed(1)+'%']].map(([label,value])=>`<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join('');
+  const counts={}; for(const row of rows) for(const [type,count] of Object.entries(row.type_counts)) counts[type]=(counts[type]||0)+count; const max=Math.max(...Object.values(counts),1);
+  document.getElementById('types').innerHTML=Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([type,count])=>`<div class="bar-row"><span>${type}</span><span class="track"><span class="fill" style="width:${(count/max)*100}%"></span></span><span class="numeric">${count}</span></div>`).join('')||'<span>No reviewed objects</span>';
+  document.getElementById('projects').innerHTML=rows.map(row=>`<tr><td>${row.name}<br><small>${row.project_id}</small></td><td class="status">${row.status}</td><td class="numeric">${row.object_count}</td><td class="numeric">${row.artifact_count}</td><td>${row.validation_status}</td></tr>`).join('');
+}
+projectSelect.addEventListener('change',render); document.getElementById('source').textContent='Source-backed artifact. Generated '+data.generated_at+'. Sources: '+data.sources.join(', ')+'.'; render();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+aec:GISFeature rdfs:subClassOf geo:Feature .
+aec:GISGeometry rdfs:subClassOf geo:Geometry .
+aec:geometryRef rdfs:subPropertyOf geo:hasGeometry .
+aec:crs rdfs:subPropertyOf geo:coordinateReferenceSystem .

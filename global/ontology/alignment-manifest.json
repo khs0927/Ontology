@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "policy": "CAIR remains canonical; alignments are reviewable mappings, not source geometry storage",
+  "vocabularies": {
+    "BOT": "https://w3id.org/bot#",
+    "OMG": "https://w3id.org/omg#",
+    "FOG": "https://w3id.org/fog#",
+    "GeoSPARQL": "http://www.opengis.net/ont/geosparql#",
+    "PROV-O": "http://www.w3.org/ns/prov#",
+    "bSDD": "https://identifier.buildingsmart.org/uri/"
+  },
+  "files": [
+    "building/bot-alignment.ttl",
+    "classification/bsdd-alignment.ttl",
+    "core/aec-core.ttl",
+    "geometry/omg-fog-alignment.ttl",
+    "gis/geosparql-alignment.ttl",
+    "provenance/prov-o-alignment.ttl"
+  ]
+}

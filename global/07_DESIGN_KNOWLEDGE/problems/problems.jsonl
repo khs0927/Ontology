@@ -1,0 +1,3 @@
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:problem:0", "problem": "CAIR remains authoritative", "project_id": "AEC-2026-000004"}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:problem:1", "problem": "FreeCAD output is derived wireframe and not semantic BIM solid geometry", "project_id": "AEC-2026-000004"}
+{"iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:problem:2", "problem": "DWG source remains immutable", "project_id": "AEC-2026-000004"}

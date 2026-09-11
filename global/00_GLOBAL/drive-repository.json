@@ -1,0 +1,62 @@
+{
+  "root_folder_id": "1Ys2e6bhm6oSi01aBsEJ_kdmbu7fzhxxx",
+  "provider": "Google Drive",
+  "configured_at": "2026-09-01T06:09:30.754599+00:00",
+  "project_folders": {
+    "AEC-2026-000001": {
+      "folder_id": "1_CPLix_ZqK-hzF8WaQ2kwhPwKBkudWkv",
+      "title": "AEC-2026-000001_Simple-House",
+      "read_back": "2026-09-02T01:59:56Z",
+      "source_visibility_status": "not_shared",
+      "portable_sync": {
+        "tables_folder_id": "1UH_BRNqFUg6Hw6318mYp9xZ9OkSfe9bp",
+        "tables_file_count": 25,
+        "graph_file_count": 8,
+        "memory_file_count": 9,
+        "read_back": "2026-09-02T04:21:10Z"
+      }
+    },
+    "AEC-2026-000003": {
+      "folder_id": "1QImm_RS2E954Q8t5UjDMtjYau2XBtuYW",
+      "title": "AEC-2026-000003_Simple-House-003",
+      "file_count_read_back": 33,
+      "read_back": "2026-09-02T01:59:56Z",
+      "source_visibility_status": "not_shared",
+      "portable_sync": {
+        "tables_folder_id": "1gSLJqQ9Rz3PI4LEDgQ0t3GaeXovzLumP",
+        "tables_file_count": 25,
+        "graph_file_count": 8,
+        "memory_file_count": 9,
+        "read_back": "2026-09-02T04:21:10Z"
+      }
+    },
+    "AEC-2026-000004": {
+      "folder_id": "1fDxyjNeGqsBcZdimoKSH_4VdFjwbb2DZ",
+      "title": "AEC-2026-000004_ODA-House-30-Pyeong",
+      "file_count_read_back": 44,
+      "read_back": "2026-09-02T01:59:56Z",
+      "source_visibility_status": "not_shared",
+      "portable_sync": {
+        "tables_folder_id": "17cnFKJyElGFYj6L5gZp_roud5GkBT9Dg",
+        "tables_file_count": 25,
+        "graph_file_count": 8,
+        "memory_file_count": 9,
+        "read_back": "2026-09-02T04:21:10Z"
+      }
+    }
+  },
+  "global_portable_sync": {
+    "global_00_folder_id": "10ciwcP_s6V-knVHkwFmYp61qlxxtBFEq",
+    "global_00_item_count": 19,
+    "global_03_folder_id": "1OEdOmlTsx9tPF5Yl6YkVK5yFvjLgBk72",
+    "global_03_item_count": 5,
+    "global_07_folder_id": "1Z4YzzHKVyk6nonBUg8PeuoUUjifGQSMD",
+    "global_07_category_count": 9,
+    "global_08_item_count": 1,
+    "global_09_item_count": 15,
+    "dashboard_item_count": 2,
+    "read_back": "2026-09-02T04:21:10Z"
+  },
+  "last_read_back": "2026-09-02T04:21:10Z",
+  "sharing_policy": "preserve existing Drive sharing; no permission changes"
+}

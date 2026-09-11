@@ -1,0 +1,136 @@
+{
+  "status": "SUCCESS",
+  "project_id": null,
+  "scores": {
+    "project_count": 3.0,
+    "project_success_rate": 1.0,
+    "average_provenance_score": 1.0
+  },
+  "checks": {
+    "project_reports": [
+      {
+        "status": "SUCCESS",
+        "project_id": "AEC-2026-000001",
+        "scores": {
+          "manifest_score": 1.0,
+          "cair_score": 1.0,
+          "provenance_score": 1.0,
+          "geometry_score": 1.0,
+          "derived_output_score": 1.0
+        },
+        "checks": {
+          "manifest_present": true,
+          "cair_present": true,
+          "cair_schema_version": "0.1.0",
+          "object_count": 7,
+          "relation_count": 7,
+          "global_object_ids": true,
+          "confidence_bounded": true,
+          "provenance_coverage": 1.0,
+          "portable_tables": true,
+          "geometry_reference_coverage": 1.0,
+          "parse_object_count_match": true,
+          "derived_outputs": {
+            "ontology": true,
+            "jsonld": true,
+            "freecad_exchange": true,
+            "blender_exchange": true,
+            "qgis_exchange": true
+          },
+          "application_runtime_outputs": {
+            "blender_scene": true,
+            "blender_glb": true,
+            "blender_visual_qa": true,
+            "freecad_scene": true,
+            "freecad_step": true
+          }
+        },
+        "errors": [],
+        "warnings": []
+      },
+      {
+        "status": "SUCCESS",
+        "project_id": "AEC-2026-000003",
+        "scores": {
+          "manifest_score": 1.0,
+          "cair_score": 1.0,
+          "provenance_score": 1.0,
+          "geometry_score": 1.0,
+          "derived_output_score": 1.0
+        },
+        "checks": {
+          "manifest_present": true,
+          "cair_present": true,
+          "cair_schema_version": "0.1.0",
+          "object_count": 7,
+          "relation_count": 7,
+          "global_object_ids": true,
+          "confidence_bounded": true,
+          "provenance_coverage": 1.0,
+          "portable_tables": true,
+          "geometry_reference_coverage": 1.0,
+          "parse_object_count_match": true,
+          "derived_outputs": {
+            "ontology": true,
+            "jsonld": true,
+            "freecad_exchange": true,
+            "blender_exchange": true,
+            "qgis_exchange": true
+          },
+          "application_runtime_outputs": {
+            "blender_scene": false,
+            "blender_glb": false,
+            "blender_visual_qa": false,
+            "freecad_scene": false,
+            "freecad_step": false
+          }
+        },
+        "errors": [],
+        "warnings": []
+      },
+      {
+        "status": "SUCCESS",
+        "project_id": "AEC-2026-000004",
+        "scores": {
+          "manifest_score": 1.0,
+          "cair_score": 1.0,
+          "provenance_score": 1.0,
+          "geometry_score": 1.0,
+          "derived_output_score": 1.0
+        },
+        "checks": {
+          "manifest_present": true,
+          "cair_present": true,
+          "cair_schema_version": "0.1.0",
+          "object_count": 149,
+          "relation_count": 149,
+          "global_object_ids": true,
+          "confidence_bounded": true,
+          "provenance_coverage": 1.0,
+          "portable_tables": true,
+          "geometry_reference_coverage": 1.0,
+          "parse_object_count_match": true,
+          "derived_outputs": {
+            "ontology": true,
+            "jsonld": true,
+            "freecad_exchange": true,
+            "blender_exchange": true,
+            "qgis_exchange": true
+          },
+          "application_runtime_outputs": {
+            "blender_scene": true,
+            "blender_glb": true,
+            "blender_visual_qa": true,
+            "freecad_scene": true,
+            "freecad_step": true
+          }
+        },
+        "errors": [],
+        "warnings": []
+      }
+    ],
+    "project_count": 3
+  },
+  "errors": [],
+  "warnings": []
+}

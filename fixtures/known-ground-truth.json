@@ -1,0 +1,67 @@
+{
+  "fixture_id": "simple-house-v0.1",
+  "sources": {
+    "dxf": "simple_house.dxf",
+    "ifc": "simple_house.ifc",
+    "ifc_geometry": "simple_house_geometry.ifc",
+    "gis": "site.geojson",
+    "dwg": "simple_house.dwg",
+    "dem": "simple_terrain.dem"
+  },
+  "dxf": {
+    "entity_count": 7,
+    "layer_count": 6,
+    "block_count": 2,
+    "wall_count": 2,
+    "door_count": 2,
+    "text_count": 1,
+    "units": "millimeters"
+  },
+  "ifc": {
+    "schema": "IFC4",
+    "required_types": ["IfcProject", "IfcSite", "IfcBuilding", "IfcBuildingStorey", "IfcSpace", "IfcWall", "IfcDoor", "IfcWindow"],
+    "aggregate_relation_count": 4,
+    "contained_element_count": 3,
+    "geometry_context_count": 0,
+    "product_representation_count": 0,
+    "shape_representation_count": 0
+  },
+  "ifc_geometry": {
+    "schema": "IFC4",
+    "geometry_context_count": 2,
+    "product_representation_count": 1,
+    "shape_representation_count": 1,
+    "extracted_geometry_count": 1,
+    "mesh_vertex_count": 8,
+    "mesh_face_count": 12,
+    "units": "millimeters"
+  },
+  "gis": {
+    "crs": "EPSG:5179",
+    "feature_count": 2,
+    "semantic_types": ["Building", "Parcel"]
+  },
+  "dem": {
+    "format": "ESRI ASCII Grid",
+    "width": 3,
+    "height": 2,
+    "bounds": [100.0, 200.0, 130.0, 220.0],
+    "valid_value_count": 5,
+    "min": 1.0,
+    "max": 5.0,
+    "crs": null
+  },
+  "dwg": {
+    "status": "VALIDATED_WITH_ODA",
+    "sha256": "F343AB43AA681D0C8518473165290A99BC000E08413C66BFF170F0FFBB586708",
+    "converter": "ODA File Converter 27.1.0",
+    "converted_entity_count": 149,
+    "converted_layer_count": 8,
+    "converted_block_count": 2,
+    "converted_text_count": 12,
+    "converted_units": "unitless",
+    "unsupported_entity_count": 0,
+    "source_is_immutable": true,
+    "notes": "The source is a real DWG fixture. ODA runs in ASCII staging when the workspace path contains non-ASCII characters; the source is never overwritten."
+  }
+}

@@ -1,0 +1,7 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix bsdd: <https://identifier.buildingsmart.org/uri/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+aec:Classification a rdfs:Class .
+aec:bsddClassUri a rdfs:Property .
+aec:bsddClassUri rdfs:seeAlso bsdd: .

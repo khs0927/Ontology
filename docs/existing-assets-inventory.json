@@ -1,0 +1,26 @@
+{
+  "inspected_at": "2026-09-01",
+  "inspection_mode": "read-only",
+  "assets": [
+    {
+      "path": "autocad_data.db",
+      "sha256": "7d03b91eb966f24cd3facb469ac4a2f1acef1e2de5791d4547010e950fb69f68",
+      "format": "SQLite",
+      "tables": {
+        "cad_elements": 0,
+        "text_patterns": 0,
+        "operation_history": 0
+      },
+      "integration_note": "AEC-adjacent CAD source; preserve as a raw asset and map handles/layers into CAIR through a future adapter."
+    },
+    {
+      "path": "bld_ledger_storage.db",
+      "sha256": "5803c64d15a320dae45a20b76f2edf6dd5b3d47ad1bd1fed5df1d31763df47f7",
+      "format": "SQLite",
+      "tables": {
+        "bld_ledger": 0
+      },
+      "integration_note": "AEC parcel/building-ledger source; preserve PNU, endpoint, timestamp, and JSON payload provenance in a future GIS/property adapter."
+    }
+  ]
+}

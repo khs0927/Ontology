@@ -1,0 +1,91 @@
+{
+  "schema_version": "0.1.0",
+  "project_count": 3,
+  "projects": [
+    {
+      "project_id": "AEC-2026-000001",
+      "name": "Simple House",
+      "object_count": 7,
+      "major_elements": [
+        {
+          "type": "Annotation",
+          "count": 1
+        },
+        {
+          "type": "Column",
+          "count": 1
+        },
+        {
+          "type": "Door",
+          "count": 2
+        },
+        {
+          "type": "Wall",
+          "count": 2
+        },
+        {
+          "type": "Window",
+          "count": 1
+        }
+      ],
+      "latest_iteration": null
+    },
+    {
+      "project_id": "AEC-2026-000003",
+      "name": "Simple House 003",
+      "object_count": 7,
+      "major_elements": [
+        {
+          "type": "Annotation",
+          "count": 1
+        },
+        {
+          "type": "Column",
+          "count": 1
+        },
+        {
+          "type": "Door",
+          "count": 2
+        },
+        {
+          "type": "Wall",
+          "count": 2
+        },
+        {
+          "type": "Window",
+          "count": 1
+        }
+      ],
+      "latest_iteration": null
+    },
+    {
+      "project_id": "AEC-2026-000004",
+      "name": "ODA House 30 Pyeong",
+      "object_count": 149,
+      "major_elements": [
+        {
+          "type": "Annotation",
+          "count": 12
+        },
+        {
+          "type": "CADEntity",
+          "count": 13
+        },
+        {
+          "type": "Door",
+          "count": 14
+        },
+        {
+          "type": "Wall",
+          "count": 96
+        },
+        {
+          "type": "Window",
+          "count": 14
+        }
+      ],
+      "latest_iteration": "V001"
+    }
+  ],
+  "retrieval_source": "CAIR/global registries; Drive is artifact persistence, not semantic search"
+}

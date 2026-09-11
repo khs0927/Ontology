@@ -1,0 +1,9 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+aec:CAIRObject a rdfs:Class .
+aec:Project a rdfs:Class ; rdfs:subClassOf aec:CAIRObject .
+aec:geometryRef a rdfs:Property .
+aec:classificationConfidence a rdfs:Property .
+aec:sourceFile a rdfs:Property .
+aec:derivedFrom a rdfs:Property .

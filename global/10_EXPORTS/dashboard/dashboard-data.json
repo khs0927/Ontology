@@ -1,0 +1,213 @@
+{
+  "schema_version": "0.1.0",
+  "generated_at": "2026-09-02T03:50:16Z",
+  "status": "SUCCESS",
+  "metrics": {
+    "project_count": 3,
+    "artifact_count": 229,
+    "object_count": 163,
+    "validated_project_count": 3,
+    "average_classification_confidence": 0.851717791411043
+  },
+  "object_type_counts": {
+    "Annotation": 14,
+    "CADEntity": 13,
+    "Column": 2,
+    "Door": 18,
+    "Wall": 100,
+    "Window": 16
+  },
+  "projects": [
+    {
+      "project_id": "AEC-2026-000001",
+      "name": "Simple House",
+      "status": "ACTIVE",
+      "object_count": 7,
+      "artifact_count": 99,
+      "validation_status": "SUCCESS",
+      "latest_iteration": null,
+      "type_counts": {
+        "Annotation": 1,
+        "Column": 1,
+        "Door": 2,
+        "Wall": 2,
+        "Window": 1
+      }
+    },
+    {
+      "project_id": "AEC-2026-000003",
+      "name": "Simple House 003",
+      "status": "ACTIVE",
+      "object_count": 7,
+      "artifact_count": 75,
+      "validation_status": "SUCCESS",
+      "latest_iteration": null,
+      "type_counts": {
+        "Annotation": 1,
+        "Column": 1,
+        "Door": 2,
+        "Wall": 2,
+        "Window": 1
+      }
+    },
+    {
+      "project_id": "AEC-2026-000004",
+      "name": "ODA House 30 Pyeong",
+      "status": "ACTIVE",
+      "object_count": 149,
+      "artifact_count": 55,
+      "validation_status": "SUCCESS",
+      "latest_iteration": "V001",
+      "type_counts": {
+        "Annotation": 12,
+        "CADEntity": 13,
+        "Door": 14,
+        "Wall": 96,
+        "Window": 14
+      }
+    }
+  ],
+  "validation": {
+    "status": "SUCCESS",
+    "project_id": null,
+    "scores": {
+      "project_count": 3.0,
+      "project_success_rate": 1.0,
+      "average_provenance_score": 1.0
+    },
+    "checks": {
+      "project_reports": [
+        {
+          "status": "SUCCESS",
+          "project_id": "AEC-2026-000001",
+          "scores": {
+            "manifest_score": 1.0,
+            "cair_score": 1.0,
+            "provenance_score": 1.0,
+            "geometry_score": 1.0,
+            "derived_output_score": 1.0
+          },
+          "checks": {
+            "manifest_present": true,
+            "cair_present": true,
+            "cair_schema_version": "0.1.0",
+            "object_count": 7,
+            "relation_count": 7,
+            "global_object_ids": true,
+            "confidence_bounded": true,
+            "provenance_coverage": 1.0,
+            "portable_tables": true,
+            "geometry_reference_coverage": 1.0,
+            "parse_object_count_match": true,
+            "derived_outputs": {
+              "ontology": true,
+              "jsonld": true,
+              "freecad_exchange": true,
+              "blender_exchange": true,
+              "qgis_exchange": true
+            },
+            "application_runtime_outputs": {
+              "blender_scene": true,
+              "blender_glb": true,
+              "blender_visual_qa": true,
+              "freecad_scene": true,
+              "freecad_step": true
+            }
+          },
+          "errors": [],
+          "warnings": []
+        },
+        {
+          "status": "SUCCESS",
+          "project_id": "AEC-2026-000003",
+          "scores": {
+            "manifest_score": 1.0,
+            "cair_score": 1.0,
+            "provenance_score": 1.0,
+            "geometry_score": 1.0,
+            "derived_output_score": 1.0
+          },
+          "checks": {
+            "manifest_present": true,
+            "cair_present": true,
+            "cair_schema_version": "0.1.0",
+            "object_count": 7,
+            "relation_count": 7,
+            "global_object_ids": true,
+            "confidence_bounded": true,
+            "provenance_coverage": 1.0,
+            "portable_tables": true,
+            "geometry_reference_coverage": 1.0,
+            "parse_object_count_match": true,
+            "derived_outputs": {
+              "ontology": true,
+              "jsonld": true,
+              "freecad_exchange": true,
+              "blender_exchange": true,
+              "qgis_exchange": true
+            },
+            "application_runtime_outputs": {
+              "blender_scene": false,
+              "blender_glb": false,
+              "blender_visual_qa": false,
+              "freecad_scene": false,
+              "freecad_step": false
+            }
+          },
+          "errors": [],
+          "warnings": []
+        },
+        {
+          "status": "SUCCESS",
+          "project_id": "AEC-2026-000004",
+          "scores": {
+            "manifest_score": 1.0,
+            "cair_score": 1.0,
+            "provenance_score": 1.0,
+            "geometry_score": 1.0,
+            "derived_output_score": 1.0
+          },
+          "checks": {
+            "manifest_present": true,
+            "cair_present": true,
+            "cair_schema_version": "0.1.0",
+            "object_count": 149,
+            "relation_count": 149,
+            "global_object_ids": true,
+            "confidence_bounded": true,
+            "provenance_coverage": 1.0,
+            "portable_tables": true,
+            "geometry_reference_coverage": 1.0,
+            "parse_object_count_match": true,
+            "derived_outputs": {
+              "ontology": true,
+              "jsonld": true,
+              "freecad_exchange": true,
+              "blender_exchange": true,
+              "qgis_exchange": true
+            },
+            "application_runtime_outputs": {
+              "blender_scene": true,
+              "blender_glb": true,
+              "blender_visual_qa": true,
+              "freecad_scene": true,
+              "freecad_step": true
+            }
+          },
+          "errors": [],
+          "warnings": []
+        }
+      ],
+      "project_count": 3
+    },
+    "errors": [],
+    "warnings": []
+  },
+  "sources": [
+    "global/00_GLOBAL/global-project-registry.jsonl",
+    "global/00_GLOBAL/global-artifact-registry.jsonl",
+    "global/00_GLOBAL/global-object-registry.jsonl",
+    "global/08_VALIDATION/repository-validation.json",
+    "project 11_VALIDATION/cross-format/project-validation.json"
+  ]
+}

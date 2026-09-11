@@ -1,0 +1,12 @@
+{
+  "schema_version": "0.1.0",
+  "ontology_version": "0.1.0",
+  "total_projects": 3,
+  "total_objects": 163,
+  "total_artifacts": 229,
+  "latest_global_snapshot": null,
+  "project_registry": "global/00_GLOBAL/global-project-registry.jsonl",
+  "last_ingest": "2026-09-01T07:19:11Z",
+  "last_sync": null,
+  "latest_ingest_status": "SUCCESS"
+}

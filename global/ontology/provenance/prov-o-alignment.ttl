@@ -1,0 +1,7 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+aec:Provenance rdfs:subClassOf prov:Entity .
+aec:derivedFrom rdfs:subPropertyOf prov:wasDerivedFrom .
+aec:sourceFile rdfs:subPropertyOf prov:value .

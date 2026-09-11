@@ -1,0 +1,4 @@
+{"approved": true, "iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:strategy:0", "project_id": "AEC-2026-000004", "strategy": "ODA 27.1.0 converted authoritative DWG to DXF"}
+{"approved": true, "iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:strategy:1", "project_id": "AEC-2026-000004", "strategy": "149 DXF entities normalized into CAIR"}
+{"approved": true, "iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:strategy:2", "project_id": "AEC-2026-000004", "strategy": "FreeCAD FCStd and STEP wireframe review exported"}
+{"approved": true, "iteration_id": "V001", "knowledge_id": "AEC-2026-000004:V001:strategy:3", "project_id": "AEC-2026-000004", "strategy": "Blender BLEND, GLB, and visual QA preview exported"}

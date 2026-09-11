@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/aec/schema/cair/tables/0.1.0",
+  "title": "Portable CAIR table manifest",
+  "type": "object",
+  "required": ["schema_version", "format", "canonical_format", "tables"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "format": {"enum": ["JSONL", "JSONL+PARQUET"]},
+    "canonical_format": {"const": "JSONL"},
+    "directory": {"type": "string"},
+    "tables": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["columns", "row_count", "files"],
+        "properties": {
+          "columns": {"type": "array", "items": {"type": "string"}},
+          "row_count": {"type": "integer", "minimum": 0},
+          "files": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  }
+}

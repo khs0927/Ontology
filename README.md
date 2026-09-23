@@ -77,6 +77,14 @@ runtime from remote files. No client is assumed by default.
 
 Portable tables always include JSONL. If `pyarrow` is installed, Parquet is emitted as a derived acceleration format and the table manifest records both formats. Project graphs also emit CSV/GraphML and optional Parquet companions. Runtime indexes remain rebuildable from canonical JSON/JSONL.
 
+## Operational Infrastructure & Database Streaming Backup
+
+For deployments using the `docker-compose.yml` stack, the `aec-db` service runs PostgreSQL 16 with the Apache AGE graph database extension. To protect against data loss without consuming constrained host disk space, Zero-Disk streaming backup and restore scripts are provided:
+
+- `scripts/ops/backup_db.sh`: Streams `pg_dump -F c -Z 6` directly to Google Drive (`gdrive:AEC-INTELLIGENCE/08_BACKUPS/db`) via `rclone rcat` and enforces a 30-day retention policy.
+- `scripts/ops/restore_db.sh`: Restores directly from Google Drive into `aec-db` via `rclone cat | docker exec -i aec-db pg_restore ...` with safety confirmation and latest-backup discovery.
+- Detailed operational guide and disaster recovery runbook: [`docs/database-backup-restore.md`](docs/database-backup-restore.md).
+
 ## Current limitations
 
 - ODA DWG conversion is implemented through the safe adapter; ODA File Converter 27.1.0 was explicitly configured on this host and converted the supplied DWG successfully. Windows paths containing non-ASCII workspace names are handled through ASCII staging, while unconfigured hosts still receive an explicit failure report rather than a silent fallback.

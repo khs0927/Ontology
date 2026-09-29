@@ -1,0 +1,66 @@
+{
+  "review_date": "2026-09-29",
+  "note": "Research references, not dependency pins or installed integrations. See FRAMEWORK.ko.md for adoption decisions.",
+  "repositories": [
+    {
+      "repository": "mozman/ezdxf",
+      "url": "https://github.com/mozman/ezdxf"
+    },
+    {
+      "repository": "DomCR/ACadSharp",
+      "url": "https://github.com/DomCR/ACadSharp"
+    },
+    {
+      "repository": "docling-project/docling",
+      "url": "https://github.com/docling-project/docling"
+    },
+    {
+      "repository": "PaddlePaddle/PaddleOCR",
+      "url": "https://github.com/PaddlePaddle/PaddleOCR"
+    },
+    {
+      "repository": "shapely/shapely",
+      "url": "https://github.com/shapely/shapely"
+    },
+    {
+      "repository": "IfcOpenShell/IfcOpenShell",
+      "url": "https://github.com/IfcOpenShell/IfcOpenShell"
+    },
+    {
+      "repository": "huggingface/sentence-transformers",
+      "url": "https://github.com/huggingface/sentence-transformers"
+    },
+    {
+      "repository": "illuin-tech/colpali",
+      "url": "https://github.com/illuin-tech/colpali"
+    },
+    {
+      "repository": "pgvector/pgvector",
+      "url": "https://github.com/pgvector/pgvector"
+    },
+    {
+      "repository": "qdrant/qdrant",
+      "url": "https://github.com/qdrant/qdrant"
+    },
+    {
+      "repository": "infiniflow/ragflow",
+      "url": "https://github.com/infiniflow/ragflow"
+    },
+    {
+      "repository": "HKUDS/LightRAG",
+      "url": "https://github.com/HKUDS/LightRAG"
+    },
+    {
+      "repository": "HKUDS/RAG-Anything",
+      "url": "https://github.com/HKUDS/RAG-Anything"
+    },
+    {
+      "repository": "rclone/rclone",
+      "url": "https://github.com/rclone/rclone"
+    },
+    {
+      "repository": "LokmenoWer/best-cad-mcp",
+      "url": "https://github.com/LokmenoWer/best-cad-mcp"
+    }
+  ]
+}

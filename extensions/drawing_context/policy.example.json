@@ -1,0 +1,42 @@
+{
+  "schema": "drawing-context-policy/1",
+  "execution": {
+    "cad_repository": "khs0927/power-cad-mcp",
+    "cad_version": "2027",
+    "primary": "csharp-net10-inprocess",
+    "native_cpp": "objectarx2027-after-benchmark",
+    "com": "fallback-only",
+    "per_entity_mcp_ingestion": false,
+    "auto_edit": false
+  },
+  "storage": {
+    "canonical_owner": "existing-ontology",
+    "overwrite_canonical": false,
+    "drive": "originals-immutable-artifacts-logical-backups",
+    "live_db_on_drive": false,
+    "default_search_projection": "postgresql-pgvector",
+    "qdrant": "optional-after-visual-retrieval-benchmark"
+  },
+  "ragflow": {
+    "enabled": false,
+    "role": "derived-search-projection",
+    "release_image_digest": null,
+    "requires_compute_inventory": true,
+    "requires_revision_deletion_acl_tests": true
+  },
+  "ingestion": {
+    "native_processes_initial": 1,
+    "llm_every_entity": false,
+    "skip_unchanged": true,
+    "capture_hash_required": true,
+    "incremental_drive_changes": true,
+    "unsupported_format_policy": "quarantine-not-success"
+  },
+  "models": {
+    "paid_remote_api_enabled": false,
+    "text_candidates": ["BAAI/bge-m3", "Qwen/Qwen3-Embedding-0.6B"],
+    "silent_model_fallback": false,
+    "model_revision_required": true
+  },
+  "note": "Design policy; this reference package does not launch these services."
+}

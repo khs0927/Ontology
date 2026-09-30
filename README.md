@@ -85,6 +85,22 @@ For deployments using the `docker-compose.yml` stack, the `aec-db` service runs 
 - `scripts/ops/restore_db.sh`: Restores directly from Google Drive into `aec-db` via `rclone cat | docker exec -i aec-db pg_restore ...` with safety confirmation and latest-backup discovery.
 - Detailed operational guide and disaster recovery runbook: [`docs/database-backup-restore.md`](docs/database-backup-restore.md).
 
+
+## Opt-in Jev + Graph Intelligence Fabric
+
+The repository now includes an isolated upgrade framework under
+[`extensions/intelligence_fabric/`](extensions/intelligence_fabric/README.md).
+
+It keeps CAIR and canonical JSON/JSONL authoritative while adding:
+
+- **Jevgrep context selection** as an external CLI. Private-source searches are blocked until source egress is explicitly approved.
+- **Apache AGE** as the local-first property-graph baseline.
+- **PyOxigraph** for RDF/SPARQL semantic indexing.
+- **HydraDB** as an optional external object-store/distributed graph accelerator. HydraDB code is not vendored; integration uses a rebuildable OpenCypher export and HTTP service boundary.
+- Capability-driven graph backend planning and tests that verify the accelerator layer cannot mutate canonical `global/` data.
+
+See [`FRAMEWORK.ko.md`](extensions/intelligence_fabric/FRAMEWORK.ko.md) for the Korean architecture and staged rollout.
+
 ## Current limitations
 
 - ODA DWG conversion is implemented through the safe adapter; ODA File Converter 27.1.0 was explicitly configured on this host and converted the supplied DWG successfully. Windows paths containing non-ASCII workspace names are handled through ASCII staging, while unconfigured hosts still receive an explicit failure report rather than a silent fallback.

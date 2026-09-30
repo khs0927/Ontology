@@ -1,0 +1,46 @@
+name: Ontology intelligence safety
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches:
+      - master
+      - "feat/mcp-jev-graph-readonly-*"
+
+permissions:
+  contents: read
+
+jobs:
+  intelligence-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Compile Python sources
+        run: python -m compileall -q src extensions
+
+      - name: Test MCP intelligence bridge
+        run: python -m pytest -q tests/test_intelligence_bridge.py
+
+      - name: Test intelligence extension
+        env:
+          PYTHONPATH: extensions/intelligence_fabric
+        run: python -m pytest -q extensions/intelligence_fabric/tests/test_intelligence_fabric.py
+
+      - name: Test drawing-context safety contracts
+        env:
+          PYTHONPATH: extensions/drawing_context
+        run: python -m pytest -q extensions/drawing_context/tests/test_fabric.py

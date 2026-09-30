@@ -10,7 +10,7 @@ import unittest
 from context_fabric.adapters import adapt_snapshot, ragflow_projection
 from context_fabric.catalog import Catalog
 from context_fabric.contracts import SourceRevision, EmbeddingSpace, file_hash, verify_live_candidate
-from context_fabric.planning import Capabilities, plan_ingestion, reciprocal_rank_fusion
+from context_fabric.planning import Capabilities, plan_ingestion, reciprocal_rank_fusion, typed_candidate_space, resolve_typed_choice
 
 
 def source(**kwargs):
@@ -130,6 +130,24 @@ class FabricTests(unittest.TestCase):
         self.assertEqual(result[0]["id"], "a")
         self.assertEqual(len(result), 2)
         self.assertAlmostEqual(result[0]["score"], 2 / 62)
+
+    def test_typed_choice_only_allows_filtered_numbered_candidates(self):
+        space = typed_candidate_space(
+            [{"id": "stale", "score": 1.0}, {"id": "door-1", "score": 0.9}, {"id": "wall-1", "score": 0.8}],
+            {"door-1", "wall-1"},
+        )
+        self.assertEqual([row["id"] for row in space["options"]], ["door-1", "wall-1"])
+        selected = resolve_typed_choice(space, 1)
+        self.assertEqual(selected["selected_id"], "door-1")
+        self.assertFalse(selected["may_execute_mutation"])
+        self.assertTrue(selected["requires_live_verification"])
+
+    def test_typed_choice_rejects_generated_ids_and_out_of_range_options(self):
+        space = typed_candidate_space(["door-1"], {"door-1"})
+        with self.assertRaises(ValueError):
+            resolve_typed_choice(space, "door-1")
+        with self.assertRaises(ValueError):
+            resolve_typed_choice(space, 2)
 
     def test_ragflow_export_retains_mapping(self):
         row = ragflow_projection(self.bundle["records"])[0]

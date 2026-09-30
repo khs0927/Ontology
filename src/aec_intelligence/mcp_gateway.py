@@ -39,6 +39,7 @@ from .repository import RepositoryLayout
 from .storage import GoogleDriveArtifactStore, LocalArtifactStore
 from .validation_engine import validate_project, validate_repository, write_validation_report
 from .iterations import IterationManager
+from .intelligence_bridge import export_hydradb_projection, graph_backend_plan, inspect_code_context, preview_hydradb_projection
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,10 @@ class MCPGateway:
             "aec.audit": self._audit,
             "aec.ingest_dxf": self._ingest_dxf,
             "aec.query_plan": self._query_plan,
+            "aec.context_inspect_code": self._context_inspect_code,
+            "aec.graph_backend_plan": self._graph_backend_plan,
+            "aec.graph_hydradb_preview": self._graph_hydradb_preview,
+            "aec.graph_hydradb_export": self._graph_hydradb_export,
             "aec.rebuild_runtime": self._rebuild_runtime,
             "aec.get_object": self._get_object,
             "aec.validate_project": self._validate_project,
@@ -729,6 +734,20 @@ class MCPGateway:
             return {"status": "NOT_FOUND", "path": str(path)}
         return {"status": "SUCCESS", "project_id": project_id, "path": str(path)}
 
+    def _context_inspect_code(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return inspect_code_context(self.repository_root, arguments)
+
+    def _graph_backend_plan(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return graph_backend_plan(self.repository_root, arguments)
+
+    def _graph_hydradb_preview(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return preview_hydradb_projection(self.repository_root, arguments)
+
+    def _graph_hydradb_export(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if arguments:
+            raise ValueError("graph_hydradb_export accepts no arguments; output is fixed under runtime/hydradb")
+        return export_hydradb_projection(self.repository_root)
+
     def _query_plan(self, arguments: dict[str, Any]) -> dict[str, Any]:
         question = str(arguments["question"])
         return HybridQueryRouter().plan(question).__dict__
@@ -859,6 +878,10 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.audit", "Audit a repository against the Global AEC framework guardrails", {"type": "object", "properties": {}, "additionalProperties": False}),
     MCPToolDefinition("aec.ingest_dxf", "Ingest a DXF source into a project CAIR snapshot", {"type": "object", "required": ["source", "project_id"], "properties": {"source": {"type": "string"}, "project_id": {"type": "string"}, "name": {"type": ["string", "null"]}, "force": {"type": "boolean"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.query_plan", "Choose the CAIR, graph, geometry, or global-memory query route", {"type": "object", "required": ["question"], "properties": {"question": {"type": "string"}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.context_inspect_code", "Use Jevgrep as a read-only code-context selector; external source egress is denied unless explicitly approved", {"type": "object", "required": ["question"], "properties": {"question": {"type": "string"}, "root": {"type": ["string", "null"]}, "excludes": {"type": "array", "items": {"type": "string"}}, "command_prefix": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "allow_source_egress": {"type": "boolean"}, "timeout": {"type": "number", "minimum": 1, "maximum": 300}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.graph_backend_plan", "Choose the graph accelerator by required capability while keeping CAIR canonical", {"type": "object", "properties": {"local_only": {"type": "boolean"}, "requires_sparql": {"type": "boolean"}, "object_store_durability": {"type": "boolean"}, "distributed_compute": {"type": "boolean"}, "neo4j_protocol": {"type": "boolean"}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.graph_hydradb_preview", "Render a HydraDB/OpenCypher projection in memory without writing canonical or runtime files", {"type": "object", "properties": {"max_statements": {"type": "integer", "minimum": 0, "maximum": 200}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.graph_hydradb_export", "Write a rebuildable HydraDB/OpenCypher seed only under runtime/hydradb", {"type": "object", "properties": {}, "additionalProperties": False}),
     MCPToolDefinition("aec.rebuild_runtime", "Rebuild a disposable runtime registry from canonical global indexes", {"type": "object", "properties": {"target": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.get_object", "Retrieve one object from the global CAIR object index", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.validate_project", "Run integrated cross-format and artifact validation for one project", {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}, "additionalProperties": False}),

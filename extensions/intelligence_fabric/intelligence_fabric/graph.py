@@ -40,14 +40,14 @@ def _cypher_literal(value: Any) -> str:
 
 def _runtime_target(repository_root: str | Path, target: str | Path | None) -> Path:
     root = Path(repository_root).resolve()
-    destination = (root / "runtime" / "hydradb" / "seed.cypher") if target is None else Path(target).resolve()
-    global_root = (root / "global").resolve()
+    runtime_root = (root / "runtime" / "hydradb").resolve()
+    destination = (runtime_root / "seed.cypher") if target is None else Path(target).resolve()
     try:
-        destination.relative_to(global_root)
-    except ValueError:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        return destination
-    raise ValueError("graph acceleration output must not be written under canonical global/")
+        destination.relative_to(runtime_root)
+    except ValueError as exc:
+        raise ValueError("HydraDB acceleration output must remain under runtime/hydradb/") from exc
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination
 
 
 @dataclass(frozen=True)
@@ -62,13 +62,8 @@ class GraphExportReport:
         return asdict(self)
 
 
-def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = None) -> GraphExportReport:
-    """Create conservative OpenCypher suitable for HydraDB's documented subset.
-
-    The export intentionally avoids Neo4j-only constraints/procedures. Relations
-    use a stable AEC_RELATION type and keep the ontology predicate as a property
-    so predicate strings never become executable Cypher identifiers.
-    """
+def render_hydradb_seed(repository_root: str | Path) -> dict[str, Any]:
+    """Render conservative OpenCypher in memory without touching the filesystem."""
     root = Path(repository_root).resolve()
     global_root = root / "global" / "00_GLOBAL"
     projects = _jsonl(global_root / "global-project-registry.jsonl")
@@ -79,7 +74,6 @@ def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = 
         for row in _jsonl(global_root / "global-provenance.jsonl")
         if row.get("object_id")
     }
-    destination = _runtime_target(root, target)
     lines = [
         "// Generated from canonical CAIR/global JSONL; rebuildable runtime export.",
         "// HydraDB integration boundary: no AGPL source is vendored into this repository.",
@@ -141,19 +135,25 @@ def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = 
             )
         )
         relation_count += 1
-    destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return GraphExportReport(
-        "SUCCESS",
-        "HydraDB",
-        str(destination),
-        {
+    return {
+        "statements": lines,
+        "counts": {
             "projects": project_count,
             "objects": object_count,
             "relations": relation_count,
             "containment_edges": containment_count,
             "provenance": len(provenance),
         },
-    )
+    }
+
+
+def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = None) -> GraphExportReport:
+    """Write a rebuildable HydraDB seed after rendering it in memory."""
+    root = Path(repository_root).resolve()
+    preview = render_hydradb_seed(root)
+    destination = _runtime_target(root, target)
+    destination.write_text("\n".join(preview["statements"]) + "\n", encoding="utf-8")
+    return GraphExportReport("SUCCESS", "HydraDB", str(destination), preview["counts"])
 
 
 @dataclass(frozen=True)

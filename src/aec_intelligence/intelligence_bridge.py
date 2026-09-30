@@ -61,6 +61,8 @@ def inspect_code_context(repository_root: str | Path, arguments: dict[str, Any])
     question = str(arguments["question"])
     root = _scoped_root(repository_root, arguments.get("root"))
     command_prefix = tuple(arguments.get("command_prefix") or ["jg"])
+    if command_prefix not in {("jg",), ("wsl", "jg")}:
+        raise ValueError("command_prefix must be [\\"jg\\"] or [\\"wsl\\", \\"jg\\"]")
     excludes = tuple(arguments.get("excludes") or [
         ".git/",
         "runtime/",

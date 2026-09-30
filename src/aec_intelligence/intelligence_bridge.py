@@ -8,12 +8,10 @@ current repository checkout and enforces repository/runtime boundaries.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 from pathlib import Path
 import sys
 from typing import Any
-
-
-_EXTENSION_ALIAS = "_aec_ontology_intelligence_fabric"
 
 
 def _load_extension(repository_root: str | Path):
@@ -23,19 +21,20 @@ def _load_extension(repository_root: str | Path):
     if not init_file.is_file():
         raise FileNotFoundError(f"intelligence_fabric extension not found: {init_file}")
 
-    cached = sys.modules.get(_EXTENSION_ALIAS)
+    alias = "_aec_ontology_intelligence_fabric_" + hashlib.sha256(str(package_dir).encode("utf-8")).hexdigest()[:12]
+    cached = sys.modules.get(alias)
     if cached is not None:
         return cached
 
     spec = importlib.util.spec_from_file_location(
-        _EXTENSION_ALIAS,
+        alias,
         init_file,
         submodule_search_locations=[str(package_dir)],
     )
     if spec is None or spec.loader is None:
         raise RuntimeError("failed to load intelligence_fabric extension")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[_EXTENSION_ALIAS] = module
+    sys.modules[alias] = module
     spec.loader.exec_module(module)
     return module
 

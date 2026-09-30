@@ -11,7 +11,7 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
 def test_mcp_gateway_exposes_framework_tools_and_explicit_errors(tmp_path: Path):
     gateway = MCPGateway(tmp_path)
     names = {tool["name"] for tool in gateway.list_tools()}
-    assert {"aec.audit", "aec.ingest_dxf", "aec.ingest_project", "aec.ingest_file", "aec.parse_cad", "aec.parse_ifc", "aec.parse_gis", "aec.build_cair", "aec.classify_objects", "aec.build_ontology", "aec.build_project_graph", "aec.query_project", "aec.rebuild_runtime", "aec.get_object", "aec.query_global_memory", "aec.find_similar_projects", "aec.validate_project", "aec.validate_repository", "aec.build_dashboard", "aec.register_drive_repository", "aec.rebuild_global_memory_from_drive", "aec.refresh_derived_exports", "aec.probe_native_ifc", "aec.probe_qgis_runtime"} <= names
+    assert {"aec.audit", "aec.ingest_dxf", "aec.ingest_project", "aec.ingest_file", "aec.parse_cad", "aec.parse_ifc", "aec.parse_gis", "aec.build_cair", "aec.classify_objects", "aec.build_ontology", "aec.build_project_graph", "aec.query_project", "aec.rebuild_runtime", "aec.get_object", "aec.query_global_memory", "aec.find_similar_projects", "aec.validate_project", "aec.validate_repository", "aec.build_dashboard", "aec.register_drive_repository", "aec.rebuild_global_memory_from_drive", "aec.refresh_derived_exports", "aec.probe_native_ifc", "aec.probe_qgis_runtime", "aec.context_inspect_code", "aec.graph_backend_plan", "aec.graph_hydradb_preview", "aec.graph_hydradb_export"} <= names
     assert gateway.call_tool("unknown", {})["status"] == "FAILED"
     assert gateway.call_tool("aec.query_plan", {"question": "인접한 출입문"})["route"] == "KNOWLEDGE_GRAPH"
 

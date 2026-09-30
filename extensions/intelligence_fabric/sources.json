@@ -1,0 +1,34 @@
+{
+  "review_date": "2026-09-30",
+  "policy": "Research/adoption manifest. External projects are not vendored unless separately reviewed. Canonical Ontology data remains authoritative.",
+  "repositories": [
+    {
+      "repository": "dzhng/jevgrep",
+      "role": "Jev-based code/context retrieval for coding agents",
+      "license": "MIT",
+      "integration": "external CLI adapter; explicit source-egress approval",
+      "adoption": "P0"
+    },
+    {
+      "repository": "browser-use/jev-ultrafast",
+      "role": "typed choice/action-space design reference",
+      "license": "MIT",
+      "integration": "design pattern only; browser runtime not required by Ontology",
+      "adoption": "reference"
+    },
+    {
+      "repository": "hydra-db/hydradb",
+      "role": "object-store-native distributed property graph",
+      "license": "AGPL-3.0",
+      "integration": "external HTTP/OpenCypher service boundary; no vendoring",
+      "adoption": "P0 optional"
+    },
+    {
+      "repository": "apache/age",
+      "role": "PostgreSQL property graph baseline",
+      "license": "Apache-2.0",
+      "integration": "existing repository runtime baseline",
+      "adoption": "keep"
+    }
+  ]
+}

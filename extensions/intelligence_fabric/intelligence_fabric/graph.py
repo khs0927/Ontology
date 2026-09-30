@@ -40,14 +40,14 @@ def _cypher_literal(value: Any) -> str:
 
 def _runtime_target(repository_root: str | Path, target: str | Path | None) -> Path:
     root = Path(repository_root).resolve()
-    destination = (root / "runtime" / "hydradb" / "seed.cypher") if target is None else Path(target).resolve()
-    global_root = (root / "global").resolve()
+    runtime_root = (root / "runtime" / "hydradb").resolve()
+    destination = (runtime_root / "seed.cypher") if target is None else Path(target).resolve()
     try:
-        destination.relative_to(global_root)
-    except ValueError:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        return destination
-    raise ValueError("graph acceleration output must not be written under canonical global/")
+        destination.relative_to(runtime_root)
+    except ValueError as exc:
+        raise ValueError("HydraDB acceleration output must remain under runtime/hydradb/") from exc
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination
 
 
 @dataclass(frozen=True)

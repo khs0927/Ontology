@@ -62,13 +62,8 @@ class GraphExportReport:
         return asdict(self)
 
 
-def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = None) -> GraphExportReport:
-    """Create conservative OpenCypher suitable for HydraDB's documented subset.
-
-    The export intentionally avoids Neo4j-only constraints/procedures. Relations
-    use a stable AEC_RELATION type and keep the ontology predicate as a property
-    so predicate strings never become executable Cypher identifiers.
-    """
+def render_hydradb_seed(repository_root: str | Path) -> dict[str, Any]:
+    """Render conservative OpenCypher in memory without touching the filesystem."""
     root = Path(repository_root).resolve()
     global_root = root / "global" / "00_GLOBAL"
     projects = _jsonl(global_root / "global-project-registry.jsonl")
@@ -79,7 +74,6 @@ def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = 
         for row in _jsonl(global_root / "global-provenance.jsonl")
         if row.get("object_id")
     }
-    destination = _runtime_target(root, target)
     lines = [
         "// Generated from canonical CAIR/global JSONL; rebuildable runtime export.",
         "// HydraDB integration boundary: no AGPL source is vendored into this repository.",
@@ -141,19 +135,25 @@ def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = 
             )
         )
         relation_count += 1
-    destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return GraphExportReport(
-        "SUCCESS",
-        "HydraDB",
-        str(destination),
-        {
+    return {
+        "statements": lines,
+        "counts": {
             "projects": project_count,
             "objects": object_count,
             "relations": relation_count,
             "containment_edges": containment_count,
             "provenance": len(provenance),
         },
-    )
+    }
+
+
+def build_hydradb_seed(repository_root: str | Path, target: str | Path | None = None) -> GraphExportReport:
+    """Write a rebuildable HydraDB seed after rendering it in memory."""
+    root = Path(repository_root).resolve()
+    preview = render_hydradb_seed(root)
+    destination = _runtime_target(root, target)
+    destination.write_text("\n".join(preview["statements"]) + "\n", encoding="utf-8")
+    return GraphExportReport("SUCCESS", "HydraDB", str(destination), preview["counts"])
 
 
 @dataclass(frozen=True)

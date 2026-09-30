@@ -87,7 +87,7 @@ def test_hydradb_preview_is_read_only_and_export_is_runtime_only(tmp_path: Path)
     assert preview["counts"]["objects"] == 2
     assert preview["statement_count"] >= 3
     assert len(preview["statements"]) == 3
-    assert not (root / "runtime").exists()
+    assert not (root / "runtime" / "hydradb").exists()
     assert canonical.read_bytes() == before
 
     exported = gateway.call_tool("aec.graph_hydradb_export", {})

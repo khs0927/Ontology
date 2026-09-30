@@ -4,7 +4,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from intelligence_fabric.graph import HydraDBConfig, build_hydradb_seed
+from intelligence_fabric.graph import HydraDBConfig, build_hydradb_seed, render_hydradb_seed
 from intelligence_fabric.jev import JevGrepAdapter
 from intelligence_fabric.planning import GraphRequirements, choose_graph_backend, intelligence_plan
 
@@ -31,6 +31,12 @@ class IntelligenceFabricTests(unittest.TestCase):
         }
         for name, values in rows.items():
             (global_root / name).write_text("".join(json.dumps(v, ensure_ascii=False) + "\n" for v in values), encoding="utf-8")
+
+    def test_hydradb_preview_is_read_only(self):
+        preview = render_hydradb_seed(self.root)
+        self.assertEqual(preview["counts"]["objects"], 2)
+        self.assertTrue(preview["statements"])
+        self.assertFalse((self.root / "runtime").exists())
 
     def test_hydradb_seed_is_rebuildable_and_never_canonical(self):
         before = (self.root / "global" / "00_GLOBAL" / "global-object-registry.jsonl").read_bytes()

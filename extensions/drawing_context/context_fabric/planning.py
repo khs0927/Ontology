@@ -62,3 +62,56 @@ def reciprocal_rank_fusion(rankings, allowed_ids, limit=20, k=60):
             scores[candidate] = scores.get(candidate, 0.0) + 1.0 / (k + rank)
     return [{"id": candidate, "score": score} for candidate, score in
             sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
+def typed_candidate_space(candidates, allowed_ids, limit=20):
+    """Build a numbered, immutable choice space after ACL/revision filtering.
+
+    Agents choose an integer option instead of inventing an object ID. This is
+    the CAD-side equivalent of Jev-style constrained choice. Selection alone
+    never authorizes a mutation; native live verification is still mandatory.
+    """
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    options, seen = [], set()
+    for candidate in candidates:
+        candidate_id = candidate.get("id") if isinstance(candidate, dict) else candidate
+        if not isinstance(candidate_id, str) or not candidate_id or candidate_id in seen:
+            continue
+        if candidate_id not in allowed_ids:
+            continue
+        seen.add(candidate_id)
+        option = {
+            "choice": len(options) + 1,
+            "id": candidate_id,
+        }
+        if isinstance(candidate, dict) and "score" in candidate:
+            option["score"] = candidate["score"]
+        options.append(option)
+        if len(options) >= limit:
+            break
+    return {
+        "schema": "power-cad-typed-choice/1",
+        "options": options,
+        "may_execute_mutation": False,
+        "requires_live_verification": True,
+    }
+
+
+def resolve_typed_choice(space, choice):
+    """Resolve only an integer listed in a previously built choice space."""
+    if type(choice) is not int:
+        raise ValueError("choice must be an integer option, not a generated object ID")
+    options = space.get("options") if isinstance(space, dict) else None
+    if not isinstance(options, list):
+        raise ValueError("invalid typed choice space")
+    match = next((option for option in options if option.get("choice") == choice), None)
+    if match is None:
+        raise ValueError("choice is outside the allowed candidate space")
+    return {
+        "schema": "power-cad-typed-selection/1",
+        "choice": choice,
+        "selected_id": match["id"],
+        "may_execute_mutation": False,
+        "requires_live_verification": True,
+    }

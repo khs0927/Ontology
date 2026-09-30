@@ -53,9 +53,11 @@ class IntelligenceFabricTests(unittest.TestCase):
         self.assertEqual(report.counts["objects"], 2)
         self.assertEqual(before, (self.root / "global" / "00_GLOBAL" / "global-object-registry.jsonl").read_bytes())
 
-    def test_hydradb_export_cannot_write_under_global(self):
-        with self.assertRaises(ValueError):
-            build_hydradb_seed(self.root, self.root / "global" / "bad.cypher")
+    def test_hydradb_export_cannot_escape_runtime_directory(self):
+        for target in [self.root / "global" / "bad.cypher", self.root / "outside.cypher"]:
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    build_hydradb_seed(self.root, target)
 
     def test_jevgrep_private_source_is_blocked_by_default(self):
         calls = []

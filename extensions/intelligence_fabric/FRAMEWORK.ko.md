@@ -83,12 +83,13 @@ Power CAD / MCP / Agent action <--- verify/provenance -----+
 - capability 기반 graph backend planner
 - canonical/global 원본 비변경 테스트
 
-### P1 — 다음 병합 후
+### P1 — 이번 브랜치에서 구현
 
-- MCP Gateway에 `context.inspect_code`, `graph.export_hydradb`, `graph.health`를 read-only tool로 노출
-- Jev 결과를 그대로 신뢰하지 않고 기존 provenance/source revision과 결합
-- global graph row count / object ID / provenance coverage 비교 gate 추가
-- Power CAD의 drawing_context 후보 선택에 Jev-style typed choice contract 연결
+- MCP Gateway에 `aec.context_inspect_code`, `aec.graph_backend_plan`, `aec.graph_hydradb_preview`, `aec.graph_hydradb_export` 노출
+- Jev source egress는 기본 차단하고, root를 저장소 내부로 제한
+- HydraDB preview는 메모리에서만 생성하고 export는 `runtime/hydradb/`에만 허용
+- Power CAD drawing_context 후보 선택에 Jev-style numbered typed choice contract 연결
+- typed choice 결과는 실행 권한이 아니며 기존 live verification을 반드시 거치도록 고정
 
 ### P2 — 데이터 규모가 커질 때
 

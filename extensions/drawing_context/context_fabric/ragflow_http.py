@@ -74,6 +74,7 @@ class RagflowBinding:
     revision_id: str
     project_id: str
     sha256: str
+    state: str
     dataset_id: str
     document_id: str
     chunk_id: str
@@ -106,6 +107,7 @@ class RagflowBinding:
             revision_id=metadata["revision_id"],
             project_id=metadata["project_id"],
             sha256=metadata["sha256"],
+            state=metadata["state"],
             dataset_id=dataset_id,
             document_id=document_id,
             chunk_id=chunk_id,
@@ -118,7 +120,7 @@ class RagflowBinding:
             "revision_id": self.revision_id,
             "project_id": self.project_id,
             "sha256": self.sha256,
-            "state": "REMOTE_DERIVED",
+            "state": self.state,
         }
 
 

@@ -58,6 +58,13 @@ def parse_version(value: str | None) -> tuple[int, int, int] | None:
     )
 
 
+def normalize_image_digest(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"(sha256:[0-9a-f]{64})", value)
+    return match.group(1) if match else None
+
+
 def _ram_gb() -> float | None:
     if os.name == "nt":
         class MemoryStatus(ctypes.Structure):
@@ -233,6 +240,9 @@ def evaluate_preflight(
         "blockers": blockers,
         "manual_checks": manual_checks,
         "observed_image_repo_digest": observation.get("image_repo_digest"),
+        "observed_image_digest": normalize_image_digest(
+            observation.get("image_repo_digest")
+        ),
         "mutates_host": False,
     }
 

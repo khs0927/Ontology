@@ -112,9 +112,18 @@ def test_search_rehydrates_provenance_from_local_binding_registry():
     adapter = RagflowHttpAdapter(config(), sender=sender)
     adapter.add_projection("doc-1", [row()])
 
-    result = adapter.search("화장실 출입문", top_k=5)
+    result = adapter.search(
+        "화장실 출입문",
+        top_k=5,
+        allowed_source_ids={"source-1"},
+        current_revision_by_source={"source-1": "rev-1"},
+    )
 
-    assert result["unmapped_remote_hits"] == 0
+    assert result["blocked_remote_hits"] == {
+        "unmapped": 0,
+        "unauthorized": 0,
+        "stale_revision": 0,
+    }
     hit = result["hits"][0]
     assert hit["external_id"] == "ctx-1"
     assert hit["metadata"] == {
@@ -144,7 +153,7 @@ def test_unmapped_remote_hit_is_never_given_invented_provenance_and_fails_gate()
         },
     ])
     adapter = RagflowHttpAdapter(config(), sender=sender)
-    result = adapter.search("door")
+    result = adapter.benchmark_search("door")
 
     assert result["unmapped_remote_hits"] == 1
     assert result["hits"][0]["metadata"] == {}
@@ -162,6 +171,53 @@ def test_unmapped_remote_hit_is_never_given_invented_provenance_and_fails_gate()
     )
     assert metrics["provenance_metadata_coverage"] == 0.0
     assert promotion_decision(metrics)["status"] == "BLOCKED"
+
+
+def test_production_search_hides_unmapped_unauthorized_and_stale_content():
+    sender = FakeSender([
+        {"code": 0, "data": {"chunk": {"id": "allowed-chunk"}}},
+        {"code": 0, "data": {"chunk": {"id": "other-chunk"}}},
+        {"code": 0, "data": {"chunk": {"id": "stale-chunk"}}},
+        {
+            "code": 0,
+            "data": {
+                "chunks": [
+                    {"id": "allowed-chunk", "content": "allowed"},
+                    {"id": "other-chunk", "content": "secret other source"},
+                    {"id": "stale-chunk", "content": "stale revision"},
+                    {"id": "unknown", "content": "unmapped"},
+                ]
+            },
+        },
+    ])
+    adapter = RagflowHttpAdapter(config(), sender=sender)
+    adapter.add_projection("doc-1", [row(external="allowed", canonical="door-1")])
+    adapter.add_projection(
+        "doc-2",
+        [row(external="other", canonical="door-2", source="source-2")],
+    )
+    adapter.add_projection(
+        "doc-3",
+        [row(external="stale", canonical="door-3", revision="rev-old")],
+    )
+
+    result = adapter.search(
+        "door",
+        top_k=10,
+        allowed_source_ids={"source-1"},
+        current_revision_by_source={"source-1": "rev-1"},
+    )
+
+    assert [hit["external_id"] for hit in result["hits"]] == ["allowed"]
+    assert result["blocked_remote_hits"] == {
+        "unmapped": 1,
+        "unauthorized": 1,
+        "stale_revision": 1,
+    }
+    rendered = str(result)
+    assert "secret other source" not in rendered
+    assert "stale revision" not in rendered
+    assert "unmapped" not in rendered
 
 
 def test_revision_replace_adds_new_chunks_before_deleting_old_revision():
@@ -234,7 +290,7 @@ def test_add_projection_rolls_back_new_remote_chunks_on_partial_failure():
 def test_disabled_adapter_refuses_network_actions():
     adapter = RagflowHttpAdapter(RagflowHttpConfig(enabled=False), sender=FakeSender([]))
     with pytest.raises(RuntimeError, match="disabled"):
-        adapter.search("door")
+        adapter.benchmark_search("door")
 
 
 def test_projection_is_validated_before_first_network_call():

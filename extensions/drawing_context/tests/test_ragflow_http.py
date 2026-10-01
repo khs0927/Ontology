@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import json
 
 import pytest
 
@@ -301,6 +302,66 @@ def test_add_projection_rolls_back_new_remote_chunks_on_partial_failure():
         )
     assert adapter.registry.snapshot() == []
     assert sender.calls[-1][0] == "DELETE"
+
+
+def test_binding_registry_persists_only_under_runtime_and_roundtrips(tmp_path):
+    sender = FakeSender([
+        {"code": 0, "data": {"chunk": {"id": "chunk-1"}}},
+    ])
+    registry = RagflowBindingRegistry()
+    adapter = RagflowHttpAdapter(config(), registry=registry, sender=sender)
+    adapter.add_projection("doc-1", [row()])
+
+    saved = registry.save_runtime(tmp_path)
+    assert saved["canonical_mutation"] is False
+    assert saved["count"] == 1
+    assert saved["path"].endswith("runtime/ragflow/bindings.json")
+
+    restored = RagflowBindingRegistry.load_runtime(tmp_path)
+    assert restored.snapshot() == registry.snapshot()
+
+
+def test_binding_registry_rejects_path_escape_and_bad_schema(tmp_path):
+    registry = RagflowBindingRegistry()
+    with pytest.raises(ValueError, match="runtime/ragflow"):
+        registry.save_runtime(tmp_path, tmp_path / "global" / "bindings.json")
+
+    path = tmp_path / "runtime" / "ragflow" / "bindings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"schema": "wrong", "canonical": False, "bindings": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema"):
+        RagflowBindingRegistry.load_runtime(tmp_path)
+
+
+def test_binding_registry_rejects_conflicting_remote_rows(tmp_path):
+    binding = {
+        "external_id": "ctx-1",
+        "canonical_id": "door-1",
+        "source_id": "source-1",
+        "revision_id": "rev-1",
+        "project_id": "P1",
+        "sha256": "a" * 64,
+        "state": "HUMAN_VERIFIED",
+        "dataset_id": "dataset-1",
+        "document_id": "doc-1",
+        "chunk_id": "chunk-1",
+    }
+    conflict = dict(binding)
+    conflict["canonical_id"] = "other"
+    path = tmp_path / "runtime" / "ragflow" / "bindings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "drawing-context-ragflow-bindings/1",
+                "canonical": False,
+                "bindings": [binding, conflict],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="already bound"):
+        RagflowBindingRegistry.load_runtime(tmp_path)
 
 
 def test_disabled_adapter_refuses_network_actions():

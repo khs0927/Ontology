@@ -244,6 +244,22 @@ def test_revision_replace_adds_new_chunks_before_deleting_old_revision():
     assert [call[0] for call in sender.calls] == ["POST", "POST", "DELETE"]
 
 
+def test_revision_replace_rejects_mixed_new_revisions_before_network():
+    sender = FakeSender([])
+    adapter = RagflowHttpAdapter(config(), sender=sender)
+    with pytest.raises(ValueError, match="cannot mix"):
+        adapter.replace_revision(
+            "doc-1",
+            source_id="source-1",
+            old_revision_id="rev-1",
+            new_rows=[
+                row(external="ctx-2", revision="rev-2"),
+                row(external="ctx-3", revision="rev-3"),
+            ],
+        )
+    assert sender.calls == []
+
+
 def test_source_purge_groups_remote_deletes_and_clears_bindings():
     sender = FakeSender([
         {"code": 0, "data": {"chunk": {"id": "chunk-a"}}},

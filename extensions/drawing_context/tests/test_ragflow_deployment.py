@@ -7,6 +7,7 @@ from context_fabric.ragflow_deploy import (
     RagflowDeploymentProfile,
     deployment_commands,
     evaluate_preflight,
+    normalize_image_digest,
     parse_version,
 )
 from context_fabric.ragflow_http import (
@@ -84,6 +85,9 @@ def test_windows_without_vm_probe_requires_manual_check_not_false_success():
 def test_versions_and_commands_are_pinned_to_upstream_release():
     assert parse_version("Docker version 27.3.1") == (27, 3, 1)
     assert parse_version("v2.26.1") == (2, 26, 1)
+    assert normalize_image_digest(
+        "infiniflow/ragflow@sha256:" + "c" * 64
+    ) == "sha256:" + "c" * 64
     commands = deployment_commands("runtime/ragflow-upstream")
     rendered = "\n".join(commands)
     assert "v0.27.2" in rendered

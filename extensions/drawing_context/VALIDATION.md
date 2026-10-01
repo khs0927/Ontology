@@ -29,3 +29,22 @@ corpus. These remain the explicit G1–G5 acceptance gates in FRAMEWORK.ko.md.
 The local catalog and planner are reference components. The planner does not
 execute jobs. The handoff guard checks caller-supplied observations, does not
 contact AutoCAD and does not authorize editing.
+
+
+## Retrieval benchmark gate — 2026-10-01
+
+A provider-neutral benchmark harness now exists in `context_fabric/benchmark.py`.
+The first target is RAGFlow because the repository already has a provenance-preserving
+RAGFlow projection DTO and Drive-oriented document flow. This is **not** a claim that
+RAGFlow HTTP integration or production retrieval has been validated.
+
+Promotion hard gates:
+- provenance metadata coverage = 100%
+- unauthorized source leakage = 0
+- stale revision leakage = 0
+- Recall@5 >= 0.80
+- MRR >= 0.60
+
+p50/p95 latency, indexing time and storage size are recorded during the first live
+benchmark phase but are not initial hard gates. The benchmark result and fixture both
+declare `canonical_mutation=false`; provider results remain derived search candidates.

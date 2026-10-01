@@ -22,7 +22,24 @@
     "role": "derived-search-projection",
     "release_image_digest": null,
     "requires_compute_inventory": true,
-    "requires_revision_deletion_acl_tests": true
+    "requires_revision_deletion_acl_tests": true,
+    "benchmark": {
+      "phase": "ragflow-first",
+      "live_http_required_before_enable": true,
+      "thresholds": {
+        "provenance_metadata_coverage": 1,
+        "unauthorized_source_leakage": 0,
+        "stale_revision_leakage": 0,
+        "recall_at_5_minimum": 0.8,
+        "mrr_minimum": 0.6
+      },
+      "report_only_initially": [
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "indexing_time",
+        "storage_size"
+      ]
+    }
   },
   "ingestion": {
     "native_processes_initial": 1,
@@ -34,7 +51,10 @@
   },
   "models": {
     "paid_remote_api_enabled": false,
-    "text_candidates": ["BAAI/bge-m3", "Qwen/Qwen3-Embedding-0.6B"],
+    "text_candidates": [
+      "BAAI/bge-m3",
+      "Qwen/Qwen3-Embedding-0.6B"
+    ],
     "silent_model_fallback": false,
     "model_revision_required": true
   },

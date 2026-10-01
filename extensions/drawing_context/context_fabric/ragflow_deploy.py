@@ -257,7 +257,7 @@ def deployment_commands(checkout: str | Path) -> list[str]:
         f'docker compose -f "{compose}" up -d',
         "docker image inspect "
         + _IMAGE
-        + " --format "{{index .RepoDigests 0}}"",
+        + ' --format "{{index .RepoDigests 0}}"',
         "curl -f http://127.0.0.1/api/v1/system/healthz",
     ]
 

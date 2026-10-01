@@ -104,3 +104,13 @@ Power CAD / MCP / Agent action <--- verify/provenance -----+
 - Agent Memory는 **사실 저장소가 아니라 보조 기억**이다.
 - CAD mutation은 기존 source/revision/live mapping 검증을 통과한 뒤에만 가능하다.
 - 새 backend가 실패해도 canonical CAIR/JSONL만으로 전체를 재구축할 수 있어야 한다.
+
+
+### P1.5 — Code Intelligence
+
+- 코드 파일 자체가 진실의 원천이며 code graph는 파생 인덱스다.
+- SHA-256 기반 source snapshot을 `runtime/code-intelligence/snapshot.json`에만 저장한다.
+- added / modified / deleted를 명시적으로 계산하고 변경 시 `derived_code_graph_stale=true`로 표시한다.
+- 각 파일 레코드는 `provenance=filesystem`, `evidence=EXTRACTED`를 가진다.
+- 향후 Tree-sitter/Graphify 계열 파서는 이 snapshot/diff 뒤에 붙이며 CAIR나 소스 파일을 수정할 수 없다.
+- watcher가 실패하거나 graph가 stale이어도 filesystem/Git에서 전체 재구축할 수 있어야 한다.

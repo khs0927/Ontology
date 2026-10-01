@@ -39,7 +39,13 @@
         "indexing_time",
         "storage_size"
       ]
-    }
+    },
+    "api_profile": "v0.27.2",
+    "http_contract_enabled": false,
+    "remote_requires_https": true,
+    "binding_registry": "derived-runtime-only",
+    "production_search": "mapped-authorized-current-revision-only",
+    "benchmark_search": "diagnostic-only"
   },
   "ingestion": {
     "native_processes_initial": 1,

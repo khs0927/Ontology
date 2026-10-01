@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import ipaddress
 import json
+import os
+from pathlib import Path
 import re
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
@@ -79,6 +81,24 @@ class RagflowBinding:
     document_id: str
     chunk_id: str
 
+    def __post_init__(self):
+        for name in (
+            "external_id",
+            "canonical_id",
+            "source_id",
+            "revision_id",
+            "project_id",
+            "state",
+            "dataset_id",
+            "document_id",
+            "chunk_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("RagflowBinding fields must be non-empty strings")
+        if not _SHA256.fullmatch(self.sha256):
+            raise ValueError("RagflowBinding sha256 must be a lowercase SHA-256 hex digest")
+
     @classmethod
     def from_projection(
         cls,
@@ -124,10 +144,37 @@ class RagflowBinding:
         }
 
 
-class RagflowBindingRegistry:
-    """In-memory derived binding registry.
+_BINDING_SCHEMA = "drawing-context-ragflow-bindings/1"
 
-    Persistence, if added later, must live under runtime/ and remain rebuildable.
+
+def _binding_path(
+    repository_root: str | Path,
+    target: str | Path | None = None,
+    *,
+    create_parent: bool = False,
+) -> Path:
+    root = Path(repository_root).resolve()
+    runtime_root = (root / "runtime" / "ragflow").resolve()
+    destination = (
+        runtime_root / "bindings.json"
+        if target is None
+        else Path(target).resolve()
+    )
+    try:
+        destination.relative_to(runtime_root)
+    except ValueError as exc:
+        raise ValueError("RAGFlow binding registry must remain under runtime/ragflow/") from exc
+    if create_parent:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination
+
+
+class RagflowBindingRegistry:
+    """Derived remote-binding registry.
+
+    Optional persistence is restricted to runtime/ragflow/, uses an explicit
+    schema, and remains rebuildable from the remote sidecar plus canonical
+    drawing-context projections.
     """
 
     def __init__(self):
@@ -167,6 +214,61 @@ class RagflowBindingRegistry:
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [asdict(row) for row in sorted(self._by_chunk.values(), key=lambda row: row.chunk_id)]
+
+    def save_runtime(
+        self,
+        repository_root: str | Path,
+        target: str | Path | None = None,
+    ) -> dict[str, Any]:
+        destination = _binding_path(repository_root, target, create_parent=True)
+        payload = {
+            "schema": _BINDING_SCHEMA,
+            "canonical": False,
+            "bindings": self.snapshot(),
+        }
+        temp = destination.with_name(destination.name + ".tmp")
+        temp.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temp, destination)
+        return {
+            "status": "SUCCESS",
+            "path": str(destination),
+            "count": len(payload["bindings"]),
+            "canonical_mutation": False,
+        }
+
+    @classmethod
+    def load_runtime(
+        cls,
+        repository_root: str | Path,
+        target: str | Path | None = None,
+    ) -> "RagflowBindingRegistry":
+        destination = _binding_path(repository_root, target)
+        registry = cls()
+        if not destination.exists():
+            return registry
+        try:
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("RAGFlow binding registry contains invalid JSON") from exc
+        if not isinstance(payload, dict) or payload.get("schema") != _BINDING_SCHEMA:
+            raise ValueError("unsupported RAGFlow binding registry schema")
+        if payload.get("canonical") is not False:
+            raise ValueError("RAGFlow binding registry must declare canonical=false")
+        rows = payload.get("bindings")
+        if not isinstance(rows, list):
+            raise ValueError("RAGFlow binding registry requires a bindings array")
+        for raw in rows:
+            if not isinstance(raw, dict):
+                raise ValueError("RAGFlow binding row must be an object")
+            try:
+                binding = RagflowBinding(**raw)
+            except TypeError as exc:
+                raise ValueError("RAGFlow binding row has an invalid shape") from exc
+            registry.bind(binding)
+        return registry
 
 
 JsonSender = Callable[[str, str, dict[str, Any] | None], dict[str, Any]]

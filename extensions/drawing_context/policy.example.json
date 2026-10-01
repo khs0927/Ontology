@@ -45,7 +45,20 @@
     "remote_requires_https": true,
     "binding_registry": "derived-runtime-only",
     "production_search": "mapped-authorized-current-revision-only",
-    "benchmark_search": "diagnostic-only"
+    "benchmark_search": "diagnostic-only",
+    "deployment": {
+      "upstream_repository": "https://github.com/infiniflow/ragflow.git",
+      "release": "v0.27.2",
+      "image": "infiniflow/ragflow:v0.27.2",
+      "vendor_compose": false,
+      "preflight_only_by_default": true,
+      "minimum_cpu_cores": 4,
+      "minimum_ram_gb": 16,
+      "minimum_disk_gb": 50,
+      "minimum_docker": "24.0.0",
+      "minimum_compose": "2.26.1",
+      "minimum_vm_max_map_count": 262144
+    }
   },
   "ingestion": {
     "native_processes_initial": 1,

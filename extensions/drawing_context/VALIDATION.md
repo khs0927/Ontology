@@ -76,3 +76,27 @@ configuration fail-closed behavior.
 Still **not validated**: a real RAGFlow server, real v0.27.2 image digest, real API key,
 network failure recovery under production load, parser/index completion, or retrieval
 quality on the user's Drive corpus. Those remain G4 acceptance work.
+
+
+## RAGFlow deployment preparation — 2026-10-01
+
+The repository now includes a read-only preflight for the official upstream
+`v0.27.2` deployment path, runtime-only atomic binding persistence, and a
+read-only live benchmark runner.
+
+The preflight observes Docker/Compose versions, CPU/RAM/free disk, architecture,
+`vm.max_map_count` when visible, and an already-pulled image RepoDigest. It
+prints reviewed upstream commands but does not clone, pull, start, stop, or
+delete containers.
+
+The deployment profile follows the reviewed official minimums: CPU >= 4 cores,
+RAM >= 16 GB, disk >= 50 GB, Docker >= 24.0.0, Compose >= 2.26.1 and
+`vm.max_map_count >= 262144` when Elasticsearch requires it. The prebuilt
+image path is treated as x86_64/amd64.
+
+Bindings may persist only under `runtime/ragflow/`; loading a missing registry
+is side-effect free, while saving uses temp-file + atomic replace. The live
+benchmark runner performs retrieval only and reuses the existing provenance,
+authorization, revision, Recall@5 and MRR promotion gates.
+
+No real RAGFlow instance was started by these changes.

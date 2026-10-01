@@ -198,6 +198,9 @@ G3: Power CAD 2027 네이티브 동일 도면/개정/handle 재확인, nested bl
 PaperSpace/dirty drawing/삭제 객체 테스트. 잘못된 대상 검증 통과 0건을 release gate로 둔다.
 
 G4: RAGFlow release 고정, projection import/delete/revision 교체, 권한 회수와 UI 검증.
+승격 전 동일 고정 질문 세트로 provenance metadata 100%, unauthorized source leakage 0,
+stale revision leakage 0, Recall@5 >= 0.80, MRR >= 0.60을 모두 통과한다.
+p50/p95, 색인 시간, 저장공간은 첫 실측에서는 비교 지표로 기록하고 곧바로 hard gate로 만들지 않는다.
 시각 검색/GraphRAG는 G2 대비 정확도 개선과 비용을 측정해 유지 여부를 정한다.
 
 G5: 전체 Drive backfill과 변경분 운영. queue lag, parse throughput, unsupported ratio,

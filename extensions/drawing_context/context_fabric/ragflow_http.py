@@ -479,12 +479,19 @@ class RagflowHttpAdapter:
         rows = list(new_rows)
         if not rows:
             raise ValueError("revision replacement requires new projection rows")
+        replacement_revisions: set[str] = set()
         for row in rows:
             metadata = row.get("metadata") if isinstance(row, dict) else None
             if not isinstance(metadata, dict) or metadata.get("source_id") != source_id:
                 raise ValueError("replacement rows must belong to the requested source")
-            if metadata.get("revision_id") == old_revision_id:
+            revision_id = metadata.get("revision_id")
+            if not isinstance(revision_id, str) or not revision_id:
+                raise ValueError("replacement rows require revision_id")
+            if revision_id == old_revision_id:
                 raise ValueError("replacement rows must describe a new revision")
+            replacement_revisions.add(revision_id)
+        if len(replacement_revisions) != 1:
+            raise ValueError("one revision replacement cannot mix multiple new revisions")
 
         old = self.registry.for_revision(source_id, old_revision_id)
         if any(row.document_id != document_id for row in old):

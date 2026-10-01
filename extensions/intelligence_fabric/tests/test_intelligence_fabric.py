@@ -4,6 +4,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+from intelligence_fabric.code import diff_code_snapshots, refresh_code_snapshot, save_code_snapshot, scan_code_tree
 from intelligence_fabric.graph import HydraDBConfig, build_hydradb_seed, render_hydradb_seed
 from intelligence_fabric.jev import JevGrepAdapter
 from intelligence_fabric.planning import GraphRequirements, choose_graph_backend, intelligence_plan
@@ -31,6 +32,68 @@ class IntelligenceFabricTests(unittest.TestCase):
         }
         for name, values in rows.items():
             (global_root / name).write_text("".join(json.dumps(v, ensure_ascii=False) + "\n" for v in values), encoding="utf-8")
+
+    def test_code_snapshot_is_runtime_only_and_incremental(self):
+        src = self.root / "src"
+        src.mkdir()
+        a = src / "a.py"
+        b = src / "b.cs"
+        a.write_text("print('a')\n", encoding="utf-8")
+        b.write_text("class B {}\n", encoding="utf-8")
+
+        first = refresh_code_snapshot(self.root)
+        self.assertEqual(first["status"], "SUCCESS")
+        self.assertTrue(first["diff"]["changed"])
+        self.assertEqual(sorted(first["diff"]["added"]), ["src/a.py", "src/b.cs"])
+        snapshot_path = Path(first["snapshot"])
+        self.assertTrue(snapshot_path.is_file())
+        self.assertTrue(str(snapshot_path).startswith(str(self.root / "runtime" / "code-intelligence")))
+        self.assertFalse((self.root / "global" / "code-intelligence").exists())
+
+        second = refresh_code_snapshot(self.root)
+        self.assertFalse(second["diff"]["changed"])
+        self.assertEqual(second["diff"]["unchanged"], 2)
+
+        a.write_text("print('changed')\n", encoding="utf-8")
+        b.unlink()
+        (src / "c.py").write_text("print('c')\n", encoding="utf-8")
+        third = refresh_code_snapshot(self.root)
+        self.assertEqual(third["diff"]["modified"], ["src/a.py"])
+        self.assertEqual(third["diff"]["deleted"], ["src/b.cs"])
+        self.assertEqual(third["diff"]["added"], ["src/c.py"])
+        self.assertTrue(third["diff"]["derived_code_graph_stale"])
+
+    def test_code_snapshot_records_filesystem_provenance(self):
+        src = self.root / "src"
+        src.mkdir()
+        (src / "x.py").write_text("x = 1\n", encoding="utf-8")
+        snapshot = scan_code_tree(self.root)
+        self.assertEqual(len(snapshot.files), 1)
+        self.assertEqual(snapshot.files[0].provenance, "filesystem")
+        self.assertEqual(snapshot.files[0].evidence, "EXTRACTED")
+        diff = diff_code_snapshots(None, snapshot)
+        self.assertFalse(diff["canonical"])
+        self.assertEqual(diff["source_of_truth"], "filesystem")
+
+    def test_code_snapshot_cannot_escape_runtime_directory(self):
+        src = self.root / "src"
+        src.mkdir()
+        (src / "x.py").write_text("x = 1\n", encoding="utf-8")
+        snapshot = scan_code_tree(self.root)
+        for target in [self.root / "global" / "bad.json", self.root / "outside.json"]:
+            with self.subTest(target=target):
+                with self.assertRaises(ValueError):
+                    save_code_snapshot(self.root, snapshot, target)
+
+    def test_code_snapshot_skips_oversized_files_with_warning(self):
+        src = self.root / "src"
+        src.mkdir()
+        (src / "small.py").write_text("x = 1\n", encoding="utf-8")
+        (src / "large.py").write_text("0123456789", encoding="utf-8")
+        snapshot = scan_code_tree(self.root, max_file_bytes=8)
+        self.assertEqual([row.path for row in snapshot.files], ["src/small.py"])
+        self.assertEqual(len(snapshot.warnings), 1)
+        self.assertIn("large.py", snapshot.warnings[0])
 
     def test_hydradb_preview_is_read_only(self):
         preview = render_hydradb_seed(self.root)

@@ -48,3 +48,31 @@ Promotion hard gates:
 p50/p95 latency, indexing time and storage size are recorded during the first live
 benchmark phase but are not initial hard gates. The benchmark result and fixture both
 declare `canonical_mutation=false`; provider results remain derived search candidates.
+
+
+## RAGFlow HTTP contract — 2026-10-01
+
+A disabled-by-default HTTP sidecar contract now targets the reviewed RAGFlow
+`v0.27.2` API profile. It requires a pinned release image digest before enablement,
+requires HTTPS for non-loopback servers, and keeps the bearer key outside canonical
+data.
+
+Remote RAGFlow chunk IDs are never treated as canonical identifiers. They are rebound
+through a local, rebuildable mapping registry to drawing-context projection IDs and
+their canonical/source/revision/hash metadata.
+
+Two retrieval paths are intentionally separate:
+
+- `search()`: production-safe. It requires allowed source IDs and current revision
+  IDs and returns only mapped, authorized, current-revision hits.
+- `benchmark_search()`: diagnostic-only. It can expose unmapped/stale/unauthorized
+  remote results so the benchmark can measure leakage; it must not be used as user
+  context.
+
+Fake-transport tests cover chunk creation/binding, safe retrieval, unmapped result
+handling, revision replacement ordering, source purge, partial-upload rollback and
+configuration fail-closed behavior.
+
+Still **not validated**: a real RAGFlow server, real v0.27.2 image digest, real API key,
+network failure recovery under production load, parser/index completion, or retrieval
+quality on the user's Drive corpus. Those remain G4 acceptance work.

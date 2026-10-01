@@ -147,7 +147,12 @@ class RagflowBinding:
 _BINDING_SCHEMA = "drawing-context-ragflow-bindings/1"
 
 
-def _binding_path(repository_root: str | Path, target: str | Path | None = None) -> Path:
+def _binding_path(
+    repository_root: str | Path,
+    target: str | Path | None = None,
+    *,
+    create_parent: bool = False,
+) -> Path:
     root = Path(repository_root).resolve()
     runtime_root = (root / "runtime" / "ragflow").resolve()
     destination = (
@@ -159,7 +164,8 @@ def _binding_path(repository_root: str | Path, target: str | Path | None = None)
         destination.relative_to(runtime_root)
     except ValueError as exc:
         raise ValueError("RAGFlow binding registry must remain under runtime/ragflow/") from exc
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    if create_parent:
+        destination.parent.mkdir(parents=True, exist_ok=True)
     return destination
 
 
@@ -214,7 +220,7 @@ class RagflowBindingRegistry:
         repository_root: str | Path,
         target: str | Path | None = None,
     ) -> dict[str, Any]:
-        destination = _binding_path(repository_root, target)
+        destination = _binding_path(repository_root, target, create_parent=True)
         payload = {
             "schema": _BINDING_SCHEMA,
             "canonical": False,

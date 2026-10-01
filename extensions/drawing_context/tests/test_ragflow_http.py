@@ -185,7 +185,7 @@ def test_production_search_hides_unmapped_unauthorized_and_stale_content():
                     {"id": "allowed-chunk", "content": "allowed"},
                     {"id": "other-chunk", "content": "secret other source"},
                     {"id": "stale-chunk", "content": "stale revision"},
-                    {"id": "unknown", "content": "unmapped"},
+                    {"id": "unknown", "content": "unmapped-secret-body"},
                 ]
             },
         },
@@ -217,7 +217,7 @@ def test_production_search_hides_unmapped_unauthorized_and_stale_content():
     rendered = str(result)
     assert "secret other source" not in rendered
     assert "stale revision" not in rendered
-    assert "unmapped" not in rendered
+    assert "unmapped-secret-body" not in rendered
 
 
 def test_revision_replace_adds_new_chunks_before_deleting_old_revision():

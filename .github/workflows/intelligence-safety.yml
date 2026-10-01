@@ -8,6 +8,7 @@ on:
       - master
       - "feat/mcp-jev-graph-readonly-*"
       - "feat/code-intelligence-*"
+      - "feat/ragflow-retrieval-benchmark-*"
 
 permissions:
   contents: read
@@ -44,4 +45,4 @@ jobs:
       - name: Test drawing-context safety contracts
         env:
           PYTHONPATH: extensions/drawing_context
-        run: python -m pytest -q extensions/drawing_context/tests/test_fabric.py
+        run: python -m pytest -q extensions/drawing_context/tests

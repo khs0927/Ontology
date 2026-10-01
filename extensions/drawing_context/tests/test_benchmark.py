@@ -153,7 +153,7 @@ def test_duplicate_results_are_reported_without_double_counting_expected_recall(
     assert metrics["duplicate_hits"] == 1
 
 
-def test_custom_thresholds_can_be_stricter_but_cannot_relax_security_silently():
+def test_custom_quality_thresholds_can_be_stricter():
     metrics = evaluate_benchmark(
         [_case()],
         {"door-query": {"hits": [_hit()]}},
@@ -161,6 +161,20 @@ def test_custom_thresholds_can_be_stricter_but_cannot_relax_security_silently():
     )
     strict = PromotionThresholds(recall_at_k=1.0, mrr=1.0)
     assert promotion_decision(metrics, strict)["status"] == "PASS"
+
+
+def test_security_thresholds_cannot_be_relaxed():
+    for kwargs in [
+        {"provenance_metadata_coverage": 0.99},
+        {"unauthorized_source_leakage": 1},
+        {"stale_revision_leakage": 1},
+    ]:
+        try:
+            PromotionThresholds(**kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"security hard gate was relaxed: {kwargs}")
 
 
 def test_fixture_rejects_projection_with_bad_hash_metadata():

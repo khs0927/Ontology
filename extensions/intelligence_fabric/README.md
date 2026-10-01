@@ -87,3 +87,18 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
 No network, provider key, HydraDB server, or Jev installation is required for the unit tests.
+
+
+## Incremental code intelligence
+
+The code-intelligence layer follows the same rule as CAIR: **source files are truth; code graphs and indexes are derived**. `scan_code_tree()` builds a deterministic SHA-256 inventory and `refresh_code_snapshot()` compares it with the previous runtime snapshot.
+
+```python
+from intelligence_fabric import refresh_code_snapshot
+
+report = refresh_code_snapshot(".")
+# runtime/code-intelligence/snapshot.json
+# report["diff"]["derived_code_graph_stale"] == True when source changed
+```
+
+Snapshots are restricted to `runtime/code-intelligence/`. They never write `global/`, project CAIR, or source files. Each file record carries `provenance="filesystem"` and `evidence="EXTRACTED"`. Added, modified, and deleted paths are reported explicitly so a future Tree-sitter/Graphify-style code graph can be incrementally reconciled rather than treated as authoritative.

@@ -52,12 +52,14 @@ class PromotionThresholds:
     stale_revision_leakage: int = 0
 
     def __post_init__(self):
-        for name in ("recall_at_k", "mrr", "provenance_metadata_coverage"):
+        for name in ("recall_at_k", "mrr"):
             value = getattr(self, name)
             if not 0 <= value <= 1:
                 raise ValueError(f"{name} must be between 0 and 1")
-        if self.unauthorized_source_leakage < 0 or self.stale_revision_leakage < 0:
-            raise ValueError("leakage thresholds cannot be negative")
+        if self.provenance_metadata_coverage != 1.0:
+            raise ValueError("provenance metadata coverage is a hard gate fixed at 1.0")
+        if self.unauthorized_source_leakage != 0 or self.stale_revision_leakage != 0:
+            raise ValueError("authorization and revision leakage hard gates are fixed at zero")
 
 
 def _metadata(hit: dict[str, Any]) -> dict[str, Any]:

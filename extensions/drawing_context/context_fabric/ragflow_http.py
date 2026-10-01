@@ -310,7 +310,7 @@ class RagflowHttpAdapter:
             "canonical_mutation": False,
         }
 
-    def search(
+    def benchmark_search(
         self,
         question: str,
         *,
@@ -318,6 +318,11 @@ class RagflowHttpAdapter:
         use_kg: bool = False,
         metadata_filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Raw diagnostic retrieval for benchmark measurement only.
+
+        This method may surface unmapped, unauthorized, or stale remote hits so
+        the benchmark can measure them. Production context must use search().
+        """
         self._require_enabled()
         if not question.strip():
             raise ValueError("question must be non-empty")
@@ -380,6 +385,53 @@ class RagflowHttpAdapter:
             "release": self.config.release,
             "hits": hits,
             "unmapped_remote_hits": unmapped,
+            "diagnostic_only": True,
+            "canonical_mutation": False,
+        }
+
+    def search(
+        self,
+        question: str,
+        *,
+        allowed_source_ids: set[str] | frozenset[str],
+        current_revision_by_source: dict[str, str],
+        top_k: int = 5,
+        use_kg: bool = False,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Fail-closed production retrieval.
+
+        Only mapped hits from an allowed source and its current revision are
+        returned. Blocked hit content is not exposed to the caller.
+        """
+        raw = self.benchmark_search(
+            question,
+            top_k=top_k,
+            use_kg=use_kg,
+            metadata_filter=metadata_filter,
+        )
+        safe_hits: list[dict[str, Any]] = []
+        blocked = {"unmapped": 0, "unauthorized": 0, "stale_revision": 0}
+        for hit in raw["hits"]:
+            metadata = hit.get("metadata")
+            if not isinstance(metadata, dict) or hit.get("remote_unmapped") is True:
+                blocked["unmapped"] += 1
+                continue
+            source_id = metadata.get("source_id")
+            revision_id = metadata.get("revision_id")
+            if source_id not in allowed_source_ids:
+                blocked["unauthorized"] += 1
+                continue
+            if current_revision_by_source.get(source_id) != revision_id:
+                blocked["stale_revision"] += 1
+                continue
+            safe_hits.append(hit)
+        return {
+            "status": "SUCCESS",
+            "provider": "ragflow",
+            "release": self.config.release,
+            "hits": safe_hits,
+            "blocked_remote_hits": blocked,
             "canonical_mutation": False,
         }
 

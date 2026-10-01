@@ -16,13 +16,14 @@ C++ ObjectARX hot paths when justified, COM fallback only**.
 - Explicit revision compare-and-swap, revocation, source-scope filtering before limit.
 - Candidate rank fusion and deterministic ingestion planning; no per-entity MCP calls.
 - RAGFlow **internal projection DTO** export, retaining external-to-canonical mapping.
+- Version-pinned RAGFlow v0.27.2 HTTP sidecar contract with local derived chunk bindings, revision replacement, ACL/revision fail-closed production search, and diagnostic-only raw benchmark retrieval.
 - Power CAD candidate validation against caller-supplied native observations.
 - Real ezdxf integration test using the **existing** operational parser, two layouts,
   Korean text, source checksum preservation and handle-bearing search results.
 
 ## Not deployed / not claimed
 
-No Drive account scan, OAuth refresh, background service, RAGFlow server/API upload,
+No Drive account scan, OAuth refresh, background service, **live** RAGFlow server/API upload,
 production PostgreSQL migration, embedding inference, graph inference, AutoCAD binary,
 C++ plugin, or live CAD operation is implemented by this increment.
 The planner emits jobs; it does not run a queue. The live guard verifies an adapter's
@@ -78,8 +79,7 @@ Manifest example (replace hash with captured bytes, not this placeholder):
    Do not silently rewrite bad historical provenance. Quarantine it for reprocessing.
 5. Multi-source CAIR snapshots must be split by verified source hash before import.
 6. Missing layout/units/handle stays unknown. No image coordinate is treated as CAD WCS.
-7. RAGFlow retrieval returns candidates; resolve canonical IDs through the catalog
-   and current authorization before showing content or constructing Power CAD context.
+7. RAGFlow retrieval returns candidates; remote chunk IDs are re-bound through the local derived registry. Production search returns only mapped IDs from an authorized source and its current revision before showing content or constructing Power CAD context. Raw `benchmark_search()` is diagnostic-only and may surface untrusted hits for measurement.
 8. Do not mount live DB volumes on Google Drive. Drive stores files and consistent exports.
 
 Runtime cache paths should be outside the repository. No dependency or service was added

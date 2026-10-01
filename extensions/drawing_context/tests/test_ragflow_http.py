@@ -321,6 +321,12 @@ def test_binding_registry_persists_only_under_runtime_and_roundtrips(tmp_path):
     assert restored.snapshot() == registry.snapshot()
 
 
+def test_binding_registry_load_does_not_create_runtime_directory(tmp_path):
+    restored = RagflowBindingRegistry.load_runtime(tmp_path)
+    assert restored.snapshot() == []
+    assert not (tmp_path / "runtime").exists()
+
+
 def test_binding_registry_rejects_path_escape_and_bad_schema(tmp_path):
     registry = RagflowBindingRegistry()
     with pytest.raises(ValueError, match="runtime/ragflow"):

@@ -154,6 +154,8 @@ def verify_ragflow_remote_inventory(
     adapter: RagflowHttpAdapter,
     fixture: dict[str, Any],
     *,
+    current_revision_by_source: dict[str, str],
+    current_sha256_by_source: dict[str, str],
     page_size: int = 100,
     max_pages: int = 1000,
 ) -> dict[str, Any]:
@@ -224,6 +226,40 @@ def verify_ragflow_remote_inventory(
         fixture_content_by_external[external_id] = content
         fixture_metadata_by_external[external_id] = normalized_metadata
 
+    fixture_source_state: dict[str, tuple[str, str]] = {}
+    inconsistent_fixture_source_ids: set[str] = set()
+    for metadata in fixture_metadata_by_external.values():
+        source_id = metadata["source_id"]
+        pair = (metadata["revision_id"], metadata["sha256"])
+        previous = fixture_source_state.get(source_id)
+        if previous is not None and previous != pair:
+            inconsistent_fixture_source_ids.add(source_id)
+        fixture_source_state[source_id] = pair
+
+    canonical_freshness_mismatch_source_ids: list[str] = []
+    missing_current_source_ids: list[str] = []
+    for source_id, (revision_id, sha256) in sorted(fixture_source_state.items()):
+        current_revision = current_revision_by_source.get(source_id)
+        current_sha256 = current_sha256_by_source.get(source_id)
+        if current_revision is None or current_sha256 is None:
+            missing_current_source_ids.append(source_id)
+            continue
+        if current_revision != revision_id or current_sha256 != sha256:
+            canonical_freshness_mismatch_source_ids.append(source_id)
+
+    current_source_state_digest = _digest(
+        [
+            {
+                "source_id": source_id,
+                "revision_id": current_revision_by_source[source_id],
+                "sha256": current_sha256_by_source[source_id],
+            }
+            for source_id in sorted(fixture_source_state)
+            if source_id in current_revision_by_source
+            and source_id in current_sha256_by_source
+        ]
+    )
+
     binding_metadata_mismatch_external_ids: list[str] = []
     for binding in bindings:
         external_id = binding["external_id"]
@@ -277,6 +313,9 @@ def verify_ragflow_remote_inventory(
         or missing_chunks
         or extra_chunks
         or binding_fixture_mismatch
+        or inconsistent_fixture_source_ids
+        or canonical_freshness_mismatch_source_ids
+        or missing_current_source_ids
         or binding_metadata_mismatch_external_ids
         or content_mismatch_chunk_ids
         or content_missing_chunk_ids
@@ -300,6 +339,8 @@ def verify_ragflow_remote_inventory(
                 "remote_document_ids_digest": _digest(remote_docs),
                 "remote_chunk_ids_digest": _digest(remote_chunks),
                 "remote_projection_content_digest": remote_projection_content_digest,
+                "canonical_freshness_verified": True,
+                "current_source_state_digest": current_source_state_digest,
             }
         )
 
@@ -320,6 +361,13 @@ def verify_ragflow_remote_inventory(
         "binding_metadata_mismatch_external_ids": sorted(
             set(binding_metadata_mismatch_external_ids)
         ),
+        "inconsistent_fixture_source_ids": sorted(inconsistent_fixture_source_ids),
+        "missing_current_source_ids": missing_current_source_ids,
+        "canonical_freshness_mismatch_source_ids": (
+            canonical_freshness_mismatch_source_ids
+        ),
+        "canonical_freshness_verified": exact,
+        "current_source_state_digest": current_source_state_digest,
         "content_mismatch_chunk_ids": content_mismatch_chunk_ids,
         "content_missing_chunk_ids": content_missing_chunk_ids,
         "expected_projection_content_digest": expected_projection_content_digest,

@@ -121,6 +121,11 @@ class MCPGateway:
             "aec.operational_search": self._operational_search,
             "aec.operational_ingest": self._operational_ingest,
             "aec.operational_get_object": self._operational_get_object,
+            "aec.element_catalog": self._element_catalog,
+            "aec.find_elements": self._find_elements,
+            "aec.block_catalog": self._block_catalog,
+            "aec.drawing_index": self._drawing_index,
+            "aec.element_context": self._element_context,
         }
 
     def list_tools(self) -> list[dict[str, Any]]:
@@ -873,6 +878,45 @@ class MCPGateway:
             rels = conn.execute("SELECT * FROM aec.relations WHERE project_id = %s AND (subject = %s OR object = %s)", (obj["project_id"], object_id, object_id)).fetchall()
         return {"status": "SUCCESS", "object": dict(obj), "relations": [dict(r) for r in rels]}
 
+    # --- Operational element catalog (read-only, Postgres) ---------------------------
+    def _catalog_call(self, function_name: str, **kwargs: Any) -> dict[str, Any]:
+        import os
+        dsn = os.getenv("AEC_DATABASE_URL", "").strip()
+        if not dsn:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": "AEC_DATABASE_URL is not set; the element catalog reads the operational database"}
+        try:
+            import psycopg
+            from .operational import catalog
+            from .operational.db import Database
+        except ImportError as exc:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": f"operational dependencies missing: {exc}"}
+        try:
+            result = getattr(catalog, function_name)(Database(dsn), **kwargs)
+        except psycopg.OperationalError as exc:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": f"operational database unreachable: {str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__}"}
+        if result is None:
+            return {"status": "NOT_FOUND", "error": f"object not found: {kwargs.get('object_id')}"}
+        return {"status": "SUCCESS", **json.loads(json.dumps(result, ensure_ascii=False, default=str))}
+
+    @staticmethod
+    def _pick(arguments: dict[str, Any], *keys: str) -> dict[str, Any]:
+        return {key: arguments[key] for key in keys if arguments.get(key) is not None}
+
+    def _element_catalog(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._catalog_call("element_catalog", **self._pick(arguments, "project_id"))
+
+    def _find_elements(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._catalog_call("find_elements", **self._pick(arguments, "kind", "project_id", "document_id", "drawing_category", "layer", "block_name", "text", "bbox", "state", "include_properties", "limit", "cursor"))
+
+    def _block_catalog(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._catalog_call("block_catalog", **self._pick(arguments, "project_id", "name_like", "limit", "cursor"))
+
+    def _drawing_index(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._catalog_call("drawing_index", **self._pick(arguments, "project_id", "category", "limit", "cursor"))
+
+    def _element_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._catalog_call("element_context", object_id=str(arguments["object_id"]), **self._pick(arguments, "hops", "limit"))
+
 
 TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.audit", "Audit a repository against the Global AEC framework guardrails", {"type": "object", "properties": {}, "additionalProperties": False}),
@@ -929,4 +973,9 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.operational_search", "Execute multi-stage hybrid search across PostgreSQL and Apache AGE", {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "project_id": {"type": ["string", "null"]}, "kind": {"type": ["string", "null"]}, "top_k": {"type": "integer"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.operational_ingest", "Enqueue CAD, PDF, or IFC sources into the operational database worker queue", {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "project_id": {"type": ["string", "null"]}, "discipline": {"type": ["string", "null"]}, "queue": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.operational_get_object", "Retrieve an architectural object and its relations from PostgreSQL and Apache AGE", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.element_catalog", "Read first: table of contents of parsed drawings in the operational database - element counts by kind (with Korean aliases), drawing category, layer, block, relation predicate and project", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.find_elements", "List parsed elements with CAD handles, layer, block name, attributes, bbox and source evidence; filter by kind (Door/문/창호...), drawing_category (평면도/상세도...), layer, block_name, text, bbox; paginate with cursor", {"type": "object", "properties": {"kind": {"type": ["string", "array", "null"], "items": {"type": "string"}}, "project_id": {"type": ["string", "null"]}, "document_id": {"type": ["string", "null"]}, "drawing_category": {"type": ["string", "null"]}, "layer": {"type": ["string", "null"]}, "block_name": {"type": ["string", "null"]}, "text": {"type": ["string", "null"]}, "bbox": {"type": ["array", "string", "null"], "items": {"type": "number"}}, "state": {"type": ["string", "null"]}, "include_properties": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.block_catalog", "CAD block library aggregated by name across drawings: definitions, instance counts, attribute tags, layers, xref/anonymous flags and what the instances were classified as", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "name_like": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.drawing_index", "Sheet index: documents and layouts with drawing category, title-block number/title/scale and per-sheet element counts", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "category": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.element_context", "Neighbourhood of one element through relations in both directions (contains, instanceOf, hasTitleBlock, hasSection ...), 1-2 hops, confirmed against the AGE graph", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}, "hops": {"type": "integer", "minimum": 1, "maximum": 2}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}}, "additionalProperties": False}),
 )

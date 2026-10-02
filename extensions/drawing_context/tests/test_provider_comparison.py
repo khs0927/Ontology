@@ -256,12 +256,14 @@ def test_comparison_never_claims_canonical_mutation():
         run("lightrag", metrics(p95=120)),
     ])
     assert report["canonical_mutation"] is False
+    assert report["production_evidence_ready"] is False
     assert report["production_adoption_eligible"] is False
+    assert report["operator_approval_required"] is True
     assert report["remote_inventory_verified"] is False
     assert "Production adoption is eligible only" in report["note"]
 
 
-def test_fully_remote_verified_runs_can_become_production_evidence_candidate():
+def test_fully_remote_verified_runs_become_evidence_ready_but_not_auto_approved():
     ragflow = run("ragflow", metrics())
     light = run("lightrag", metrics(recall=0.9, mrr=0.8, p95=120))
     for item in (ragflow, light):
@@ -277,4 +279,6 @@ def test_fully_remote_verified_runs_can_become_production_evidence_candidate():
     assert report["status"] == "SELECTED"
     assert report["selected_provider"] == "ragflow"
     assert report["remote_inventory_verified"] is True
-    assert report["production_adoption_eligible"] is True
+    assert report["production_evidence_ready"] is True
+    assert report["production_adoption_eligible"] is False
+    assert report["operator_approval_required"] is True

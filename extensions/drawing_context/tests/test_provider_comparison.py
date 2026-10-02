@@ -291,7 +291,7 @@ def test_remote_corpus_proof_without_deployment_identity_is_not_evidence_ready()
     assert report["operator_approval_required"] is True
 
 
-def test_remote_and_deployment_proofs_can_make_technical_evidence_ready():
+def test_remote_and_deployment_proofs_still_wait_for_execution_provenance():
     ragflow = run("ragflow", metrics())
     light = run("lightrag", metrics(recall=0.9, mrr=0.8, p95=120))
     for item in (ragflow, light):
@@ -314,6 +314,8 @@ def test_remote_and_deployment_proofs_can_make_technical_evidence_ready():
     assert report["status"] == "SELECTED"
     assert report["remote_inventory_verified"] is True
     assert report["deployment_identity_verified"] is True
-    assert report["production_evidence_ready"] is True
+    assert report["benchmark_execution_verified"] is False
+    assert report["execution_provenance_required"] is True
+    assert report["production_evidence_ready"] is False
     assert report["production_adoption_eligible"] is False
     assert report["operator_approval_required"] is True

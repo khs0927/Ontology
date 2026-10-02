@@ -85,7 +85,10 @@ Invoke-WebRequest http://localhost:58080/health -UseBasicParsing   # 200 이면 
 - PC 에서 도는 워커는 `AEC_EMBEDDING_URL=http://localhost:58080` 을 사용합니다(컨테이너 내부는 `http://embeddings:80`).
 - `run-pipeline.ps1 -Embeddings` 는 위 과정을 자동으로 수행합니다(기동 → `/health` 대기(기본 900초, `-EmbeddingsTimeoutSec`) → `AEC_EMBEDDING_URL` 설정).
 - 비워두면 해시 벡터(`hash-sha256-1024-v1`)로 저장되며 의미 검색이 되지 않습니다. 나중에 임베딩 서버를 켠 뒤
-  `operational.embeddings.reindex_embeddings()` 로 기존 행을 다시 임베딩할 수 있습니다.
+  `python -m aec_intelligence.operational.cli reembed` (= `operational.embeddings.reindex_embeddings()`) 로 기존 행을 다시 임베딩할 수 있습니다.
+  `AEC_EMBEDDING_MODEL` 벡터가 없는 객체만 대상이며, 옵션: `--project P-...`, `--batch-size N`,
+  `--dry-run`(대상/오래된 행 수만 출력), `--delete-stale`(활성 모델 벡터가 생긴 객체의 다른 모델 행 삭제).
+- `AEC_IMPORT_ROOTS` 는 `;` 또는 `os.pathsep`(리눅스 `:`)로 여러 경로를 구분합니다. `C:\`, `G:/` 같은 드라이브 문자는 분리되지 않습니다.
 
 ---
 

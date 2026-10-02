@@ -204,6 +204,13 @@ def _add_batch_commands(subparsers):
     p.add_argument("--pg-restore", default=None)
     p.add_argument("--no-clean", action="store_true", help="Do not drop existing objects first")
 
+    p = subparsers.add_parser("reembed", help="Re-embed objects lacking a vector of AEC_EMBEDDING_MODEL")
+    p.add_argument("--project", default=None, help="Limit to one project id")
+    p.add_argument("--batch-size", type=int, default=None, help="Embedding request batch size")
+    p.add_argument("--dry-run", action="store_true", help="Only count pending objects and stale rows")
+    p.add_argument("--delete-stale", action="store_true",
+                   help="Drop vectors of other models for objects that have the active model's vector")
+
 
 def _cmd_census(parsed, settings, db):
     from .census import DEFAULT_EXTENSIONS, run_census
@@ -274,9 +281,21 @@ def _cmd_restore(parsed, settings, db):
                       clean=not parsed.no_clean))
 
 
+def _cmd_reembed(parsed, settings, db):
+    from .embeddings import EmbeddingService, reindex_embeddings
+
+    if not EmbeddingService(settings).remote_configured:
+        print("WARNING: AEC_EMBEDDING_URL is not set; the target model is the hash fallback.", file=sys.stderr)
+    result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
+                                dry_run=parsed.dry_run, delete_stale=parsed.delete_stale)
+    _emit(result)
+    return result
+
+
 BATCH_COMMANDS = {
     "census": _cmd_census, "enqueue-census": _cmd_enqueue, "run-workers": _cmd_run_workers,
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
+    "reembed": _cmd_reembed,
 }
 
 

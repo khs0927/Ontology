@@ -1,18 +1,372 @@
 """Observations with traceable source coordinates; no inferred BIM solids."""
 import hashlib
 import json
+import math
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 from xml.etree import ElementTree
 
-from ..classifier import classify
-from ..dxf import _normalize_entity, INSUNITS
+from ..cair import Classification
+from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text, semantic_class,
+                          steel_sections, title_block_fields)
+from ..dxf import (_normalize_entity, INSUNITS, NormalizedCADEntity, block_effective_name, decode_dxf_text,
+                   effective_block_name, read_dxf)
 
 PIPELINE_VERSION = 'aec-evidence-1'
 SUPPORTED = {'.dxf','.dwg','.pdf','.svg','.ifc','.png','.jpg','.jpeg','.tif','.tiff'}
 ALIASES = {'Wall':'벽 벽체','Door':'문 출입문','Window':'창 창호','Slab':'슬래브 바닥',
            'Column':'기둥','Beam':'보','Space':'실 공간','Storey':'층','Annotation':'주석 문자',
-           'Dimension':'치수','Document':'도면 문서','View':'뷰 평면도','Page':'페이지 시트'}
+           'Dimension':'치수','Document':'도면 문서','View':'뷰 평면도','Page':'페이지 시트',
+           'Stair':'계단','Furniture':'가구 위생기구','Elevator':'승강기 엘리베이터','Grid':'그리드 통심',
+           'BlockDefinition':'블록 도면블록','Layer':'레이어','TitleBlock':'표제란 도곽 도면번호',
+           'SteelSection':'형강 단면 철골','CADEntity':'블록참조'}
+STRUCTURAL_KINDS = ('Beam','Column')
+ROOM_TAG_RE = re.compile(r'ROOM|RM_?NAME|NAME|실명|실이름|공간', re.IGNORECASE)
+ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.IGNORECASE)
+AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
+SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
+
+
+def _finite_bbox(bounds):
+    """ezdxf BoundingBox -> bbox dict, or {} when empty or not finite."""
+    if bounds is None or not bounds.has_data:
+        return {}
+    values = [*bounds.extmin, *bounds.extmax]
+    if not all(math.isfinite(v) for v in values):
+        return {}
+    return dict(zip(('min_x','min_y','min_z','max_x','max_y','max_z'), values))
+
+
+class _DXFSemantics:
+    """Document-level CAD semantics: block catalog, layer inventory, rooms, sheets, details and steel.
+
+    Everything here is linear in the number of entities; proximity uses a uniform grid per layout.
+    """
+
+    def __init__(self, doc, name, base, document, result, add, relations, warnings):
+        self.doc, self.name, self.base, self.document = doc, name, base, document
+        self.result, self.add, self.relations, self.warnings = result, add, relations, warnings
+        self.root = result['objects'][0]
+        self.blocks = {}
+        self.block_lookup = {}
+        self.insert_counts = Counter()
+        self.layer_counts = Counter()
+        self.block_layer_counts = Counter()
+        self.metrics = Counter()
+        self._relation_ids = set()
+
+    # ----------------------------------------------------------------- helpers
+    def relate(self, subject, predicate, target, state='OBSERVED', **evidence):
+        rel = relation(subject, predicate, target, state, source_hash=self.base['source_hash'], **evidence)
+        if rel['id'] not in self._relation_ids:
+            self._relation_ids.add(rel['id'])
+            self.relations.append(rel)
+
+    # ----------------------------------------------------------------- blocks
+    def catalog_blocks(self, ezbbox):
+        cache = ezbbox.Cache()
+        for block in self.document.blocks:
+            if block.is_any_layout:
+                continue
+            dxf_name = str(block.name)
+            block_name = decode_dxf_text(dxf_name)
+            flags = int(block.block.dxf.get('flags', 0) or 0)
+            is_xref = bool(flags & 4 or flags & 8)
+            is_anonymous = block_name.startswith('*') or bool(flags & 1)
+            if is_xref:
+                self.warnings.append(f'XREF requires review: {block_name}')
+            entity_counts, layers, nested, attdefs, texts = Counter(), Counter(), Counter(), [], []
+            for entity in block:
+                kind = entity.dxftype()
+                entity_counts[kind] += 1
+                layer = decode_dxf_text(entity.dxf.get('layer', '0'))
+                layers[layer] += 1
+                if kind == 'INSERT':
+                    nested[decode_dxf_text(effective_block_name(entity))] += 1
+                elif kind == 'ATTDEF':
+                    attdefs.append({'tag': decode_dxf_text(entity.dxf.get('tag', '')),
+                                    'prompt': decode_dxf_text(entity.dxf.get('prompt', '')),
+                                    'default': decode_dxf_text(entity.dxf.get('text', '')),
+                                    'constant': bool(int(entity.dxf.get('flags', 0) or 0) & 2)})
+                elif kind in ('TEXT', 'MTEXT') and len(texts) < 20:
+                    try:
+                        value = entity.plain_text() if kind == 'MTEXT' else entity.dxf.get('text', '')
+                    except Exception:
+                        value = entity.dxf.get('text', '')
+                    value = decode_dxf_text(value).strip()
+                    if value:
+                        texts.append(value[:120])
+            self.block_layer_counts.update(layers)
+            effective = decode_dxf_text(block_effective_name(block.block_record) or dxf_name)
+            properties = {
+                'name': block_name, 'dxf_name': dxf_name, 'effective_name': effective, 'is_anonymous': is_anonymous,
+                'anonymous_kind': block_name[1:2].upper() if block_name.startswith('*') else '',
+                'is_xref': is_xref, 'is_dynamic_representation': effective != block_name,
+                'entity_count': sum(entity_counts.values()), 'entity_count_by_type': dict(sorted(entity_counts.items())),
+                'attribute_defs': attdefs, 'nested_block_names': sorted(nested),
+                'nested_reference_counts': dict(sorted(nested.items())), 'layers_used': sorted(layers),
+                'texts': texts, 'insert_count': 0, 'insert_count_by_layout': {}, 'effective_names': [effective],
+            }
+            try:
+                properties['base_point'] = [float(v) for v in block.block.dxf.get('base_point', (0, 0, 0))]
+            except Exception:
+                pass
+            if xref_path := (block.block.dxf.get('xref_path', '') if is_xref else ''):
+                properties['xref_path'] = str(xref_path)
+            if not is_xref and entity_counts:
+                try:
+                    properties['block_bbox'] = _finite_bbox(ezbbox.extents(block, fast=True, cache=cache))
+                except Exception:
+                    pass
+            # Same rules as INSERT classification so "every door block" is answerable without instances.
+            probe = NormalizedCADEntity(block_name, 'INSERT', '0', properties={
+                'block_name': block_name, 'effective_name': effective,
+                'attributes': {a['tag']: a['default'] for a in attdefs}})
+            semantic, classification = classify(probe)
+            properties['semantic_type'] = semantic if semantic != 'CADEntity' else ''
+            properties['classification'] = classification.to_dict()
+            if title_block_fields({a['tag']: a['default'] or a['tag'] for a in attdefs}):
+                properties['semantic_type'] = 'TitleBlock'
+            label = ' '.join(filter(None, (block_name, effective if effective != block_name else '',
+                                           properties['semantic_type'], ' '.join(a['tag'] for a in attdefs),
+                                           ' '.join(texts[:5]))))
+            obj = observation(self.doc, 'block:' + dxf_name, 'BlockDefinition', f'{self.name} {label}',
+                              {**self.base, 'block': block_name}, properties=properties)
+            self.blocks[dxf_name] = obj
+            self.block_lookup[dxf_name] = self.block_lookup[block_name] = obj
+            self.add(obj)
+        # Dynamic block representations point back to their source definition.
+        for obj in self.blocks.values():
+            block_name, effective = obj['properties']['name'], obj['properties']['effective_name']
+            source = self.block_lookup.get(effective)
+            if effective != block_name and source is not None:
+                source['properties']['effective_names'].append(block_name)
+                self.relate(obj['id'], 'derivedFrom', source['id'], method='AcDbBlockRepBTag')
+        self.metrics['blocks'] = len(self.blocks)
+        self.metrics['anonymous_blocks'] = sum(o['properties']['is_anonymous'] for o in self.blocks.values())
+
+    # ----------------------------------------------------------------- layouts
+    def begin_layout(self, sheet, view):
+        self.sheet, self.view = sheet, view
+        self.is_paper = not sheet.is_modelspace
+        self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
+        self.layout_objects = []
+
+    def count_entity(self, entity):
+        self.layer_counts[decode_dxf_text(entity.dxf.get('layer', '0'))] += 1
+        if entity.dxftype() == 'INSERT':
+            name = str(entity.dxf.get('name', ''))
+            self.insert_counts[name] += 1
+            block = self.blocks.get(name)
+            if block is not None:
+                per_layout = block['properties']['insert_count_by_layout']
+                per_layout[self.sheet.name] = per_layout.get(self.sheet.name, 0) + 1
+
+    def enrich(self, obj, normalized, evidence):
+        props = normalized.properties
+        kind = obj['type']
+        obj['properties']['layer'] = normalized.layer
+        self.layout_objects.append(obj)
+        if normalized.entity_type == 'INSERT':
+            self.metrics['inserts'] += 1
+            raw = str(props.get('block_name', ''))
+            effective = str(props.get('effective_name') or raw)
+            target = self.block_lookup.get(effective) or self.block_lookup.get(raw)
+            if target is not None:
+                self.relate(obj['id'], 'instanceOf', target['id'], block=raw, effective_block=effective)
+            if kind == 'TitleBlock':
+                self.metrics['title_blocks'] += 1
+                self.title_blocks.append(obj)
+            self._insert_attributes(obj, props.get('attributes') or {}, evidence)
+            if kind in STRUCTURAL_KINDS:
+                self.members.append(obj)
+            return
+        if kind in STRUCTURAL_KINDS:
+            self.members.append(obj)
+        if normalized.entity_type not in ('TEXT', 'MTEXT'):
+            return
+        text = str(props.get('text') or '').strip()
+        if not text:
+            return
+        mark = element_mark(text)
+        if mark:
+            obj['properties'].update(mark)
+        finer, room = semantic_class(normalized, kind)
+        if finer == 'Space':
+            self._space(obj, room, evidence, 'text')
+        for i, section in enumerate(steel_sections(text)):
+            self._section(obj, section, evidence, i, normalized)
+        detail = detail_title(text)
+        if detail:
+            obj['properties']['detail_title'] = detail['detail_title']
+            obj['properties']['detail_category'] = detail['drawing_category']
+            if detail['strong']:
+                self._detail_view(obj, detail, evidence)
+        if len(text) <= 40 and drawing_category(('text', text))['drawing_category'] != '기타':
+            self.title_texts.append((float(props.get('height') or 0.0), text))
+
+    def _insert_attributes(self, obj, attributes, evidence):
+        room, number, area = None, None, None
+        for tag, value in attributes.items():
+            value = str(value).strip()
+            if not value:
+                continue
+            if ROOM_NUMBER_TAG_RE.search(tag):
+                number = value
+            elif AREA_TAG_RE.search(tag):
+                found = re.search(r'\d+(?:[.,]\d+)?', value)
+                area = float(found.group(0).replace(',', '.')) if found else None
+            elif ROOM_TAG_RE.search(tag) and room is None:
+                room = room_from_text(value)
+            if SECTION_TAG_RE.search(tag):
+                for i, section in enumerate(steel_sections(value)):
+                    sec = self._section(obj, section, evidence, f'{tag}:{i}', None)
+                    if obj['type'] in STRUCTURAL_KINDS:
+                        # The designation is an attribute of this very member: direct evidence.
+                        self.relate(obj['id'], 'hasSection', sec['id'], 'AI_INFERRED', method='member_attribute', tag=tag)
+        if room:
+            if number and 'roomNumber' not in room:
+                room['roomNumber'] = number
+            if area and area > 0 and 'area' not in room:
+                room['area'] = area
+            self._space(obj, room, evidence, 'block_attribute')
+
+    def _space(self, source, room, evidence, method):
+        self.metrics['spaces'] += 1
+        label = ' '.join(str(room[k]) for k in ('roomNumber', 'roomName') if k in room)
+        space = observation(self.doc, f"{evidence['layout']}:{evidence['handle']}:space", 'Space',
+                            f"{self.name} {self.sheet.name} {label} {ALIASES['Space']}",
+                            {**evidence, 'derived_from': source['id'], 'method': method}, source['bbox'],
+                            state='AI_INFERRED',
+                            properties={**room, 'source_annotation': source['id'], 'layer': source['properties'].get('layer', ''),
+                                        'classification': {'label': 'Space', 'confidence': 0.8, 'method': f'room_vocabulary_{method}',
+                                                           'evidence': [f'room name: {room["roomName"]}'],
+                                                           'state': 'ACCEPT_WITH_WARNING'}})
+        self.add(space, self.view)
+        self.layout_objects.append(space)
+        self.relate(space['id'], 'derivedFrom', source['id'], method=method)
+        return space
+
+    def _section(self, source, section, evidence, index, normalized):
+        self.metrics['steel_sections'] += 1
+        sec = observation(self.doc, f"{evidence['layout']}:{evidence['handle']}:section:{index}", 'SteelSection',
+                          f"{self.name} {self.sheet.name} {section['sectionDesignation']} {ALIASES['SteelSection']}",
+                          {**evidence, 'derived_from': source['id']}, source['bbox'], state='OBSERVED',
+                          properties={**section, 'source_annotation': source['id'],
+                                      'layer': source['properties'].get('layer', '')})
+        self.add(sec, self.view)
+        self.layout_objects.append(sec)
+        self.relate(sec['id'], 'derivedFrom', source['id'], method='section_designation_text')
+        if normalized is not None and source['bbox']:
+            point = normalized.geometry.get('location') or [source['bbox']['min_x'], source['bbox']['min_y']]
+            height = float(normalized.properties.get('height') or 0.0)
+            self.sections.append((sec, source['bbox'], point, height))
+        return sec
+
+    def _detail_view(self, source, detail, evidence):
+        self.metrics['detail_views'] += 1
+        title = detail['detail_title']
+        view = observation(self.doc, f"detail:{evidence['layout']}:{evidence['handle']}", 'View',
+                           f"{self.name} {self.sheet.name} {title} {detail['drawing_category']}",
+                           {**evidence, 'derived_from': source['id']}, source['bbox'], state='AI_INFERRED',
+                           properties={'view_kind': 'detail', 'detail_title': title,
+                                       'drawing_category': detail['drawing_category'], 'source_annotation': source['id'],
+                                       'region': 'title_text_bbox', 'layout': self.sheet.name,
+                                       'layer': source['properties'].get('layer', '')})
+        self.add(view, self.view)
+        self.relate(view['id'], 'derivedFrom', source['id'], method='detail_title_text')
+
+    def end_layout(self):
+        view, sheet = self.view, self.sheet
+        title = self.title_blocks[0] if self.title_blocks else None
+        fields = title['properties'] if title else {}
+        texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
+        candidates = [('title_block', fields.get('drawingTitle', ''))]
+        if self.is_paper:
+            candidates += [('drawing_title_text', texts[0] if texts else ''), ('layout_name', sheet.name), ('file_name', self.name)]
+        else:
+            candidates += [('file_name', self.name), ('drawing_title_text', texts[0] if texts else '')]
+        view['properties'].update(drawing_category(*candidates))
+        view['properties']['layout_kind'] = 'paper' if self.is_paper else 'model'
+        if title:
+            view['properties'].update({k: fields[k] for k in ('drawingNumber', 'drawingTitle', 'scale', 'revisionLabel', 'date')
+                                       if k in fields})
+            view['properties']['title_block'] = title['id']
+            self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
+        view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
+        category = view['properties']['drawing_category']
+        for obj in self.layout_objects:
+            # Elements inherit their sheet's category; detail-view candidates keep their own.
+            obj['properties'].setdefault('drawing_category', category)
+        self._link_sections()
+
+    def _link_sections(self):
+        """Relate a section text to a Beam/Column only when exactly one member's bbox (plus a margin) holds it."""
+        members = [m for m in self.members if m['bbox'] and all(k in m['bbox'] for k in ('min_x', 'min_y', 'max_x', 'max_y'))]
+        if not members or not self.sections:
+            return
+        spans = sorted(max(m['bbox']['max_x'] - m['bbox']['min_x'], m['bbox']['max_y'] - m['bbox']['min_y']) for m in members)
+        cell = max(spans[len(spans) // 2], 4.0 * max(h for *_, h in self.sections), 1.0)
+        grid = defaultdict(list)
+        for i, member in enumerate(members):
+            b = member['bbox']
+            x0, x1 = int(math.floor(b['min_x'] / cell)), int(math.floor(b['max_x'] / cell))
+            y0, y1 = int(math.floor(b['min_y'] / cell)), int(math.floor(b['max_y'] / cell))
+            if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096:
+                continue  # pathological extents (e.g. a grid line across the site) are never direct evidence
+            for gx in range(x0, x1 + 1):
+                for gy in range(y0, y1 + 1):
+                    grid[(gx, gy)].append(i)
+        for sec, _, point, height in self.sections:
+            margin = max(2.0 * height, 1e-6)
+            x, y = float(point[0]), float(point[1])
+            hits = set()
+            for gx in range(int(math.floor((x - margin) / cell)), int(math.floor((x + margin) / cell)) + 1):
+                for gy in range(int(math.floor((y - margin) / cell)), int(math.floor((y + margin) / cell)) + 1):
+                    for i in grid.get((gx, gy), ()):
+                        b = members[i]['bbox']
+                        if b['min_x'] - margin <= x <= b['max_x'] + margin and b['min_y'] - margin <= y <= b['max_y'] + margin:
+                            hits.add(i)
+            if len(hits) == 1:
+                member = members[hits.pop()]
+                self.relate(member['id'], 'hasSection', sec['id'], 'AI_INFERRED', method='text_within_member_bbox',
+                            margin=margin)
+                sec['properties']['member'] = member['id']
+
+    # ----------------------------------------------------------------- document
+    def finish(self):
+        for block_name, obj in self.blocks.items():
+            obj['properties']['insert_count'] = self.insert_counts.get(block_name, 0)
+        for obj in self.blocks.values():
+            obj['properties']['effective_insert_count'] = obj['properties']['insert_count']
+        for obj in self.blocks.values():
+            effective = obj['properties']['effective_name']
+            source = self.block_lookup.get(effective)
+            if effective != obj['properties']['name'] and source is not None:
+                source['properties']['effective_insert_count'] += obj['properties']['insert_count']
+        layers = {decode_dxf_text(layer.dxf.name): layer for layer in self.document.layers}
+        for layer_name in sorted(set(self.layer_counts) | set(self.block_layer_counts)):
+            entry = layers.get(layer_name)
+            properties = {'name': layer_name, 'entity_count': self.layer_counts.get(layer_name, 0),
+                          'block_entity_count': self.block_layer_counts.get(layer_name, 0), 'declared': entry is not None}
+            if entry is not None:
+                try:
+                    properties.update({'color': int(entry.dxf.get('color', 7)), 'linetype': str(entry.dxf.get('linetype', 'Continuous')),
+                                       'lineweight': int(entry.dxf.get('lineweight', -3)), 'is_off': bool(entry.is_off()),
+                                       'is_frozen': bool(entry.is_frozen()), 'is_locked': bool(entry.is_locked())})
+                    if entry.dxf.hasattr('true_color'):
+                        properties['true_color'] = int(entry.dxf.true_color)
+                except Exception:
+                    pass
+            found = _match(layer_name.lower())
+            properties['semantic_type'] = found[0] if found else ''
+            obj = observation(self.doc, 'layer:' + layer_name, 'Layer',
+                              f"{self.name} {layer_name} {properties['semantic_type']}", {**self.base, 'layer_name': layer_name},
+                              properties=properties)
+            self.add(obj)
+        self.metrics['layers'] = len(set(self.layer_counts) | set(self.block_layer_counts))
+        self.result['metrics'].update(self.metrics)
 
 
 def digest(value):
@@ -59,18 +413,18 @@ def parse_source(source, doc, output, settings, source_name=None):
         source = Path(converted.output)
         suffix = '.dxf'
     if suffix == '.dxf':
-        import ezdxf
         from ezdxf import bbox as ezbbox, disassemble
         from ezdxf.addons.drawing import Frontend,RenderContext,layout,svg
-        document = ezdxf.readfile(source)
-        result['units'] = INSUNITS.get(int(document.header.get('$INSUNITS',0)), 'unknown')
-        for block in document.blocks:
-            if block.block.dxf.flags & 4:
-                warnings.append(f'XREF requires review: {block.name}')
+        document, read_warnings = read_dxf(source)
+        warnings.extend(read_warnings)
+        result['units'] = INSUNITS.get(int(document.header.get('$INSUNITS',0) or 0), 'unknown')
+        semantics = _DXFSemantics(doc, name, base, document, result, add, relations, warnings)
+        semantics.catalog_blocks(ezbbox)
         for index, sheet in enumerate(document.layouts):
             view = observation(doc,'layout:'+sheet.name,'View',f'{name} {sheet.name}',{**base,'layout':sheet.name})
             add(view)
             result['metrics']['views'] += 1
+            semantics.begin_layout(sheet, view)
             preview = output/f'layout-{index}.svg'
             backend = svg.SVGBackend()
             try:
@@ -84,6 +438,7 @@ def parse_source(source, doc, output, settings, source_name=None):
                 for entity in sheet:
                     result['metrics']['raw_entities'] += 1
                     handle = str(entity.dxf.handle)
+                    semantics.count_entity(entity)
                     try:
                         normalized = _normalize_entity(entity)
                         bounds = ezbbox.extents([entity],fast=False)
@@ -103,18 +458,36 @@ def parse_source(source, doc, output, settings, source_name=None):
                         normalized.geometry['world_primitives'] = primitives
                         geometry_file.write(json.dumps(normalized.to_dict(),ensure_ascii=False,default=str)+'\n')
                         kind, classification = classify(normalized)
-                        if kind == 'CADEntity':
+                        is_insert = normalized.entity_type == 'INSERT'
+                        title_fields = title_block_fields(normalized.properties.get('attributes')) if is_insert else None
+                        if title_fields:
+                            kind = 'TitleBlock'
+                            classification = Classification('TitleBlock', 0.9, 'attribute_rules',
+                                ('attribute tags indicate title block: ' + ', '.join(sorted(title_fields)),
+                                 f'block={normalized.properties.get("block_name")}'), 'ACCEPT_WITH_WARNING')
+                        if kind == 'CADEntity' and not is_insert:
                             continue
-                        text = str(normalized.properties.get('text') or normalized.properties.get('block_name') or '')
+                        props = normalized.properties
+                        if is_insert:
+                            attribute_text = ' '.join(str(v) for v in (props.get('attributes') or {}).values())
+                            text = f"{props.get('effective_name') or props.get('block_name') or ''} {attribute_text}".strip()
+                        else:
+                            text = str(props.get('text') or props.get('block_name') or '')
                         evidence = {**base,'layout':sheet.name,'handle':handle,'coordinate_system':'CAD_WCS',
                                     'geometry_path':_safe_relative(output/f'geometry-{index}.jsonl', settings.data_root)}
+                        state = 'OBSERVED' if kind in ('Annotation','Dimension','CADEntity') else 'AI_INFERRED'
                         obj = observation(doc,f'{sheet.name}:{handle}',kind,
                             f'{name} {sheet.name} {normalized.layer} {text} {ALIASES.get(kind,kind)}',evidence,
-                            normalized.bbox,state='AI_INFERRED' if kind not in ('Annotation','Dimension') else 'OBSERVED',
-                            properties={**normalized.properties,'classification':classification.to_dict()})
+                            normalized.bbox,state=state,
+                            properties={**props,'classification':classification.to_dict()})
+                        if title_fields:
+                            obj['properties'].update(title_fields)
                         add(obj,view)
+                        semantics.enrich(obj, normalized, evidence)
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
+            semantics.end_layout()
+        semantics.finish()
         warnings.append('Layer-based building classes are candidates, not confirmed physical elements.')
     elif suffix == '.ifc':
         from ..formats import IFCParser,normalize_ifc_to_cair

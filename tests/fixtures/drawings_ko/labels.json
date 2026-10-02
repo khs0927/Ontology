@@ -1,0 +1,3446 @@
+{
+ "schema": "aec-ko-drawing-labels/1",
+ "generator": "scripts/make_ko_fixtures.py",
+ "ezdxf_version": "1.4.4",
+ "entity_classes": [
+  "Door",
+  "Window",
+  "Wall",
+  "Space",
+  "Column",
+  "Beam",
+  "SteelSection",
+  "TitleBlock",
+  "Furniture",
+  "Annotation",
+  "Grid",
+  "Dimension",
+  "BuildingElementProxy"
+ ],
+ "sheet_categories": [
+  "plan",
+  "elevation",
+  "section",
+  "detail",
+  "structural",
+  "schedule"
+ ],
+ "notes": [
+  "Every model-space entity of every file is listed under entities[].",
+  "Entries with score=false (e.g. xref INSERTs) are excluded from metrics.",
+  "refers_to on Annotation entries names the element a tag/schedule cell describes; it is not the expected class.",
+  "blocks[] lists every block definition in the file with its expected category; implicit=true marks ezdxf side-effect blocks."
+ ],
+ "files": {
+  "A-101_1층평면도.dxf": {
+   "sheet": {
+    "number": "A-101",
+    "title": "1층 평면도",
+    "category": "plan",
+    "scale": "1/100",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "ED",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X1"
+    },
+    {
+     "handle": "EE",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X1"
+     }
+    },
+    {
+     "handle": "F1",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X2"
+    },
+    {
+     "handle": "F2",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X2"
+     }
+    },
+    {
+     "handle": "F5",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X3"
+    },
+    {
+     "handle": "F6",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X3"
+     }
+    },
+    {
+     "handle": "F9",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X4"
+    },
+    {
+     "handle": "FA",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X4"
+     }
+    },
+    {
+     "handle": "FD",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y1"
+    },
+    {
+     "handle": "FE",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y1"
+     }
+    },
+    {
+     "handle": "101",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y2"
+    },
+    {
+     "handle": "102",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y2"
+     }
+    },
+    {
+     "handle": "105",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y3"
+    },
+    {
+     "handle": "106",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y3"
+     }
+    },
+    {
+     "handle": "109",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall",
+     "role": "exterior-outer"
+    },
+    {
+     "handle": "10A",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall",
+     "role": "exterior-inner"
+    },
+    {
+     "handle": "10B",
+     "entity_type": "HATCH",
+     "layer": "A-WALL-PATT",
+     "class": "Wall",
+     "pattern": "ANSI31"
+    },
+    {
+     "handle": "10C",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall",
+     "role": "partition"
+    },
+    {
+     "handle": "10D",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall",
+     "role": "partition"
+    },
+    {
+     "handle": "10E",
+     "entity_type": "LINE",
+     "layer": "WALL-CON",
+     "class": "Wall",
+     "role": "core wall"
+    },
+    {
+     "handle": "10F",
+     "entity_type": "LINE",
+     "layer": "WALL-CON",
+     "class": "Wall",
+     "role": "core wall"
+    },
+    {
+     "handle": "110",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall"
+    },
+    {
+     "handle": "111",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall"
+    },
+    {
+     "handle": "126",
+     "entity_type": "INSERT",
+     "layer": "A-DOOR",
+     "class": "Door",
+     "block": "D1",
+     "attribs": {
+      "DOOR_NO": "D1",
+      "규격": "900x2100",
+      "W": "900",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "12C",
+     "entity_type": "INSERT",
+     "layer": "문",
+     "class": "Door",
+     "block": "문-편개",
+     "attribs": {
+      "DOOR_NO": "D2",
+      "규격": "800x2100",
+      "W": "800",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "152",
+     "entity_type": "INSERT",
+     "layer": "0",
+     "class": "Door",
+     "block": "DOOR_900",
+     "note": "no layer hint",
+     "attribs": {
+      "DOOR_NO": "D3",
+      "규격": "900x2100",
+      "W": "900",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "158",
+     "entity_type": "INSERT",
+     "layer": "A-DOOR",
+     "class": "Door",
+     "block": "SD-01",
+     "attribs": {
+      "DOOR_NO": "SD-01",
+      "규격": "1000x2100",
+      "W": "1000",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "15E",
+     "entity_type": "INSERT",
+     "layer": "A-DOOR-FIRE",
+     "class": "Door",
+     "block": "AD",
+     "note": "방화문 short mark AD",
+     "attribs": {
+      "DOOR_NO": "AD-01",
+      "규격": "1800x2100 (갑종방화문)",
+      "W": "1800",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "16D",
+     "entity_type": "INSERT",
+     "layer": "0",
+     "class": "Door",
+     "block": "*U12",
+     "note": "dynamic block anonymous reference; effective name DOOR_DYN in XDATA",
+     "attribs": {
+      "DOOR_NO": "D4",
+      "규격": "800x2100"
+     }
+    },
+    {
+     "handle": "171",
+     "entity_type": "LINE",
+     "layer": "A-DOOR",
+     "class": "Door",
+     "note": "exploded door leaf"
+    },
+    {
+     "handle": "172",
+     "entity_type": "ARC",
+     "layer": "A-DOOR",
+     "class": "Door",
+     "note": "exploded door swing"
+    },
+    {
+     "handle": "18C",
+     "entity_type": "INSERT",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "block": "W1",
+     "attribs": {
+      "WIN_NO": "W1",
+      "규격": "1500x1200",
+      "W": "1500",
+      "H": "1200"
+     }
+    },
+    {
+     "handle": "192",
+     "entity_type": "INSERT",
+     "layer": "창호",
+     "class": "Window",
+     "block": "창-미서기",
+     "attribs": {
+      "WIN_NO": "W2",
+      "규격": "2400x1500",
+      "W": "2400",
+      "H": "1500"
+     }
+    },
+    {
+     "handle": "1BC",
+     "entity_type": "INSERT",
+     "layer": "0",
+     "class": "Window",
+     "block": "WIN_1500",
+     "note": "no layer hint",
+     "attribs": {
+      "WIN_NO": "W3",
+      "규격": "1500x1200",
+      "W": "1500",
+      "H": "1200"
+     }
+    },
+    {
+     "handle": "1C2",
+     "entity_type": "INSERT",
+     "layer": "A-WIND",
+     "class": "Window",
+     "block": "AW-02",
+     "attribs": {
+      "WIN_NO": "AW-02",
+      "규격": "1200x1200",
+      "W": "1200",
+      "H": "1200"
+     }
+    },
+    {
+     "handle": "1C8",
+     "entity_type": "INSERT",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "block": "PW",
+     "attribs": {
+      "WIN_NO": "PW-01",
+      "규격": "900x600",
+      "W": "900",
+      "H": "600"
+     }
+    },
+    {
+     "handle": "1CE",
+     "entity_type": "LINE",
+     "layer": "창호",
+     "class": "Window",
+     "note": "exploded window line 1"
+    },
+    {
+     "handle": "1CF",
+     "entity_type": "LINE",
+     "layer": "창호",
+     "class": "Window",
+     "note": "exploded window line 2"
+    },
+    {
+     "handle": "1D0",
+     "entity_type": "LINE",
+     "layer": "창호",
+     "class": "Window",
+     "note": "exploded window line 3"
+    },
+    {
+     "handle": "1D1",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-TAG",
+     "class": "Annotation",
+     "text": "W1",
+     "role": "window tag",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "1D2",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-TAG",
+     "class": "Annotation",
+     "text": "SD-01",
+     "role": "door tag",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "1D3",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "거실",
+     "space": "거실"
+    },
+    {
+     "handle": "1D4",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "27.5㎡",
+     "role": "area",
+     "space": "거실"
+    },
+    {
+     "handle": "1D5",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "침실1",
+     "space": "침실1"
+    },
+    {
+     "handle": "1D6",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "17.6㎡",
+     "role": "area",
+     "space": "침실1"
+    },
+    {
+     "handle": "1D7",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "주방",
+     "space": "주방"
+    },
+    {
+     "handle": "1D8",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "17.6㎡",
+     "role": "area",
+     "space": "주방"
+    },
+    {
+     "handle": "1D9",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "현관",
+     "space": "현관"
+    },
+    {
+     "handle": "1DA",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "8.4㎡",
+     "role": "area",
+     "space": "현관"
+    },
+    {
+     "handle": "1DB",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "화장실",
+     "space": "화장실"
+    },
+    {
+     "handle": "1DC",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "6.2㎡",
+     "role": "area",
+     "space": "화장실"
+    },
+    {
+     "handle": "1DD",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "발코니",
+     "space": "발코니"
+    },
+    {
+     "handle": "1DE",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "8.8㎡",
+     "role": "area",
+     "space": "발코니"
+    },
+    {
+     "handle": "1DF",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "창고",
+     "space": "창고"
+    },
+    {
+     "handle": "1E0",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "3.2㎡",
+     "role": "area",
+     "space": "창고"
+    },
+    {
+     "handle": "1E1",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "보일러실",
+     "space": "보일러실"
+    },
+    {
+     "handle": "1E2",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "2.4㎡",
+     "role": "area",
+     "space": "보일러실"
+    },
+    {
+     "handle": "1E3",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "다용도실",
+     "space": "다용도실"
+    },
+    {
+     "handle": "1E4",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "4.1㎡",
+     "role": "area",
+     "space": "다용도실"
+    },
+    {
+     "handle": "1E5",
+     "entity_type": "INSERT",
+     "layer": "위생기구",
+     "class": "Furniture",
+     "block": "변기",
+     "note": "sanitary"
+    },
+    {
+     "handle": "1E7",
+     "entity_type": "INSERT",
+     "layer": "위생기구",
+     "class": "Furniture",
+     "block": "세면대",
+     "note": "sanitary"
+    },
+    {
+     "handle": "1E9",
+     "entity_type": "INSERT",
+     "layer": "A-FURN",
+     "class": "Furniture",
+     "block": "UNIT_화장실",
+     "note": "nested block (변기/세면대/욕조)"
+    },
+    {
+     "handle": "1EC",
+     "entity_type": "INSERT",
+     "layer": "A-PLMB",
+     "class": "Furniture",
+     "block": "TOILET",
+     "note": "sanitary"
+    },
+    {
+     "handle": "1EE",
+     "entity_type": "INSERT",
+     "layer": "A-FURN",
+     "class": "Furniture",
+     "block": "SINK",
+     "note": "kitchen sink"
+    },
+    {
+     "handle": "1F0",
+     "entity_type": "INSERT",
+     "layer": "A-FURN",
+     "class": "Furniture",
+     "block": "BED_Q"
+    },
+    {
+     "handle": "1F2",
+     "entity_type": "INSERT",
+     "layer": "A-EQPM",
+     "class": "Furniture",
+     "block": "실외기",
+     "note": "equipment (outdoor AC unit)"
+    },
+    {
+     "handle": "1F4",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "203",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "212",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "221",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "230",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "23F",
+     "entity_type": "MTEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "{\\fGulim|b1;특기사항}\\P1. 모든 치수는 mm 단위임.\\P2. 벽체 마감은 마감표 참조.\\P3. 창호는 창호일람표 참조.",
+     "role": "general notes"
+    },
+    {
+     "handle": "240",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "SEC_MARK",
+     "role": "section callout",
+     "attribs": {
+      "SEC_NO": "1",
+      "SHEET_NO": "A-301"
+     }
+    },
+    {
+     "handle": "244",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "DETAIL_MARK",
+     "role": "detail callout",
+     "attribs": {
+      "상세번호": "1",
+      "도면번호": "A-501"
+     }
+    },
+    {
+     "handle": "248",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "방위표",
+     "role": "north arrow"
+    },
+    {
+     "handle": "24A",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "1층 평면도  SCALE 1/100",
+     "role": "drawing title"
+    },
+    {
+     "handle": "24C",
+     "entity_type": "LINE",
+     "layer": "X-BASE$0$A-WALL",
+     "class": "Wall",
+     "note": "bound xref layer"
+    },
+    {
+     "handle": "251",
+     "entity_type": "INSERT",
+     "layer": "X-REF",
+     "class": null,
+     "score": false,
+     "block": "X-BASE",
+     "note": "external reference; not an element"
+    },
+    {
+     "handle": "26B",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "1층 평면도",
+      "도면번호": "A-101",
+      "축척": "1/100",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D3",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D4",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D5",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*U12",
+     "category": "Door",
+     "anonymous": true,
+     "effective_name": "DOOR_DYN"
+    },
+    {
+     "name": "AD",
+     "category": "Door",
+     "note": "방화문 (fire door), 양개"
+    },
+    {
+     "name": "AW-02",
+     "category": "Window",
+     "note": "알루미늄창"
+    },
+    {
+     "name": "BED_Q",
+     "category": "Furniture",
+     "subtype": "furniture"
+    },
+    {
+     "name": "D1",
+     "category": "Door",
+     "mark": "D1"
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation",
+     "subtype": "detail callout"
+    },
+    {
+     "name": "DOOR_900",
+     "category": "Door"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation",
+     "subtype": "level mark"
+    },
+    {
+     "name": "PW",
+     "category": "Window",
+     "note": "PVC창"
+    },
+    {
+     "name": "SD-01",
+     "category": "Door",
+     "note": "steel door (강재문)"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation",
+     "subtype": "section callout"
+    },
+    {
+     "name": "SINK",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "TOILET",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "UNIT_화장실",
+     "category": "Furniture",
+     "subtype": "sanitary",
+     "nested": [
+      "변기",
+      "세면대",
+      "욕조"
+     ]
+    },
+    {
+     "name": "W1",
+     "category": "Window",
+     "mark": "W1"
+    },
+    {
+     "name": "WIN_1500",
+     "category": "Window"
+    },
+    {
+     "name": "X-BASE",
+     "category": "Xref",
+     "xref": true
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "문-편개",
+     "category": "Door",
+     "note": "편개문 (single swing)"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation",
+     "subtype": "north arrow"
+    },
+    {
+     "name": "변기",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "세면대",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "실외기",
+     "category": "Furniture",
+     "subtype": "equipment"
+    },
+    {
+     "name": "욕조",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "창-미서기",
+     "category": "Window",
+     "note": "미서기창 (sliding)"
+    }
+   ]
+  },
+  "A-102_2층평면도_cp949.dxf": {
+   "sheet": {
+    "number": "A-102",
+    "title": "2층 평면도",
+    "category": "plan",
+    "scale": "1/100",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1015",
+   "encoding": "cp949",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "ED",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X1"
+    },
+    {
+     "handle": "EE",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X1"
+     }
+    },
+    {
+     "handle": "F1",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X2"
+    },
+    {
+     "handle": "F2",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X2"
+     }
+    },
+    {
+     "handle": "F5",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X3"
+    },
+    {
+     "handle": "F6",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X3"
+     }
+    },
+    {
+     "handle": "F9",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X4"
+    },
+    {
+     "handle": "FA",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X4"
+     }
+    },
+    {
+     "handle": "FD",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y1"
+    },
+    {
+     "handle": "FE",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y1"
+     }
+    },
+    {
+     "handle": "101",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y2"
+    },
+    {
+     "handle": "102",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y2"
+     }
+    },
+    {
+     "handle": "105",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y3"
+    },
+    {
+     "handle": "106",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y3"
+     }
+    },
+    {
+     "handle": "109",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall",
+     "role": "exterior-outer"
+    },
+    {
+     "handle": "10A",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall",
+     "role": "exterior-inner"
+    },
+    {
+     "handle": "10B",
+     "entity_type": "HATCH",
+     "layer": "A-WALL-PATT",
+     "class": "Wall",
+     "pattern": "ANSI31"
+    },
+    {
+     "handle": "10C",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall",
+     "role": "partition"
+    },
+    {
+     "handle": "10D",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall",
+     "role": "partition"
+    },
+    {
+     "handle": "10E",
+     "entity_type": "LINE",
+     "layer": "WALL-CON",
+     "class": "Wall",
+     "role": "core wall"
+    },
+    {
+     "handle": "10F",
+     "entity_type": "LINE",
+     "layer": "WALL-CON",
+     "class": "Wall",
+     "role": "core wall"
+    },
+    {
+     "handle": "110",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall"
+    },
+    {
+     "handle": "111",
+     "entity_type": "LINE",
+     "layer": "벽체",
+     "class": "Wall"
+    },
+    {
+     "handle": "126",
+     "entity_type": "INSERT",
+     "layer": "A-DOOR",
+     "class": "Door",
+     "block": "D1",
+     "attribs": {
+      "DOOR_NO": "D1",
+      "규격": "900x2100",
+      "W": "900",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "12C",
+     "entity_type": "INSERT",
+     "layer": "문",
+     "class": "Door",
+     "block": "문-편개",
+     "attribs": {
+      "DOOR_NO": "D2",
+      "규격": "800x2100",
+      "W": "800",
+      "H": "2100"
+     }
+    },
+    {
+     "handle": "14B",
+     "entity_type": "INSERT",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "block": "W1",
+     "attribs": {
+      "WIN_NO": "W1",
+      "규격": "1500x1200",
+      "W": "1500",
+      "H": "1200"
+     }
+    },
+    {
+     "handle": "151",
+     "entity_type": "INSERT",
+     "layer": "창호",
+     "class": "Window",
+     "block": "창-미서기",
+     "attribs": {
+      "WIN_NO": "W2",
+      "규격": "2400x1500",
+      "W": "2400",
+      "H": "1500"
+     }
+    },
+    {
+     "handle": "157",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "거실",
+     "space": "거실"
+    },
+    {
+     "handle": "158",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "27.5㎡",
+     "role": "area",
+     "space": "거실"
+    },
+    {
+     "handle": "159",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "침실1",
+     "space": "침실1"
+    },
+    {
+     "handle": "15A",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "17.6㎡",
+     "role": "area",
+     "space": "침실1"
+    },
+    {
+     "handle": "15B",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "주방",
+     "space": "주방"
+    },
+    {
+     "handle": "15C",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "17.6㎡",
+     "role": "area",
+     "space": "주방"
+    },
+    {
+     "handle": "15D",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Space",
+     "text": "현관",
+     "space": "현관"
+    },
+    {
+     "handle": "15E",
+     "entity_type": "TEXT",
+     "layer": "A-AREA-IDEN",
+     "class": "Annotation",
+     "text": "8.4㎡",
+     "role": "area",
+     "space": "현관"
+    },
+    {
+     "handle": "15F",
+     "entity_type": "INSERT",
+     "layer": "위생기구",
+     "class": "Furniture",
+     "block": "변기",
+     "note": "sanitary"
+    },
+    {
+     "handle": "161",
+     "entity_type": "INSERT",
+     "layer": "위생기구",
+     "class": "Furniture",
+     "block": "세면대",
+     "note": "sanitary"
+    },
+    {
+     "handle": "163",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "172",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "181",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "방위표",
+     "role": "north arrow"
+    },
+    {
+     "handle": "183",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "2층 평면도  SCALE 1/100",
+     "role": "drawing title"
+    },
+    {
+     "handle": "19C",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "2층 평면도",
+      "도면번호": "A-102",
+      "축척": "1/100",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "BED_Q",
+     "category": "Furniture",
+     "subtype": "furniture"
+    },
+    {
+     "name": "D1",
+     "category": "Door",
+     "mark": "D1"
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation",
+     "subtype": "detail callout"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation",
+     "subtype": "level mark"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation",
+     "subtype": "section callout"
+    },
+    {
+     "name": "SINK",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "TOILET",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "UNIT_화장실",
+     "category": "Furniture",
+     "subtype": "sanitary",
+     "nested": [
+      "변기",
+      "세면대",
+      "욕조"
+     ]
+    },
+    {
+     "name": "W1",
+     "category": "Window",
+     "mark": "W1"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "문-편개",
+     "category": "Door",
+     "note": "편개문 (single swing)"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation",
+     "subtype": "north arrow"
+    },
+    {
+     "name": "변기",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "세면대",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "실외기",
+     "category": "Furniture",
+     "subtype": "equipment"
+    },
+    {
+     "name": "욕조",
+     "category": "Furniture",
+     "subtype": "sanitary"
+    },
+    {
+     "name": "창-미서기",
+     "category": "Window",
+     "note": "미서기창 (sliding)"
+    }
+   ]
+  },
+  "A-201_정면도.dxf": {
+   "sheet": {
+    "number": "A-201",
+    "title": "정면도",
+    "category": "elevation",
+    "scale": "1/100",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "BC",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-ELEV-OTLN",
+     "class": "Wall",
+     "role": "facade outline"
+    },
+    {
+     "handle": "BD",
+     "entity_type": "LINE",
+     "layer": "A-ELEV-GRND",
+     "class": "Annotation",
+     "role": "ground line (G.L)"
+    },
+    {
+     "handle": "BE",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "C0",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "C2",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "C4",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "C6",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "C8",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-GLAZ",
+     "class": "Window",
+     "block": "WIN-EL-1500"
+    },
+    {
+     "handle": "CA",
+     "entity_type": "INSERT",
+     "layer": "A-ELEV-DOOR",
+     "class": "Door",
+     "block": "D-EL-현관"
+    },
+    {
+     "handle": "CC",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "1FL +0"
+     }
+    },
+    {
+     "handle": "CF",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "2FL +3,300"
+     }
+    },
+    {
+     "handle": "D2",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "RFL +6,600"
+     }
+    },
+    {
+     "handle": "D5",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "D6",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "외벽: THK30 화강석 버너구이",
+     "role": "leader-note"
+    },
+    {
+     "handle": "D7",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "D8",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "외단열 미장마감 (드라이비트)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "D9",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "정면도  SCALE 1/100",
+     "role": "drawing title"
+    },
+    {
+     "handle": "F2",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "정면도",
+      "도면번호": "A-201",
+      "축척": "1/100",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "D-EL-현관",
+     "category": "Door",
+     "view": "elevation"
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "WIN-EL-1500",
+     "category": "Window",
+     "view": "elevation"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "A-301_단면도.dxf": {
+   "sheet": {
+    "number": "A-301",
+    "title": "단면도",
+    "category": "section",
+    "scale": "1/100",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "B3",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-SLAB",
+     "class": "BuildingElementProxy",
+     "role": "slab",
+     "level": 0.0
+    },
+    {
+     "handle": "B4",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-SLAB",
+     "class": "BuildingElementProxy",
+     "role": "slab",
+     "level": 3300.0
+    },
+    {
+     "handle": "B5",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-SLAB",
+     "class": "BuildingElementProxy",
+     "role": "slab",
+     "level": 6600.0
+    },
+    {
+     "handle": "B6",
+     "entity_type": "HATCH",
+     "layer": "A-HATCH",
+     "class": "BuildingElementProxy",
+     "pattern": "AR-CONC",
+     "role": "slab"
+    },
+    {
+     "handle": "B7",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall"
+    },
+    {
+     "handle": "B9",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension",
+     "note": "층고 3,300"
+    },
+    {
+     "handle": "C8",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "D7",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "1FL +0"
+     }
+    },
+    {
+     "handle": "DA",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "2FL +3,300"
+     }
+    },
+    {
+     "handle": "DD",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "RFL +6,600"
+     }
+    },
+    {
+     "handle": "E0",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "천장고 CH=2,700"
+    },
+    {
+     "handle": "E1",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "A-A' 단면도  SCALE 1/100",
+     "role": "drawing title"
+    },
+    {
+     "handle": "FA",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "단면도",
+      "도면번호": "A-301",
+      "축척": "1/100",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "A-501_창호상세도.dxf": {
+   "sheet": {
+    "number": "A-501",
+    "title": "창호상세도",
+    "category": "detail",
+    "scale": "1/5",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "B5",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-WALL",
+     "class": "Wall",
+     "material": "철근콘크리트"
+    },
+    {
+     "handle": "B6",
+     "entity_type": "HATCH",
+     "layer": "A-HATCH",
+     "class": "Wall",
+     "pattern": "AR-CONC",
+     "material": "콘크리트"
+    },
+    {
+     "handle": "B7",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-HATCH-INSUL",
+     "class": "BuildingElementProxy",
+     "material": "단열재"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "HATCH",
+     "layer": "A-HATCH-INSUL",
+     "class": "BuildingElementProxy",
+     "pattern": "ANSI37",
+     "material": "비드법보온판 2종1호 T100"
+    },
+    {
+     "handle": "B9",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "role": "window frame (sill)"
+    },
+    {
+     "handle": "BA",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "role": "window frame (head)"
+    },
+    {
+     "handle": "BB",
+     "entity_type": "LINE",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "role": "glass pane"
+    },
+    {
+     "handle": "BC",
+     "entity_type": "LINE",
+     "layer": "A-GLAZ",
+     "class": "Window",
+     "role": "glass pane"
+    },
+    {
+     "handle": "BD",
+     "entity_type": "LINE",
+     "layer": "A-DETL",
+     "class": "BuildingElementProxy",
+     "role": "lintel line"
+    },
+    {
+     "handle": "BE",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "BF",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "THK24 복층유리 (6+12A+6)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C0",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "C1",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "알루미늄 창호 (불소수지도장)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C2",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "C3",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "비드법보온판 2종1호 T100",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C4",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "C5",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "실링 (실리콘, 백업재)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C6",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "D5",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "E4",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "DETAIL_MARK",
+     "role": "detail title mark",
+     "attribs": {
+      "상세번호": "1",
+      "도면번호": "A-501"
+     }
+    },
+    {
+     "handle": "E8",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "창호상세도-1  SCALE 1/5",
+     "role": "detail title"
+    },
+    {
+     "handle": "E9",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "AW-02 하부 상세",
+     "role": "detail subtitle",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "102",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "창호상세도",
+      "도면번호": "A-501",
+      "축척": "1/5",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "A-601_계단상세도.dxf": {
+   "sheet": {
+    "number": "A-601",
+    "title": "계단상세도",
+    "category": "detail",
+    "scale": "1/20",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "B4",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-STRS",
+     "class": "BuildingElementProxy",
+     "role": "stair profile (단/디딤)"
+    },
+    {
+     "handle": "B5",
+     "entity_type": "LINE",
+     "layer": "A-STRS",
+     "class": "BuildingElementProxy",
+     "role": "stair soffit"
+    },
+    {
+     "handle": "B6",
+     "entity_type": "HATCH",
+     "layer": "A-HATCH",
+     "class": "BuildingElementProxy",
+     "pattern": "AR-CONC",
+     "material": "철근콘크리트 계단"
+    },
+    {
+     "handle": "B7",
+     "entity_type": "LINE",
+     "layer": "A-STRS-HRAL",
+     "class": "BuildingElementProxy",
+     "role": "handrail (난간)"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "LWPOLYLINE",
+     "layer": "A-SLAB",
+     "class": "BuildingElementProxy",
+     "role": "landing slab"
+    },
+    {
+     "handle": "B9",
+     "entity_type": "HATCH",
+     "layer": "A-SLAB",
+     "class": "BuildingElementProxy",
+     "pattern": "AR-CONC",
+     "material": "콘크리트 슬래브"
+    },
+    {
+     "handle": "BA",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "BB",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "디딤판: T30 화강석 버너구이",
+     "role": "leader-note"
+    },
+    {
+     "handle": "BC",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "BD",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "논슬립 (STS, 2줄)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "BE",
+     "entity_type": "LEADER",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "BF",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "STS 난간 Ø42.7, H=900",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C0",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "1FL +0"
+     }
+    },
+    {
+     "handle": "C3",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "LEVEL",
+     "role": "level mark",
+     "attribs": {
+      "EL": "중간참 +1,575"
+     }
+    },
+    {
+     "handle": "C6",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension",
+     "note": "단높이 175 x 9"
+    },
+    {
+     "handle": "D5",
+     "entity_type": "DIMENSION",
+     "layer": "A-DIMS",
+     "class": "Dimension",
+     "note": "단너비 280 x 9"
+    },
+    {
+     "handle": "E4",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "단높이 175 x 9 = 1,575"
+    },
+    {
+     "handle": "E5",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "SEC_MARK",
+     "role": "section callout",
+     "attribs": {
+      "SEC_NO": "2",
+      "SHEET_NO": "A-301"
+     }
+    },
+    {
+     "handle": "E9",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "계단 단면상세도  SCALE 1/20",
+     "role": "detail title"
+    },
+    {
+     "handle": "102",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "계단상세도",
+      "도면번호": "A-601",
+      "축척": "1/20",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "S-301_접합부상세도.dxf": {
+   "sheet": {
+    "number": "S-301",
+    "title": "접합부상세도",
+    "category": "detail",
+    "scale": "1/10",
+    "revision": "R0",
+    "discipline": "structure"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "B4",
+     "entity_type": "LWPOLYLINE",
+     "layer": "S-STEEL",
+     "class": "SteelSection",
+     "profile": "H-300x300x10x15",
+     "member": "column"
+    },
+    {
+     "handle": "B5",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "H-300x300x10x15",
+     "profile": "H-300x300x10x15"
+    },
+    {
+     "handle": "B6",
+     "entity_type": "LWPOLYLINE",
+     "layer": "S-STEEL",
+     "class": "SteelSection",
+     "profile": "C-100x50x5x7.5",
+     "member": "purlin"
+    },
+    {
+     "handle": "B7",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "C-100x50x5x7.5",
+     "profile": "C-100x50x5x7.5"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "LWPOLYLINE",
+     "layer": "S-STEEL",
+     "class": "SteelSection",
+     "profile": "L-75x75x6",
+     "member": "brace angle"
+    },
+    {
+     "handle": "B9",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "L-75x75x6",
+     "profile": "L-75x75x6"
+    },
+    {
+     "handle": "BA",
+     "entity_type": "LWPOLYLINE",
+     "layer": "S-PLATE",
+     "class": "SteelSection",
+     "profile": "PL-20"
+    },
+    {
+     "handle": "BB",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "SPL. PL-12 (SM355)",
+     "profile": "PL-12"
+    },
+    {
+     "handle": "BC",
+     "entity_type": "CIRCLE",
+     "layer": "S-BOLT",
+     "class": "BuildingElementProxy",
+     "role": "bolt",
+     "spec": "M20 F10T",
+     "index": 1
+    },
+    {
+     "handle": "BD",
+     "entity_type": "CIRCLE",
+     "layer": "S-BOLT",
+     "class": "BuildingElementProxy",
+     "role": "bolt",
+     "spec": "M20 F10T",
+     "index": 2
+    },
+    {
+     "handle": "BE",
+     "entity_type": "CIRCLE",
+     "layer": "S-BOLT",
+     "class": "BuildingElementProxy",
+     "role": "bolt",
+     "spec": "M20 F10T",
+     "index": 3
+    },
+    {
+     "handle": "BF",
+     "entity_type": "CIRCLE",
+     "layer": "S-BOLT",
+     "class": "BuildingElementProxy",
+     "role": "bolt",
+     "spec": "M20 F10T",
+     "index": 4
+    },
+    {
+     "handle": "C0",
+     "entity_type": "LEADER",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "C1",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "text": "4-M20 F10T (HTB)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C2",
+     "entity_type": "LEADER",
+     "layer": "S-WELD",
+     "class": "Annotation",
+     "role": "leader"
+    },
+    {
+     "handle": "C3",
+     "entity_type": "TEXT",
+     "layer": "S-WELD",
+     "class": "Annotation",
+     "text": "◢ 6 (전둘레 필릿용접)",
+     "role": "leader-note"
+    },
+    {
+     "handle": "C4",
+     "entity_type": "DIMENSION",
+     "layer": "S-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "D3",
+     "entity_type": "DIMENSION",
+     "layer": "S-DIMS",
+     "class": "Dimension",
+     "note": "볼트 피치 60 @ 3"
+    },
+    {
+     "handle": "E2",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "DETAIL_MARK",
+     "role": "detail title mark",
+     "attribs": {
+      "상세번호": "3",
+      "도면번호": "S-301"
+     }
+    },
+    {
+     "handle": "E6",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "SEC_MARK",
+     "role": "section callout",
+     "attribs": {
+      "SEC_NO": "A",
+      "SHEET_NO": "S-301"
+     }
+    },
+    {
+     "handle": "EA",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "text": "기둥-보 접합부 상세 (G1 - C1)  SCALE 1/10",
+     "role": "detail title"
+    },
+    {
+     "handle": "EB",
+     "entity_type": "MTEXT",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "text": "강재: SS275 / SM355\\P고장력볼트: F10T, 표준볼트장력 적용",
+     "role": "notes"
+    },
+    {
+     "handle": "104",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "접합부상세도",
+      "도면번호": "S-301",
+      "축척": "1/10",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "S-201_구조평면도.dxf": {
+   "sheet": {
+    "number": "S-201",
+    "title": "2층 구조평면도",
+    "category": "structural",
+    "scale": "1/100",
+    "revision": "R0",
+    "discipline": "structure"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "B7",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X1"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X1"
+     }
+    },
+    {
+     "handle": "BB",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X2"
+    },
+    {
+     "handle": "BC",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X2"
+     }
+    },
+    {
+     "handle": "BF",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "X3"
+    },
+    {
+     "handle": "C0",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "X3"
+     }
+    },
+    {
+     "handle": "C3",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y1"
+    },
+    {
+     "handle": "C4",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y1"
+     }
+    },
+    {
+     "handle": "C7",
+     "entity_type": "LINE",
+     "layer": "A-GRID",
+     "class": "Grid",
+     "grid": "Y2"
+    },
+    {
+     "handle": "C8",
+     "entity_type": "INSERT",
+     "layer": "A-GRID-IDEN",
+     "class": "Grid",
+     "block": "GRID_BUBBLE",
+     "attribs": {
+      "GRID_NO": "Y2"
+     }
+    },
+    {
+     "handle": "D5",
+     "entity_type": "INSERT",
+     "layer": "S-COLS",
+     "class": "Column",
+     "block": "C1",
+     "mark": "C1"
+    },
+    {
+     "handle": "D7",
+     "entity_type": "INSERT",
+     "layer": "S-COLS",
+     "class": "Column",
+     "block": "C1",
+     "mark": "C1"
+    },
+    {
+     "handle": "D9",
+     "entity_type": "INSERT",
+     "layer": "S-COLS",
+     "class": "Column",
+     "block": "C1",
+     "mark": "C1"
+    },
+    {
+     "handle": "DB",
+     "entity_type": "INSERT",
+     "layer": "S-COLS",
+     "class": "Column",
+     "block": "C2",
+     "mark": "C2"
+    },
+    {
+     "handle": "DD",
+     "entity_type": "INSERT",
+     "layer": "0",
+     "class": "Column",
+     "block": "C2",
+     "mark": "C2",
+     "note": "no layer hint"
+    },
+    {
+     "handle": "DF",
+     "entity_type": "LWPOLYLINE",
+     "layer": "기둥",
+     "class": "Column",
+     "mark": "C2"
+    },
+    {
+     "handle": "E0",
+     "entity_type": "HATCH",
+     "layer": "기둥",
+     "class": "Column",
+     "pattern": "SOLID"
+    },
+    {
+     "handle": "E1",
+     "entity_type": "LINE",
+     "layer": "S-BEAM",
+     "class": "Beam",
+     "mark": "G1"
+    },
+    {
+     "handle": "E2",
+     "entity_type": "LINE",
+     "layer": "S-BEAM",
+     "class": "Beam",
+     "mark": "G1"
+    },
+    {
+     "handle": "E3",
+     "entity_type": "LINE",
+     "layer": "보",
+     "class": "Beam",
+     "mark": "G2"
+    },
+    {
+     "handle": "E4",
+     "entity_type": "LINE",
+     "layer": "S-BEAM",
+     "class": "Beam",
+     "mark": "G3"
+    },
+    {
+     "handle": "E5",
+     "entity_type": "LINE",
+     "layer": "보",
+     "class": "Beam",
+     "mark": "G3"
+    },
+    {
+     "handle": "E6",
+     "entity_type": "LINE",
+     "layer": "S-BEAM",
+     "class": "Beam",
+     "mark": "B1"
+    },
+    {
+     "handle": "E7",
+     "entity_type": "LINE",
+     "layer": "S-BEAM",
+     "class": "Beam",
+     "mark": "B1",
+     "role": "small beam"
+    },
+    {
+     "handle": "E8",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO-TAG",
+     "class": "Annotation",
+     "text": "G1",
+     "refers_to": "Beam"
+    },
+    {
+     "handle": "E9",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO-TAG",
+     "class": "Annotation",
+     "text": "G2",
+     "refers_to": "Beam"
+    },
+    {
+     "handle": "EA",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO-TAG",
+     "class": "Annotation",
+     "text": "B1",
+     "refers_to": "Beam"
+    },
+    {
+     "handle": "EB",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO-TAG",
+     "class": "Annotation",
+     "text": "C1",
+     "refers_to": "Column"
+    },
+    {
+     "handle": "EC",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO-TAG",
+     "class": "Annotation",
+     "text": "2C1",
+     "refers_to": "Column",
+     "note": "floor-prefixed mark"
+    },
+    {
+     "handle": "ED",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "G1 : H-588x300x12x20",
+     "profile": "H-588x300x12x20"
+    },
+    {
+     "handle": "EE",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "G2 : H-500x200x10x16",
+     "profile": "H-500x200x10x16"
+    },
+    {
+     "handle": "EF",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "B1 : H-400x200x8x13",
+     "profile": "H-400x200x8x13"
+    },
+    {
+     "handle": "F0",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "SteelSection",
+     "text": "C1 : H-300x300x10x15",
+     "profile": "H-300x300x10x15"
+    },
+    {
+     "handle": "F1",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "text": "S1 (THK150, 데크플레이트)",
+     "role": "slab mark"
+    },
+    {
+     "handle": "F2",
+     "entity_type": "DIMENSION",
+     "layer": "S-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "101",
+     "entity_type": "DIMENSION",
+     "layer": "S-DIMS",
+     "class": "Dimension"
+    },
+    {
+     "handle": "110",
+     "entity_type": "INSERT",
+     "layer": "A-ANNO-SYMB",
+     "class": "Annotation",
+     "block": "방위표",
+     "role": "north arrow"
+    },
+    {
+     "handle": "112",
+     "entity_type": "TEXT",
+     "layer": "S-ANNO",
+     "class": "Annotation",
+     "text": "2층 구조평면도  SCALE 1/100",
+     "role": "drawing title"
+    },
+    {
+     "handle": "12B",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "2층 구조평면도",
+      "도면번호": "S-201",
+      "축척": "1/100",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "*D1",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "*D2",
+     "category": "Dimension",
+     "implicit": true
+    },
+    {
+     "name": "C1",
+     "category": "Column",
+     "profile": "H-300x300x10x15"
+    },
+    {
+     "name": "C2",
+     "category": "Column"
+    },
+    {
+     "name": "DETAIL_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "GRID_BUBBLE",
+     "category": "Grid"
+    },
+    {
+     "name": "LEVEL",
+     "category": "Annotation"
+    },
+    {
+     "name": "SEC_MARK",
+     "category": "Annotation"
+    },
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "방위표",
+     "category": "Annotation"
+    }
+   ]
+  },
+  "A-901_창호일람표.dxf": {
+   "sheet": {
+    "number": "A-901",
+    "title": "창호일람표",
+    "category": "schedule",
+    "scale": "1/50",
+    "revision": "R0",
+    "discipline": "architecture"
+   },
+   "dxfversion": "AC1032",
+   "encoding": "utf-8",
+   "codepage": "ANSI_949",
+   "entities": [
+    {
+     "handle": "90",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "91",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "92",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "93",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "94",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "95",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "96",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "97",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "98",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "99",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "9A",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "9B",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "9C",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "9D",
+     "entity_type": "LINE",
+     "layer": "A-TABL",
+     "class": "Annotation",
+     "role": "table rule"
+    },
+    {
+     "handle": "9E",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "기호",
+     "role": "schedule header",
+     "refers_to": null
+    },
+    {
+     "handle": "9F",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "규격(WxH)",
+     "role": "schedule header",
+     "refers_to": null
+    },
+    {
+     "handle": "A0",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "형식",
+     "role": "schedule header",
+     "refers_to": null
+    },
+    {
+     "handle": "A1",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "재질/마감",
+     "role": "schedule header",
+     "refers_to": null
+    },
+    {
+     "handle": "A2",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "수량",
+     "role": "schedule header",
+     "refers_to": null
+    },
+    {
+     "handle": "A3",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "W1",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A4",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1500x1200",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A5",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "고정창",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A6",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "알루미늄 + THK24 복층유리",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A7",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "4",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A8",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "AW-02",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "A9",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1200x1200",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AA",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "미서기창",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AB",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "알루미늄 (불소수지도장)",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AC",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "2",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AD",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "PW-01",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AE",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "900x600",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "AF",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "여닫이창",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "B0",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "PVC 이중창",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "B1",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1",
+     "role": "schedule cell",
+     "refers_to": "Window"
+    },
+    {
+     "handle": "B2",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "D1",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B3",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "900x2100",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B4",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "편개문",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B5",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "목재문 (ABS)",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B6",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "6",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B7",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "SD-01",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B8",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1000x2100",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "B9",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "편개문",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BA",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "강재문",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BB",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BC",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "AD-01",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BD",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1800x2100",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BE",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "양개문",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "BF",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "갑종방화문",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "C0",
+     "entity_type": "TEXT",
+     "layer": "A-TABL-TEXT",
+     "class": "Annotation",
+     "text": "1",
+     "role": "schedule cell",
+     "refers_to": "Door"
+    },
+    {
+     "handle": "C1",
+     "entity_type": "TEXT",
+     "layer": "A-ANNO-NOTE",
+     "class": "Annotation",
+     "text": "창호일람표  SCALE 1/50",
+     "role": "drawing title"
+    },
+    {
+     "handle": "DA",
+     "entity_type": "INSERT",
+     "layer": "도곽",
+     "class": "TitleBlock",
+     "block": "TITLE_A1",
+     "attribs": {
+      "프로젝트명": "OO동 근린생활시설 신축공사",
+      "도면명": "창호일람표",
+      "도면번호": "A-901",
+      "축척": "1/50",
+      "개정": "R0",
+      "작성일": "2026.09.15"
+     }
+    }
+   ],
+   "blocks": [
+    {
+     "name": "TITLE_A1",
+     "category": "TitleBlock"
+    },
+    {
+     "name": "_ARCHTICK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDBLANK",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    },
+    {
+     "name": "_CLOSEDFILLED",
+     "category": "Annotation",
+     "implicit": true,
+     "note": "arrow head"
+    }
+   ]
+  }
+ }
+}

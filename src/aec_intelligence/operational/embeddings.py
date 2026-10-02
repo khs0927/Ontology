@@ -1,4 +1,17 @@
-﻿"""1,024-dimensional embedding generator and pgvector indexer for AEC objects."""
+"""1,024-dimensional embedding generator and pgvector indexer for AEC objects.
+
+Vectors are only comparable when the same model produced them. Every vector is
+therefore stored with the name of the model that actually produced it:
+
+* the configured remote model (``AEC_EMBEDDING_MODEL``, default ``BAAI/bge-m3``)
+  when ``AEC_EMBEDDING_URL`` answered — e.g. the ``embeddings`` compose service
+  running Hugging Face text-embeddings-inference (OpenAI-compatible
+  ``/v1/embeddings``; the native ``/embed`` route is accepted too);
+* ``HASH_MODEL`` for the deterministic offline fallback.
+
+Search filters on the producing model (see ``search.py``) so hash vectors and
+real vectors are never ranked against each other.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +19,36 @@ import hashlib
 import json
 import math
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
-from typing import Any, Iterable
+from typing import Any
 
 from .config import Settings
 
 
 EMBEDDING_DIM = 1024
+HASH_MODEL = "hash-sha256-1024-v1"
+DEFAULT_BATCH_SIZE = 32
+DEFAULT_TIMEOUT = 60.0
+DEFAULT_RETRIES = 3
+CIRCUIT_COOLDOWN_SECONDS = 30.0
+
+# endpoint -> monotonic time until which the remote is considered down
+_CIRCUIT: dict[str, float] = {}
+_CIRCUIT_LOCK = threading.Lock()
+
+
+class EmbeddingEndpointError(RuntimeError):
+    """The remote embedding service did not return usable vectors."""
 
 
 def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
     """Fallback deterministic unit vector generated from text token hashes.
 
     Ensures full offline operation, test repeatability, and graceful degradation
-    when GPU or remote embedding endpoints are not configured.
+    when remote embedding endpoints are not configured. Stored under HASH_MODEL.
     """
     vec = [0.0] * dim
     tokens = text.lower().split()
@@ -33,7 +61,6 @@ def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIM) -> list[floa
             val = ((digest[i] - 128) / 128.0)
             vec[idx] += val
 
-    # Normalize to unit length
     norm = math.sqrt(sum(x * x for x in vec))
     if norm > 1e-9:
         vec = [round(x / norm, 6) for x in vec]
@@ -42,100 +69,196 @@ def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIM) -> list[floa
     return vec
 
 
+def _env_number(name: str, default: float, cast=float):
+    try:
+        return cast(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def vector_literal(vec: list[float]) -> str:
+    return "[" + ",".join(str(float(v)) for v in vec) + "]"
+
+
 class EmbeddingService:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, batch_size: int | None = None, timeout: float | None = None,
+                 retries: int | None = None, backoff: float = 0.5):
         self.settings = settings
         self.model_name = settings.embedding_model or "BAAI/bge-m3"
         self.endpoint = (settings.embedding_url or "").rstrip("/")
+        self.batch_size = max(1, int(batch_size or _env_number("AEC_EMBEDDING_BATCH_SIZE", DEFAULT_BATCH_SIZE, int)))
+        self.timeout = float(timeout or _env_number("AEC_EMBEDDING_TIMEOUT", DEFAULT_TIMEOUT))
+        self.retries = max(1, int(retries or _env_number("AEC_EMBEDDING_RETRIES", DEFAULT_RETRIES, int)))
+        self.backoff = backoff
+        self.last_error: str | None = None
 
+    # -- model identity -------------------------------------------------
+    @property
+    def remote_configured(self) -> bool:
+        return bool(self.endpoint)
+
+    def active_model(self) -> str:
+        """Model name new vectors are expected to carry (the remote model when one is configured)."""
+        return self.model_name if self.endpoint else HASH_MODEL
+
+    # -- public API -----------------------------------------------------
     def embed_text(self, text: str) -> list[float]:
-        results = self.embed_batch([text])
-        return results[0] if results else _deterministic_hash_vector(text, EMBEDDING_DIM)
+        return self.embed_with_model([text])[1][0]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
+        return self.embed_with_model(texts)[1]
 
-        # 1. If remote endpoint configured, try calling remote service
-        if self.endpoint:
+    def embed_with_model(self, texts: list[str]) -> tuple[str, list[list[float]]]:
+        """Embed all texts with ONE model and return (model_name, vectors).
+
+        The remote endpoint is used when configured and healthy; if any batch
+        fails after retries the whole call falls back to the hash model so the
+        result never mixes vector spaces.
+        """
+        if not texts:
+            return self.active_model(), []
+        if self.endpoint and not self._circuit_open():
+            try:
+                vectors: list[list[float]] = []
+                for start in range(0, len(texts), self.batch_size):
+                    vectors.extend(self._call_with_retries(texts[start:start + self.batch_size]))
+                return self.model_name, vectors
+            except EmbeddingEndpointError as exc:
+                self.last_error = str(exc)
+                self._trip_circuit()
+        elif self.endpoint:
+            self.last_error = "embedding endpoint circuit open after recent failures"
+        return HASH_MODEL, [_deterministic_hash_vector(t, EMBEDDING_DIM) for t in texts]
+
+    # -- remote ---------------------------------------------------------
+    def _circuit_open(self) -> bool:
+        with _CIRCUIT_LOCK:
+            return _CIRCUIT.get(self.endpoint, 0.0) > time.monotonic()
+
+    def _trip_circuit(self) -> None:
+        with _CIRCUIT_LOCK:
+            _CIRCUIT[self.endpoint] = time.monotonic() + CIRCUIT_COOLDOWN_SECONDS
+
+    def _call_with_retries(self, texts: list[str]) -> list[list[float]]:
+        last: Exception | None = None
+        for attempt in range(self.retries):
             try:
                 return self._call_remote_endpoint(texts)
-            except Exception:
-                # Fallback to local deterministic if remote is unreachable
-                pass
-
-        # 2. Try fastembed if installed
-        try:
-            from fastembed import TextEmbedding  # type: ignore
-
-            model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-            embeddings = list(model.embed(texts))
-            result = []
-            for emb in embeddings:
-                raw = list(emb)
-                if len(raw) < EMBEDDING_DIM:
-                    raw.extend([0.0] * (EMBEDDING_DIM - len(raw)))
-                elif len(raw) > EMBEDDING_DIM:
-                    raw = raw[:EMBEDDING_DIM]
-                norm = math.sqrt(sum(x * x for x in raw)) or 1.0
-                result.append([round(x / norm, 6) for x in raw])
-            return result
-        except (ImportError, Exception):
-            pass
-
-        # 3. Deterministic hash fallback
-        return [_deterministic_hash_vector(t, EMBEDDING_DIM) for t in texts]
+            except urllib.error.HTTPError as exc:
+                last = exc
+                if 400 <= exc.code < 500 and exc.code not in (408, 413, 429):
+                    break  # a malformed request will not succeed on retry
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError, EmbeddingEndpointError) as exc:
+                last = exc
+            if attempt + 1 < self.retries:
+                time.sleep(self.backoff * (2 ** attempt))
+        raise EmbeddingEndpointError(f"{self.endpoint}: {type(last).__name__}: {last}")
 
     def _call_remote_endpoint(self, texts: list[str]) -> list[list[float]]:
-        url = f"{self.endpoint}/v1/embeddings" if not self.endpoint.endswith("/embeddings") else self.endpoint
-        payload = json.dumps({"input": texts, "model": self.model_name}).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        native = self.endpoint.endswith("/embed")
+        if native:
+            url, body = self.endpoint, {"inputs": texts, "truncate": True}
+        else:
+            url = self.endpoint if self.endpoint.endswith("/embeddings") else f"{self.endpoint}/v1/embeddings"
+            body = {"input": texts, "model": self.model_name}
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, list):  # TEI native /embed
+            vectors = data
+        else:
             items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-            return [item["embedding"] for item in items]
+            vectors = [item["embedding"] for item in items]
+        if len(vectors) != len(texts):
+            raise EmbeddingEndpointError(f"expected {len(texts)} vectors, got {len(vectors)}")
+        for vec in vectors:
+            if len(vec) != EMBEDDING_DIM:
+                raise EmbeddingEndpointError(f"model returned {len(vec)} dimensions; aec.embeddings requires {EMBEDDING_DIM}")
+        return [[float(v) for v in vec] for vec in vectors]
 
 
-def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings) -> int:
-    """Computes and updates pgvector embeddings for all meaningful objects in a snapshot."""
+def _embeddable(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [obj for obj in objects if obj.get("search_text") and obj.get("type") not in ("CADEntity",)]
+
+
+def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings,
+                              service: EmbeddingService | None = None) -> int:
+    """Computes and stores pgvector embeddings for the meaningful objects of a snapshot."""
     doc_id = snapshot["document_id"]
     rev = snapshot["revision"]
-    service = EmbeddingService(settings)
+    service = service or EmbeddingService(settings)
 
-    objects = [
-        obj for obj in snapshot.get("objects", [])
-        if obj.get("search_text") and obj.get("type") not in ("CADEntity",)
-    ]
+    objects = _embeddable(snapshot.get("objects", []))
     if not objects:
         return 0
 
-    texts = [obj["search_text"] for obj in objects]
-    vectors = service.embed_batch(texts)
-
+    models: set[str] = set()
     count = 0
-    for obj, vec in zip(objects, vectors):
-        vec_str = "[" + ",".join(str(v) for v in vec) + "]"
-        content_hash = hashlib.sha256(obj["search_text"].encode("utf-8")).hexdigest()
-        conn.execute(
-            """INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
-               VALUES (%s, %s, %s, %s, %s::vector)
-               ON CONFLICT(object_id, model) DO UPDATE
-               SET revision = EXCLUDED.revision,
-                   content_hash = EXCLUDED.content_hash,
-                   embedding = EXCLUDED.embedding""",
-            (obj["id"], service.model_name, rev, content_hash, vec_str),
-        )
-        count += 1
+    # Chunk per DB round so one remote outage only downgrades the remaining chunks, each labelled with its model.
+    chunk = max(service.batch_size * 8, 1)
+    for start in range(0, len(objects), chunk):
+        part = objects[start:start + chunk]
+        model, vectors = service.embed_with_model([obj["search_text"] for obj in part])
+        models.add(model)
+        rows = []
+        for obj, vec in zip(part, vectors):
+            content_hash = hashlib.sha256(obj["search_text"].encode("utf-8")).hexdigest()
+            rows.append((obj["id"], model, rev, content_hash, vector_literal(vec)))
+        with conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
+                   VALUES (%s, %s, %s, %s, %s::vector)
+                   ON CONFLICT(object_id, model) DO UPDATE
+                   SET revision = EXCLUDED.revision,
+                       content_hash = EXCLUDED.content_hash,
+                       embedding = EXCLUDED.embedding""",
+                rows,
+            )
+        count += len(rows)
 
     conn.execute(
         """UPDATE aec.index_state
            SET embedding_revision = %s, embedding_model = %s
            WHERE document_id = %s""",
-        (rev, service.model_name, doc_id),
+        (rev, ",".join(sorted(models)), doc_id),
     )
     return count
+
+
+def reindex_embeddings(db, settings: Settings, project_id: str | None = None) -> dict[str, Any]:
+    """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback).
+
+    Superseded hash-fallback vectors are removed only once the active model's vectors
+    are written, so a failed run leaves the previous state intact.
+    """
+    service = EmbeddingService(settings)
+    target = service.active_model()
+    written, skipped = 0, 0
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT o.id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
+               WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND o.kind <> 'CADEntity' AND o.search_text <> ''
+                 AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %(m)s)
+               ORDER BY o.id""",
+            {"p": project_id, "m": target},
+        ).fetchall()
+        for start in range(0, len(rows), service.batch_size * 8):
+            part = rows[start:start + service.batch_size * 8]
+            model, vectors = service.embed_with_model([r["search_text"] for r in part])
+            if model != target:
+                skipped += len(rows) - start
+                break
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
+                       VALUES (%s,%s,%s,%s,%s::vector) ON CONFLICT(object_id, model) DO UPDATE
+                       SET revision=EXCLUDED.revision, content_hash=EXCLUDED.content_hash, embedding=EXCLUDED.embedding""",
+                    [(r["id"], model, r["revision"], hashlib.sha256(r["search_text"].encode("utf-8")).hexdigest(),
+                      vector_literal(v)) for r, v in zip(part, vectors)],
+                )
+                if model != HASH_MODEL:  # drop superseded offline vectors only; never discard real ones
+                    cur.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
+                                ([r["id"] for r in part], HASH_MODEL))
+            written += len(part)
+    return {"model": target, "written": written, "skipped": skipped, "error": service.last_error}

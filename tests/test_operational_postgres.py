@@ -66,3 +66,38 @@ def test_dxf_job_lands_in_sql_graph_and_vector_index(stack):
 
     result = SearchRouter(db, settings).search("wall", project_id=project, top_k=5)
     assert result.hits
+
+
+def test_concurrent_projection_into_a_new_project_graph(stack):
+    import threading
+    import uuid
+
+    from aec_intelligence.operational.db import graph_name
+
+    db, _, _ = stack
+    project = f"P-race-{uuid.uuid4().hex[:8]}"
+    barrier, errors = threading.Barrier(4), []
+
+    def project_one(i):
+        snapshot = {"project_id": project, "document_id": f"doc-race-{i}", "revision": 1,
+                    "objects": [{"id": f"obj-race-{i}", "type": "Door", "state": "OBSERVED"}], "relations": []}
+        try:
+            with db.connect() as conn:
+                barrier.wait()
+                db.project_graph(conn, snapshot)
+        except Exception as exc:  # collected so the assertion shows every failure
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=project_one, args=(i,)) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    try:
+        assert errors == []
+        with db.connect() as conn:
+            count = db.cypher(conn, graph_name(project), "MATCH (n:Entity) RETURN count(n)")[0]["value"]
+        assert str(count) == "4"
+    finally:
+        with db.connect() as conn:
+            conn.execute("SELECT drop_graph(%s, true)", (graph_name(project),))

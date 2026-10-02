@@ -5,32 +5,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .ontology_model import MODULE_FILES, render_module
+
 
 ONTOLOGY_FILES: dict[str, str] = {
-    "core/aec-core.ttl": """@prefix aec: <https://example.org/aec#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-
-aec:CAIRObject a rdfs:Class .
-aec:Project a rdfs:Class ; rdfs:subClassOf aec:CAIRObject .
-aec:geometryRef a rdfs:Property .
-aec:classificationConfidence a rdfs:Property .
-aec:sourceFile a rdfs:Property .
-aec:derivedFrom a rdfs:Property .
-""",
     "building/bot-alignment.ttl": """@prefix aec: <https://example.org/aec#> .
 @prefix bot: <https://w3id.org/bot#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 
+aec:SpatialElement rdfs:subClassOf bot:Zone .
 aec:Site rdfs:subClassOf bot:Site .
 aec:Building rdfs:subClassOf bot:Building .
 aec:Storey rdfs:subClassOf bot:Storey .
 aec:Space rdfs:subClassOf bot:Space .
-aec:Wall rdfs:subClassOf bot:Element .
-aec:Door rdfs:subClassOf bot:Element .
-aec:Window rdfs:subClassOf bot:Element .
-aec:Column rdfs:subClassOf bot:Element .
-aec:Beam rdfs:subClassOf bot:Element .
-aec:Slab rdfs:subClassOf bot:Element .
+aec:Element rdfs:subClassOf bot:Element .
+aec:hasBuilding rdfs:subPropertyOf bot:hasBuilding .
+aec:hasStorey rdfs:subPropertyOf bot:hasStorey .
+aec:hasSpace rdfs:subPropertyOf bot:hasSpace .
+aec:adjacentTo rdfs:subPropertyOf bot:adjacentZone .
 """,
     "geometry/omg-fog-alignment.ttl": """@prefix aec: <https://example.org/aec#> .
 @prefix omg: <https://w3id.org/omg#> .
@@ -85,6 +77,10 @@ def write_ontology_alignment(repository_root: str | Path, overwrite: bool = Fals
         manifest_path.write_text(json.dumps(alignment_manifest(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     paths.append(manifest_path)
     return paths
+
+
+# The AEC vocabulary itself is generated from ontology_model; the entries above are alignments only.
+ONTOLOGY_FILES.update({path: render_module(module) for module, path in MODULE_FILES.items()})
 
 
 def alignment_manifest() -> dict[str, object]:

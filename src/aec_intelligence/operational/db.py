@@ -90,6 +90,9 @@ class Database:
 
     def project_graph(self, conn, snapshot):
         graph = graph_name(snapshot['project_id'])
+        # Workers ingesting the same new project would otherwise race on create_graph and on the
+        # implicit Entity/Rel label creation; serialise per graph until this transaction ends.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('aec_graph:' || %s))",(graph,))
         if not conn.execute('SELECT 1 FROM ag_catalog.ag_graph WHERE name=%s',(graph,)).fetchone():
             conn.execute('SELECT create_graph(%s)',(graph,))
         doc = json.dumps(snapshot['document_id'])

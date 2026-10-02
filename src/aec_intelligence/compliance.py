@@ -11,6 +11,7 @@ from .repository import RepositoryLayout
 from .storage import LocalArtifactStore
 from .ontology_alignment import ONTOLOGY_FILES
 from .shacl import shacl_available, validate_turtle_file
+from .ontology_model import undeclared_terms
 
 
 @dataclass
@@ -77,6 +78,14 @@ def audit_repository(repository_root: str | Path) -> ComplianceReport:
         errors.extend(f"CAIR ontology export fails SHACL shapes: {item}" for item in nonconforming)
     elif ontology_exports:
         notes.append("SHACL validation skipped: install the 'shacl' extra (pyshacl)")
+    if ontology_exports:
+        vocabulary_gaps = []
+        for export in ontology_exports:
+            gaps = undeclared_terms(export.read_text(encoding="utf-8"))
+            if gaps["classes"] or gaps["predicates"]:
+                vocabulary_gaps.append(f"{export.parent.parent.name} (classes: {', '.join(gaps['classes']) or '-'}; predicates: {', '.join(gaps['predicates']) or '-'})")
+        checks["ontology_exports_use_declared_terms"] = not vocabulary_gaps
+        warnings.extend(f"CAIR ontology export uses terms missing from ontology_model: {item}" for item in vocabulary_gaps)
 
     store = LocalArtifactStore(root)
     records = store.list()

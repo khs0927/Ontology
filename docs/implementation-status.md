@@ -47,6 +47,7 @@ Completed sequential phases:
 - FreeCAD NativeIFC geometry import is now an explicit headless acceptance boundary: `probe-native-ifc` and `aec.probe_native_ifc` use `strategy=2` and `shapemode=0`, stage Windows process paths as ASCII, require a machine-readable report with a non-null shape, and preserve the authoritative IFC/CAIR sources. The current FreeCAD 1.1.2 probe imports the geometry-bearing fixture's Wall as one solid with 12 edges and 6 faces; semantic-only IFC remains a truthful no-geometry failure.
 - `aec audit` validates every project `04_ONTOLOGY/project.ttl` against packaged SHACL shapes (`resources/cair-shapes.ttl`) through pySHACL when the `shacl` extra is installed; non-conforming exports fail the gate, and a missing pySHACL is reported as a note rather than a silent pass.
 - The `bim` extra now targets IfcOpenShell 0.9; the IFC parse, mesh-extraction and format-pipeline tests pass against 0.9.0.
+- The AEC vocabulary is declared once in `ontology_model.py` (spatial structure, elements, steel members/sections/connections, drawing sheets/revisions/title blocks, GIS features, Korean labels) and rendered to OWL under `global/ontology/{core,building,drawing}`. SHACL shapes cover the spatial hierarchy, hosting and steel sections; `aec audit` warns when an export uses a class or predicate the vocabulary does not declare.
 
 Remaining environment-bound phases:
 

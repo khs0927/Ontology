@@ -183,3 +183,11 @@ def test_fastapi_app_endpoints(tmp_path: Path):
     res = client.get("/")
     assert res.status_code == 200
     assert "AEC" in res.text
+
+
+def test_init_db_output_redacts_password():
+    from aec_intelligence.operational.cli import redact_dsn
+
+    assert redact_dsn("postgresql://aec:s3cret@localhost:55432/aec") == "postgresql://aec:***@localhost:55432/aec"
+    assert redact_dsn("host=db user=aec password=s3cret dbname=aec") == "host=db user=aec password=*** dbname=aec"
+    assert redact_dsn("postgresql://aec@localhost/aec") == "postgresql://aec@localhost/aec"

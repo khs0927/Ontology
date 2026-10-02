@@ -190,12 +190,17 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
     elif assurance == "remote-readback-complete":
         if remote_verified is not True:
             raise ValueError("remote-readback-complete snapshot must declare verification")
+        if snapshot.get("canonical_freshness_verified") is not True:
+            raise ValueError(
+                "remote-readback-complete snapshot requires canonical freshness proof"
+            )
         for name in (
             "remote_document_count",
             "remote_chunk_count",
             "remote_document_ids_digest",
             "remote_chunk_ids_digest",
             "remote_projection_content_digest",
+            "current_source_state_digest",
         ):
             if name.endswith("_count"):
                 value = snapshot.get(name)
@@ -390,6 +395,7 @@ def compare_provider_runs(
             snapshot["projection_digest"],
             snapshot["external_ids_digest"],
             snapshot.get("remote_projection_content_digest"),
+            snapshot.get("current_source_state_digest"),
         )
         for _, _, _, _, snapshot, _ in parsed
     }
@@ -490,6 +496,7 @@ def compare_provider_runs(
             "projection_digest": index_identity[1],
             "external_ids_digest": index_identity[2],
             "remote_projection_content_digest": index_identity[3],
+            "current_source_state_digest": index_identity[4],
         },
         "k": next(iter(ks)),
         "case_ids": list(next(iter(case_sets))),

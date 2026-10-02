@@ -15,6 +15,7 @@ from .config import Settings
 from .db import Database
 from .embeddings import index_snapshot_embeddings
 from .parsers import parse_source
+from .census import _fs as long_path
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,8 @@ class IngestionWorker:
         if not source_path_str:
             raise ValueError("Job payload missing 'source' file path")
 
-        source_path = Path(source_path_str).resolve()
+        # Long-path prefix on Windows: census hashes >260-char paths with it, so the worker must too.
+        source_path = Path(long_path(str(Path(source_path_str).resolve())))
         if not source_path.is_file():
             raise FileNotFoundError(f"Source file does not exist: {source_path}")
 

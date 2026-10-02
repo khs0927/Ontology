@@ -68,10 +68,16 @@ LAYER_FALLBACK_RULES: tuple[tuple[str, str, str, float], ...] = (
     (r"(?:^|[-_])(?:grnd|ground|gl|지반선|지반)(?:$|[-_])", "Annotation", "ground line layer indicates reference annotation", 0.76),
     # Steel profile outlines in a steel detail (S-STEEL, S-STL, 철골).
     (r"(?:^|[-_])(?:steel|stl|철골)(?:$|[-_])", "SteelSection", "steel layer indicates steel section profile", 0.76),
+    # Plates/stiffeners in a steel connection detail (S-PLATE, S-PL, 플레이트) are steel profile outlines too.
+    (r"(?:^|[-_])(?:plate|plates|pl|stiff|stiffener|gusset|플레이트|강판)(?:$|[-_])", "SteelSection",
+     "steel plate layer indicates steel section profile", 0.74),
+    # Detail linework without an element word (A-DETL, A-DETAIL, 상세) is an unspecified building element.
+    (r"(?:^|[-_])(?:detl|detail|dtl|상세)(?:$|[-_])", "BuildingElementProxy", "detail layer indicates unspecified element linework", 0.6),
     # Generic material hatch without an element word (A-HATCH, A-PATT).
     (r"(?:^|[-_])(?:hatch|patt|pattern|해치)(?:$|[-_])", "BuildingElementProxy", "hatch layer indicates unspecified element fill", 0.6),
 )
-TITLE_BLOCK_TOKENS = ("=title", "^title", "titleblock", "도곽", "표제란", "=border", "타이틀")
+TITLE_BLOCK_TOKENS = ("=title", "^title", "titleblock", "도곽", "표제란", "=border", "타이틀", "=frame", "=form", "=tblk",
+                      "#(?:sheet|frame)(?:a[0-4])?")
 
 # Korean words that contain a short element token but mean something else.
 # They are blanked out before Korean substring/segment matching (창고 = storage room, 문자 = text ...).
@@ -454,6 +460,33 @@ TITLE_BLOCK_KEYS: dict[str, tuple[str, ...]] = {
     "client": ("CLIENT", "OWNER", "건축주"),
 }
 _TITLE_LOOKUP = {re.sub(r"[\s._-]", "", key).upper(): field for field, keys in TITLE_BLOCK_KEYS.items() for key in keys}
+# Printed labels of an exploded/attribute-less title block ("NAME OF DRAWING", "DRAWING NO.", "도 면 명 :").
+_LABEL_LOOKUP = {**_TITLE_LOOKUP, **{re.sub(r"[\s._-]", "", key).upper(): field for field, keys in {
+    "drawingNumber": ("DRAWING NO", "DWG NO", "SHEET NO", "SHEET NUMBER", "SHEET", "도면 번호", "도면NO"),
+    "drawingTitle": ("NAME OF DRAWING", "DRAWING TITLE", "DRAWING NAME", "SHEET TITLE", "TITLE OF DRAWING", "도면 명칭", "도면명칭"),
+    "scale": ("축 척",), "date": ("일 자", "날 짜"),
+    "projectName": ("PROJECT TITLE", "PROJECT NAME", "공 사 명", "사 업 명"),
+}.items() for key in keys}}
+_LABEL_STRIP_RE = re.compile(r"[\s._\-:：()\[\]#/]")
+
+
+def title_block_label(text: str) -> tuple[str, str] | None:
+    """(field, inline value) when ``text`` is a printed title-block label such as "도면명 : 1층 평면도" or "SCALE".
+
+    The inline value is whatever follows the label after a ``:``/``_``/whitespace separator ('' for a bare label).
+    """
+    raw = str(text or "").strip()
+    if not raw or len(raw) > 80:
+        return None
+    key = _LABEL_STRIP_RE.sub("", raw).upper()
+    if key in _LABEL_LOOKUP:
+        return _LABEL_LOOKUP[key], ""
+    match = re.match(r"^\s*([^:：_]{1,24}?)\s*(?:[:：_]|\s{2,})\s*(.+)$", raw)
+    if match:
+        field = _LABEL_LOOKUP.get(_LABEL_STRIP_RE.sub("", match.group(1)).upper())
+        if field:
+            return field, match.group(2).strip()
+    return None
 
 
 def title_block_fields(attributes: dict[str, Any]) -> dict[str, str] | None:

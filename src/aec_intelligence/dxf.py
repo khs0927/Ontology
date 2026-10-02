@@ -420,7 +420,7 @@ class DXFParser:
             extents=geometric_extents,
             unsupported_entity_types=sorted(unsupported),
             warnings=warnings,
-            sheet=sheet_metadata(entities, source_path.stem),
+            sheet=sheet_metadata(entities, source_path.stem, layout_title_block(doc)),
             block_definitions=block_definitions(doc),
         )
 
@@ -459,8 +459,13 @@ def block_definitions(doc: Any) -> list[dict[str, Any]]:
 _SHEET_NUMBER_RE = re.compile(r"^([A-Z]{1,3}-?\d{2,4}[A-Z]?)")
 
 
-def sheet_metadata(entities: list[NormalizedCADEntity], file_stem: str) -> dict[str, Any]:
-    """Sheet number/title/scale from the title-block INSERT (paper space preferred), else from the file name."""
+def sheet_metadata(entities: list[NormalizedCADEntity], file_stem: str,
+                   layout_fields: dict[str, str] | None = None) -> dict[str, Any]:
+    """Sheet number/title/scale from the title block, else from the file name.
+
+    Order: a title-block INSERT's ATTRIBs (paper space preferred), then ``layout_fields`` read from the
+    printed label/value texts of an attribute-less or exploded title block (see :func:`layout_title_block`).
+    """
     from .classifier import drawing_category, title_block_fields
 
     fields: dict[str, str] = {}
@@ -471,11 +476,250 @@ def sheet_metadata(entities: list[NormalizedCADEntity], file_stem: str) -> dict[
         if found:
             fields, source = found, "title_block"
             break
+    if not fields and layout_fields:
+        fields, source = dict(layout_fields), "title_block"
     number = fields.get("drawingNumber") or (m.group(1) if (m := _SHEET_NUMBER_RE.match(file_stem)) else None)
     title = fields.get("drawingTitle") or (re.sub(r"^[A-Z]{1,3}-?\d{2,4}[A-Z]?[_\s-]*", "", file_stem).split("_")[0] or None)
     category = drawing_category(("title_block", fields.get("drawingTitle", "")), ("file_name", file_stem))
-    return {"number": number, "title": title, "scale": fields.get("scale"), "revision": fields.get("revisionLabel"),
-            "date": fields.get("date"), "category": category["drawing_category_group"],
-            "drawing_category": category["drawing_category"], "drawing_category_en": category["drawing_category_en"],
-            "source": source}
+    sheet = {"number": number, "title": title, "scale": fields.get("scale"), "revision": fields.get("revisionLabel"),
+             "date": fields.get("date"), "category": category["drawing_category_group"],
+             "drawing_category": category["drawing_category"], "drawing_category_en": category["drawing_category_en"],
+             "source": source}
+    if fields.get("projectName"):
+        sheet["project"] = fields["projectName"]
+    if fields.get("_method"):
+        sheet["title_block_method"] = fields["_method"]
+    return sheet
+
+
+# --------------------------------------------------------------------------- printed title blocks
+# Many real sheets carry their title block as a frame block *without* ATTRIBs: the labels ("NAME OF
+# DRAWING", "도면명", "SCALE") are TEXT inside the block definition (or exploded into model space) and the
+# values are loose TEXT/MTEXT placed in the cells. These helpers rebuild label -> value pairs spatially.
+
+_VALUE_SHEET_NO_RE = re.compile(r"^[A-Z]{1,4}[-_. ]?\d{1,4}(?:[-.]\d{1,3})?[A-Z]?$")
+_VALUE_SCALE_RE = re.compile(r"(?:^|[^\d])(1\s*[/:]\s*\d{1,5}(?:\.\d+)?)|^(N\.?T\.?S\.?|NONE|NO\s*SCALE|없음)$", re.I)
+_VALUE_DATE_RE = re.compile(r"((?:19|20)\d{2})\s*[.\-/년]\s*(\d{1,2})(?:\s*[.\-/월]\s*(\d{1,2}))?")
+_PLACEHOLDER_RE = re.compile(r"^(?:#\w+|[-_.\s]*|x+|\?+|<[^>]*>|\$\{?\w+\}?)$", re.I)
+_TYPED_FIELDS = ("drawingNumber", "scale", "date")
+
+
+def _typed_value(field: str, text: str) -> str | None:
+    """Normalised value when ``text`` has the shape a typed title-block field needs, else None."""
+    text = text.strip()
+    if field == "drawingNumber":
+        return text if _VALUE_SHEET_NO_RE.match(text.upper()) else None
+    if field == "scale":
+        match = _VALUE_SCALE_RE.search(text)
+        if not match:
+            return None
+        return re.sub(r"\s+", "", match.group(1)).replace(":", "/") if match.group(1) else match.group(2).upper()
+    if field == "date":
+        match = _VALUE_DATE_RE.search(text)
+        return ".".join(g for g in match.groups() if g) if match else None
+    return text or None
+
+
+def _is_typed(text: str) -> bool:
+    return any(_typed_value(field, text) for field in _TYPED_FIELDS)
+
+
+def _title_block_texts(doc: Any) -> dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    """Per layout: (texts with WCS position/height/layer, bboxes of title-block INSERTs).
+
+    Texts inside title-block block definitions (also nested, up to 3 levels) are expanded to WCS with
+    ``virtual_entities`` so labels printed in the frame land where they are drawn. Xref blocks are skipped.
+    """
+    from .classifier import _title_block
+
+    result: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
+
+    def text_row(entity: Any, in_frame: bool) -> dict[str, Any] | None:
+        kind = entity.dxftype()
+        try:
+            raw = entity.plain_text() if kind in {"MTEXT", "TEXT", "ATTRIB"} else _safe_attr(entity, "text", "")
+            point = _point(_safe_attr(entity, "insert", [0, 0, 0]))
+        except Exception:
+            return None
+        text = " ".join(decode_dxf_text(raw).split())
+        if not text:
+            return None
+        height = float((_safe_attr(entity, "char_height") if kind == "MTEXT" else _safe_attr(entity, "height")) or 0.0)
+        return {"text": text, "x": point[0], "y": point[1], "h": height,
+                "layer": decode_dxf_text(_safe_attr(entity, "layer", "0")), "in_frame": in_frame}
+
+    def expand(insert: Any, depth: int, rows: list[dict[str, Any]]) -> None:
+        doc_ = getattr(insert, "doc", None)
+        block = doc_.blocks.get(insert.dxf.name) if doc_ is not None else None
+        if block is None or depth > 3 or (int(block.block.dxf.get("flags", 0) or 0) & 12):
+            return  # missing, too deep, or an external reference
+        try:
+            virtual = list(insert.virtual_entities())
+        except Exception:
+            return
+        for child in virtual:
+            kind = child.dxftype()
+            if kind in {"TEXT", "MTEXT"}:
+                row = text_row(child, True)
+                if row:
+                    rows.append(row)
+            elif kind == "INSERT":
+                expand(child, depth + 1, rows)
+        for attrib in list(getattr(insert, "attribs", []) or []):
+            row = text_row(attrib, False)
+            if row:
+                rows.append(row)
+
+    for space in doc.layouts:
+        rows: list[dict[str, Any]] = []
+        frames: list[dict[str, Any]] = []
+        for entity in space:
+            kind = entity.dxftype()
+            if kind in {"TEXT", "MTEXT"}:
+                row = text_row(entity, False)
+                if row:
+                    rows.append(row)
+            elif kind == "INSERT":
+                probe = NormalizedCADEntity("", "INSERT", decode_dxf_text(_safe_attr(entity, "layer", "0")), properties={
+                    "block_name": decode_dxf_text(_safe_attr(entity, "name", "")),
+                    "effective_name": decode_dxf_text(effective_block_name(entity))})
+                if not _title_block(probe):
+                    continue
+                expand(entity, 0, rows)
+                try:
+                    from ezdxf import bbox as ezdxf_bbox
+                    box = ezdxf_bbox.extents([entity], fast=True)
+                    if box.has_data:
+                        frames.append({"min_x": box.extmin.x, "min_y": box.extmin.y, "max_x": box.extmax.x,
+                                       "max_y": box.extmax.y, "layer": probe.layer})
+                except Exception:
+                    pass
+        if rows:
+            result[str(space.name)] = (rows, frames)
+    return result
+
+
+def _pair_labels(rows: list[dict[str, Any]], frames: list[dict[str, Any]]) -> dict[str, str]:
+    """Give each printed label the value text in its cell (to the right of / below the label).
+
+    Typed fields (number, scale, date) take the nearest text of the right shape; free-text fields (title,
+    project) take the nearest untyped text that stays above the next label of the same column.
+    """
+    from .classifier import title_block_label
+
+    def inside(row: dict[str, Any]) -> bool:
+        return not frames or any(f["min_x"] - 1e-6 <= row["x"] <= f["max_x"] + 1e-6
+                                 and f["min_y"] - 1e-6 <= row["y"] <= f["max_y"] + 1e-6 for f in frames)
+
+    rows = [r for r in rows if inside(r)]
+    labels: list[tuple[dict[str, Any], str]] = []
+    candidates: list[dict[str, Any]] = []
+    fields: dict[str, str] = {}
+    for row in rows:
+        found = title_block_label(row["text"])
+        if not found:
+            if not _PLACEHOLDER_RE.match(row["text"]):
+                candidates.append(row)
+            continue
+        field, inline = found
+        if inline and not _PLACEHOLDER_RE.match(inline):
+            value = _typed_value(field, inline) if field in _TYPED_FIELDS else inline
+            if value and field not in fields:
+                fields[field] = value
+            continue
+        labels.append((row, field))
+    if not labels or not rows:
+        return fields
+    span = max(1e-9, max(r["y"] for r in rows) - min(r["y"] for r in rows), max(r["x"] for r in rows) - min(r["x"] for r in rows))
+
+    def unit(label: dict[str, Any]) -> float:
+        return label["h"] if label["h"] > 0 else span / 100
+
+    def lower_bound(label: dict[str, Any]) -> float:
+        """y of the next label below in the same column: a free-text value never crosses into that cell."""
+        tol = 3 * unit(label)
+        lower = [other["y"] for other, _ in labels if other is not label
+                 and other["y"] < label["y"] - unit(label) / 2 and abs(other["x"] - label["x"]) <= tol]
+        return max(lower) if lower else label["y"] - 6 * unit(label)
+
+    def distance(label: dict[str, Any], cand: dict[str, Any], bounded: bool) -> float | None:
+        h = unit(label)
+        dx, dy = cand["x"] - label["x"], cand["y"] - label["y"]
+        if dx < -2 * h or dy > h:
+            return None
+        if bounded and cand["y"] < lower_bound(label) - h / 2:
+            return None
+        d = (dx * dx + (2.5 * dy) ** 2) ** 0.5
+        return d if d <= 40 * h else None
+
+    used: set[int] = set()
+    for typed in (True, False):
+        pairs = []
+        for label, field in labels:
+            if field in fields or (field in _TYPED_FIELDS) != typed:
+                continue
+            for index, cand in enumerate(candidates):
+                if typed:
+                    value = _typed_value(field, cand["text"])
+                else:
+                    value = None if _is_typed(cand["text"]) else cand["text"]
+                d = distance(label, cand, bounded=not typed) if value else None
+                if d is not None:
+                    pairs.append((d, index, field, value))
+        for _, index, field, value in sorted(pairs, key=lambda p: (p[0], p[1])):
+            if field not in fields and index not in used:
+                fields[field] = value
+                used.add(index)
+    return fields
+
+
+def _unlabelled_frame_fields(rows: list[dict[str, Any]], frames: list[dict[str, Any]]) -> dict[str, str]:
+    """Placeholder frames without printed labels: values written on the frame's own layer inside the frame.
+
+    The sheet number is the text shaped like one; the title is the nearest free text above it in the same
+    column and the project the next one up; scale and date are recognised by shape.
+    """
+    for frame in frames:
+        layer = str(frame.get("layer") or "0")
+        if layer == "0":
+            continue
+        own = [r for r in rows if not r["in_frame"] and r["layer"] == layer and not _PLACEHOLDER_RE.match(r["text"])
+               and frame["min_x"] <= r["x"] <= frame["max_x"] and frame["min_y"] <= r["y"] <= frame["max_y"]]
+        number = next((r for r in own if _typed_value("drawingNumber", r["text"])), None)
+        if number is None:
+            continue
+        found = {"drawingNumber": number["text"].strip()}
+        for field in ("scale", "date"):
+            value = next((v for r in own if r is not number and (v := _typed_value(field, r["text"]))), None)
+            if value:
+                found[field] = value
+        reach = max(number["h"], 1e-9) * 10
+        above = sorted((r for r in own if not _is_typed(r["text"]) and r["y"] > number["y"]
+                        and abs(r["x"] - number["x"]) <= reach), key=lambda r: r["y"])
+        if above:
+            found["drawingTitle"] = above[0]["text"]
+            if len(above) > 1:
+                found["projectName"] = above[1]["text"]
+        if len(found) >= 2:
+            return found
+    return {}
+
+
+def layout_title_block(doc: Any) -> dict[str, str] | None:
+    """Title-block fields read from printed labels and values (paper space first), or None.
+
+    Accepted only with a drawing number or title plus one more field, the same bar as ATTRIB title blocks.
+    ``_method`` records which reader produced the fields and in which layout.
+    """
+    try:
+        per_layout = _title_block_texts(doc)
+    except Exception:
+        return None
+    for name in sorted(per_layout, key=lambda n: n.lower() == "model"):
+        rows, frames = per_layout[name]
+        for method, reader in (("printed_labels", _pair_labels), ("frame_layer_values", _unlabelled_frame_fields)):
+            fields = reader(rows, frames)
+            if ({"drawingNumber", "drawingTitle"} & set(fields)) and len(fields) >= 2:
+                return {**fields, "_method": f"{method}@{name}"}
+    return None
 

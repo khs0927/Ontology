@@ -258,4 +258,23 @@ def test_comparison_never_claims_canonical_mutation():
     assert report["canonical_mutation"] is False
     assert report["production_adoption_eligible"] is False
     assert report["remote_inventory_verified"] is False
-    assert "MUST NOT be used as production adoption evidence" in report["note"]
+    assert "Production adoption is eligible only" in report["note"]
+
+
+def test_fully_remote_verified_runs_can_become_production_evidence_candidate():
+    ragflow = run("ragflow", metrics())
+    light = run("lightrag", metrics(recall=0.9, mrr=0.8, p95=120))
+    for item in (ragflow, light):
+        snapshot = item["index_snapshot"]
+        snapshot["assurance"] = "remote-readback-complete"
+        snapshot["remote_inventory_verified"] = True
+        snapshot["remote_document_count"] = 1
+        snapshot["remote_chunk_count"] = 1
+        snapshot["remote_document_ids_digest"] = "a" * 64
+        snapshot["remote_chunk_ids_digest"] = "b" * 64
+
+    report = compare_provider_runs([ragflow, light])
+    assert report["status"] == "SELECTED"
+    assert report["selected_provider"] == "ragflow"
+    assert report["remote_inventory_verified"] is True
+    assert report["production_adoption_eligible"] is True

@@ -108,3 +108,26 @@ deployment identity attestation이 필요하다. configured release/image digest
 
 그리고 technical evidence가 ready여도 실제 production 채택은 별도의 operator approval artifact가
 필수다.
+
+
+## benchmark execution provenance는 다음 단계
+
+이 PR의 책임은 **remote inventory/readback 검증**까지다.
+
+아직 benchmark metrics를 특정 live 실행 시점, runner revision, index snapshot,
+provider profile과 불변하게 묶는 execution provenance 계층은 구현하지 않는다.
+
+따라서 현재 비교 보고서는 항상:
+
+```json
+{
+  "benchmark_execution_verified": false,
+  "execution_provenance_required": true,
+  "production_evidence_ready": false,
+  "production_adoption_eligible": false
+}
+```
+
+를 유지한다.
+
+execution provenance/signing은 별도 PR에서 독립적으로 구현·검증한다.

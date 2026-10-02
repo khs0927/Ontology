@@ -346,3 +346,56 @@ def test_ragflow_missing_remote_chunk_content_blocks_proof():
 
     assert result["status"] == "BLOCKED"
     assert result["content_missing_chunk_ids"] == ["chunk-1"]
+
+
+def test_ragflow_tampered_binding_provenance_blocks_proof():
+    registry = RagflowBindingRegistry()
+    registry.bind(
+        RagflowBinding(
+            external_id="ctx-1",
+            canonical_id="door-1",
+            source_id="source-1",
+            revision_id="rev-tampered",
+            project_id="P1",
+            sha256="a" * 64,
+            state="HUMAN_VERIFIED",
+            dataset_id="dataset-1",
+            document_id="doc-1",
+            chunk_id="chunk-1",
+        )
+    )
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "door",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=registry,
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(adapter, fixture())
+
+    assert result["status"] == "BLOCKED"
+    assert result["remote_inventory_verified"] is False
+    assert result["binding_metadata_mismatch_external_ids"] == ["ctx-1"]

@@ -2,8 +2,7 @@
 
 Comparison never promotes a retrieval provider into canonical storage. Only
 providers that pass the existing provenance/ACL/revision/quality promotion gate
-are eligible. Eligible providers are compared lexicographically by Recall@K,
-then MRR, then p95 latency only when every tied provider reported p95.
+are eligible. Every run also records a reproducible provider execution profile.
 """
 
 from __future__ import annotations
@@ -20,14 +19,18 @@ from .benchmark import PromotionThresholds, promotion_decision
 
 _RUN_SCHEMA = "drawing-context-rag-provider-run/1"
 _COMPARISON_SCHEMA = "drawing-context-rag-provider-comparison/1"
+_REQUIRED_PROFILE_FIELDS = (
+    "provider_version",
+    "retrieval_mode",
+    "embedding_model",
+    "embedding_revision",
+    "index_revision",
+)
 
 
-def fixture_digest(fixture: dict[str, Any]) -> str:
-    """Return a stable digest for the exact benchmark fixture."""
-    if not isinstance(fixture, dict):
-        raise ValueError("benchmark fixture must be an object")
+def _stable_digest(value: Any) -> str:
     encoded = json.dumps(
-        fixture,
+        value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -36,19 +39,58 @@ def fixture_digest(fixture: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def fixture_digest(fixture: dict[str, Any]) -> str:
+    """Digest provider-neutral benchmark inputs.
+
+    Existing benchmark fixtures may carry a provider label. That label is the
+    only excluded field so RAGFlow and LightRAG can compare the same projection
+    and cases while every other fixture field remains identical.
+    """
+    if not isinstance(fixture, dict):
+        raise ValueError("benchmark fixture must be an object")
+    if fixture.get("schema") != "drawing-context-rag-benchmark/1":
+        raise ValueError("unsupported benchmark fixture schema")
+    if fixture.get("canonical_mutation") is not False:
+        raise ValueError("benchmark fixture must declare canonical_mutation=false")
+    if not isinstance(fixture.get("projection"), list):
+        raise ValueError("benchmark fixture requires projection")
+    if not isinstance(fixture.get("cases"), list) or not fixture["cases"]:
+        raise ValueError("benchmark fixture requires non-empty cases")
+    normalized = {key: value for key, value in fixture.items() if key != "provider"}
+    return _stable_digest(normalized)
+
+
+def _validate_profile(profile: dict[str, Any]) -> None:
+    if not isinstance(profile, dict):
+        raise ValueError("provider profile must be an object")
+    for field in _REQUIRED_PROFILE_FIELDS:
+        value = profile.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"provider profile requires non-empty {field}")
+
+
+def profile_digest(profile: dict[str, Any]) -> str:
+    _validate_profile(profile)
+    return _stable_digest(profile)
+
+
 def wrap_provider_result(
     provider: str,
     fixture: dict[str, Any],
     metrics: dict[str, Any],
+    profile: dict[str, Any],
 ) -> dict[str, Any]:
     provider = provider.strip().lower()
     if not provider:
         raise ValueError("provider must be non-empty")
     _validate_metrics(metrics)
+    _validate_profile(profile)
     return {
         "schema": _RUN_SCHEMA,
         "provider": provider,
         "fixture_digest": fixture_digest(fixture),
+        "profile": profile,
+        "profile_digest": profile_digest(profile),
         "metrics": metrics,
         "canonical_mutation": False,
     }
@@ -103,24 +145,47 @@ def _validate_metrics(metrics: dict[str, Any]) -> None:
     _case_ids(metrics)
 
 
-def _validate_run(run: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+def _validate_hex_digest(value: Any, name: str) -> str:
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"{name} requires a SHA-256 digest")
+    try:
+        int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be hexadecimal SHA-256") from exc
+    return value
+
+
+def _validate_run(
+    run: dict[str, Any],
+) -> tuple[str, str, dict[str, Any], str, dict[str, Any]]:
     if not isinstance(run, dict) or run.get("schema") != _RUN_SCHEMA:
         raise ValueError("unsupported provider run schema")
     if run.get("canonical_mutation") is not False:
         raise ValueError("provider run must declare canonical_mutation=false")
     provider = run.get("provider")
-    digest = run.get("fixture_digest")
-    metrics = run.get("metrics")
     if not isinstance(provider, str) or not provider.strip():
         raise ValueError("provider run requires provider")
-    if not isinstance(digest, str) or len(digest) != 64:
-        raise ValueError("provider run requires a SHA-256 fixture digest")
-    try:
-        int(digest, 16)
-    except ValueError as exc:
-        raise ValueError("fixture_digest must be hexadecimal SHA-256") from exc
+
+    fixture_hash = _validate_hex_digest(run.get("fixture_digest"), "fixture_digest")
+    profile = run.get("profile")
+    _validate_profile(profile)
+    declared_profile_hash = _validate_hex_digest(
+        run.get("profile_digest"),
+        "profile_digest",
+    )
+    actual_profile_hash = profile_digest(profile)
+    if declared_profile_hash != actual_profile_hash:
+        raise ValueError("provider profile digest does not match profile contents")
+
+    metrics = run.get("metrics")
     _validate_metrics(metrics)
-    return provider.strip().lower(), digest, metrics
+    return (
+        provider.strip().lower(),
+        fixture_hash,
+        profile,
+        declared_profile_hash,
+        metrics,
+    )
 
 
 def _p95(metrics: dict[str, Any]) -> float | None:
@@ -142,7 +207,7 @@ def compare_provider_runs(
     runs: Iterable[dict[str, Any]],
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
-    """Compare runs produced from the exact same benchmark fixture.
+    """Compare runs produced from the same benchmark inputs.
 
     Winner selection is intentionally non-weighted:
     1. Existing promotion gate must PASS.
@@ -150,32 +215,38 @@ def compare_provider_runs(
     3. Higher MRR.
     4. Lower p95 only if every still-tied provider reported p95.
     Otherwise the result remains a tie.
+
+    Provider profiles are recorded, not required to match: comparing different
+    retrieval systems is the purpose of the benchmark, while the profile makes
+    each system configuration reproducible.
     """
     rows = list(runs)
     if len(rows) < 2:
         raise ValueError("comparison requires at least two provider runs")
 
     parsed = [_validate_run(row) for row in rows]
-    providers = [provider for provider, _, _ in parsed]
+    providers = [provider for provider, _, _, _, _ in parsed]
     if len(set(providers)) != len(providers):
         raise ValueError("provider names must be unique")
 
-    digests = {digest for _, digest, _ in parsed}
+    digests = {digest for _, digest, _, _, _ in parsed}
     if len(digests) != 1:
         raise ValueError("providers must use the exact same benchmark fixture")
 
-    ks = {metrics["k"] for _, _, metrics in parsed}
-    case_sets = {_case_ids(metrics) for _, _, metrics in parsed}
+    ks = {metrics["k"] for _, _, _, _, metrics in parsed}
+    case_sets = {_case_ids(metrics) for _, _, _, _, metrics in parsed}
     if len(ks) != 1 or len(case_sets) != 1:
         raise ValueError("providers must use identical k and ordered case ids")
 
     thresholds = thresholds or PromotionThresholds()
     report_rows: list[dict[str, Any]] = []
     eligible: list[tuple[str, dict[str, Any]]] = []
-    for provider, _, metrics in parsed:
+    for provider, _, profile, profile_hash, metrics in parsed:
         gate = promotion_decision(metrics, thresholds)
         row = {
             "provider": provider,
+            "profile": profile,
+            "profile_digest": profile_hash,
             "promotion_status": gate["status"],
             "checks": gate["checks"],
             "recall_at_k": metrics["recall_at_k"],
@@ -217,9 +288,14 @@ def compare_provider_runs(
                 status = "SELECTED"
                 deciding_metric = "mrr"
             else:
-                p95_values = [(provider, _p95(metrics)) for provider, metrics in finalists]
+                p95_values = [
+                    (provider, _p95(metrics))
+                    for provider, metrics in finalists
+                ]
                 if all(value is not None for _, value in p95_values):
-                    best_p95 = min(value for _, value in p95_values if value is not None)
+                    best_p95 = min(
+                        value for _, value in p95_values if value is not None
+                    )
                     p95_finalists = [
                         provider
                         for provider, value in p95_values
@@ -249,8 +325,8 @@ def compare_provider_runs(
         "tied_providers": tied,
         "canonical_mutation": False,
         "note": (
-            "Selection applies only to this exact benchmark fixture. "
-            "It does not make the provider canonical."
+            "Selection applies only to this benchmark fixture and recorded "
+            "provider profiles. It does not make the provider canonical."
         ),
     }
 
@@ -262,7 +338,10 @@ def load_provider_run(path: str | Path) -> dict[str, Any]:
 
 
 def save_comparison(report: dict[str, Any], path: str | Path) -> None:
-    if report.get("schema") != _COMPARISON_SCHEMA or report.get("canonical_mutation") is not False:
+    if (
+        report.get("schema") != _COMPARISON_SCHEMA
+        or report.get("canonical_mutation") is not False
+    ):
         raise ValueError("invalid comparison report")
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)

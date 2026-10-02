@@ -170,10 +170,28 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("provider index record_count must be a non-negative integer")
     _validate_hex_digest(snapshot.get("projection_digest"), "projection_digest")
     _validate_hex_digest(snapshot.get("external_ids_digest"), "external_ids_digest")
-    if snapshot.get("assurance") != "caller-attested-local-view":
-        raise ValueError("provider index snapshot assurance must be caller-attested-local-view")
-    if snapshot.get("remote_inventory_verified") is not False:
-        raise ValueError("offline comparison snapshot cannot claim remote inventory verification")
+    assurance = snapshot.get("assurance")
+    remote_verified = snapshot.get("remote_inventory_verified")
+    if assurance == "caller-attested-local-view":
+        if remote_verified is not False:
+            raise ValueError("caller-attested snapshot cannot claim remote inventory verification")
+    elif assurance == "remote-readback-complete":
+        if remote_verified is not True:
+            raise ValueError("remote-readback-complete snapshot must declare verification")
+        for name in (
+            "remote_document_count",
+            "remote_chunk_count",
+            "remote_document_ids_digest",
+            "remote_chunk_ids_digest",
+        ):
+            if name.endswith("_count"):
+                value = snapshot.get(name)
+                if type(value) is not int or value < 0:
+                    raise ValueError(f"{name} must be a non-negative integer")
+            else:
+                _validate_hex_digest(snapshot.get(name), name)
+    else:
+        raise ValueError("unsupported provider index snapshot assurance")
 
 
 def _validate_snapshot_against_fixture(
@@ -440,6 +458,11 @@ def compare_provider_runs(
                     tied = sorted(provider for provider, _ in finalists)
 
     index_identity = next(iter(index_identities))
+    all_remote_verified = all(
+        snapshot.get("remote_inventory_verified") is True
+        for _, _, _, _, snapshot, _ in parsed
+    )
+    production_eligible = status == "SELECTED" and all_remote_verified
     return {
         "schema": _COMPARISON_SCHEMA,
         "fixture_digest": next(iter(fixture_hashes)),
@@ -457,14 +480,13 @@ def compare_provider_runs(
         "deciding_metric": deciding_metric,
         "tied_providers": tied,
         "canonical_mutation": False,
-        "production_adoption_eligible": False,
-        "remote_inventory_verified": False,
+        "production_adoption_eligible": production_eligible,
+        "remote_inventory_verified": all_remote_verified,
         "note": (
-            "Selection is an offline comparison over caller-attested index snapshots. "
-            "It applies only to this benchmark fixture and recorded provider profiles, "
-            "does not make the provider canonical, and MUST NOT be used as production "
-            "adoption evidence until each provider's complete remote inventory is "
-            "independently enumerated and matched."
+            "Selection applies only to this benchmark fixture and recorded provider "
+            "profiles. Production adoption is eligible only when every compared provider "
+            "has a complete read-only remote inventory proof and the comparison selects "
+            "one provider. Canonical CAIR remains authoritative."
         ),
     }
 

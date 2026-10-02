@@ -19,12 +19,13 @@ read-only로 검증하는 것이다. CAIR, 원본, provider index를 수정하�
 - chunk ID 집합
 - fixture projection external ID 집합
 - 각 local binding의 canonical_id / source_id / revision_id / project_id / sha256 / state가 fixture metadata와 정확히 일치
+- fixture의 source_id별 revision_id / sha256이 검증 시점의 current canonical source state와 정확히 일치
 - 각 chunk의 실제 remote content와 fixture content의 exact SHA-256 identity
 - record count
 
 누락/추가/중복 document 또는 chunk가 하나라도 있거나, local binding provenance가 fixture와
-다르거나, 같은 chunk ID라도 remote content가 fixture content와 다르거나 content를 읽을 수
-없으면 `BLOCKED`다.
+다르거나, fixture source revision/SHA가 현재 canonical source state와 다르거나, 같은 chunk ID라도
+remote content가 fixture content와 다르거나 content를 읽을 수 없으면 `BLOCKED`다.
 
 완전히 같을 때만 index snapshot을 다음 상태로 승격한다.
 

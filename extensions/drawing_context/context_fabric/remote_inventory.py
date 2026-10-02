@@ -1,0 +1,300 @@
+"""Read-only remote inventory verification for derived RAG providers.
+
+RAGFlow can be fully verified because its reviewed API exposes dataset document
+lists and complete per-document chunk lists. LightRAG v1.5.7 currently exposes
+document status/counts through the public REST API but not a complete chunk-ID
+inventory, so its verifier is deliberately partial and can never claim complete
+remote verification.
+
+No function in this module writes remote state or canonical CAIR data.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Any
+from urllib.parse import quote
+
+from .compare import build_index_snapshot
+from .lightrag_http import LightRagHttpAdapter
+from .ragflow_http import RagflowHttpAdapter
+
+
+def _digest(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _fixture_external_ids(fixture: dict[str, Any]) -> tuple[str, ...]:
+    projection = fixture.get("projection") if isinstance(fixture, dict) else None
+    if not isinstance(projection, list):
+        raise ValueError("benchmark fixture requires projection")
+    values: list[str] = []
+    for row in projection:
+        if not isinstance(row, dict):
+            raise ValueError("benchmark projection rows must be objects")
+        external_id = row.get("external_id")
+        if not isinstance(external_id, str) or not external_id.strip():
+            raise ValueError("benchmark projection rows require external_id")
+        values.append(external_id)
+    if len(values) != len(set(values)):
+        raise ValueError("benchmark projection external_id values must be unique")
+    return tuple(sorted(values))
+
+
+def _ragflow_data(response: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        raise RuntimeError("RAGFlow inventory response must be an object")
+    code = response.get("code", 0)
+    if code not in {0, "0", None}:
+        raise RuntimeError(f"RAGFlow inventory API error {code}: {response.get('message')}")
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("RAGFlow inventory response has no data object")
+    return data
+
+
+def _list_ragflow_documents(
+    adapter: RagflowHttpAdapter,
+    *,
+    page_size: int,
+    max_pages: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in range(1, max_pages + 1):
+        path = (
+            f"/api/v1/datasets/{adapter.config.dataset_id}/documents"
+            f"?page={page}&page_size={page_size}"
+        )
+        data = _ragflow_data(adapter.sender("GET", path, None))
+        docs = data.get("docs")
+        if not isinstance(docs, list):
+            raise RuntimeError("RAGFlow document inventory has no docs list")
+        for raw in docs:
+            if not isinstance(raw, dict):
+                raise RuntimeError("RAGFlow document inventory row must be an object")
+            doc_id = raw.get("id")
+            if not isinstance(doc_id, str) or not doc_id:
+                raise RuntimeError("RAGFlow document inventory row has no id")
+            if doc_id in seen:
+                raise RuntimeError("RAGFlow document inventory returned duplicate ids")
+            seen.add(doc_id)
+            rows.append(raw)
+        if len(docs) < page_size:
+            return rows
+    raise RuntimeError("RAGFlow document inventory exceeded pagination safety limit")
+
+
+def _list_ragflow_chunks(
+    adapter: RagflowHttpAdapter,
+    document_id: str,
+    *,
+    page_size: int,
+    max_pages: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in range(1, max_pages + 1):
+        path = (
+            f"/api/v1/datasets/{adapter.config.dataset_id}/documents/"
+            f"{quote(document_id, safe='')}/chunks?page={page}&page_size={page_size}"
+        )
+        data = _ragflow_data(adapter.sender("GET", path, None))
+        chunks = data.get("chunks")
+        if not isinstance(chunks, list):
+            raise RuntimeError("RAGFlow chunk inventory has no chunks list")
+        for raw in chunks:
+            if not isinstance(raw, dict):
+                raise RuntimeError("RAGFlow chunk inventory row must be an object")
+            chunk_id = raw.get("id") or raw.get("chunk_id")
+            if not isinstance(chunk_id, str) or not chunk_id:
+                raise RuntimeError("RAGFlow chunk inventory row has no id")
+            if chunk_id in seen:
+                raise RuntimeError("RAGFlow chunk inventory returned duplicate ids")
+            remote_doc = raw.get("document_id") or raw.get("doc_id")
+            if remote_doc is not None and remote_doc != document_id:
+                raise RuntimeError("RAGFlow chunk inventory crossed document boundary")
+            seen.add(chunk_id)
+            rows.append(raw)
+        total = data.get("total")
+        if isinstance(total, int) and total >= 0 and len(rows) >= total:
+            return rows
+        if len(chunks) < page_size:
+            return rows
+    raise RuntimeError("RAGFlow chunk inventory exceeded pagination safety limit")
+
+
+def verify_ragflow_remote_inventory(
+    adapter: RagflowHttpAdapter,
+    fixture: dict[str, Any],
+    *,
+    page_size: int = 100,
+    max_pages: int = 1000,
+) -> dict[str, Any]:
+    """Fully enumerate a dedicated RAGFlow dataset and compare it to bindings."""
+    if not adapter.config.enabled:
+        raise RuntimeError("RAGFlow HTTP adapter is disabled")
+    if not 1 <= page_size <= 100:
+        raise ValueError("RAGFlow inventory page_size must be between 1 and 100")
+    if not 1 <= max_pages <= 10000:
+        raise ValueError("RAGFlow max_pages must be between 1 and 10000")
+
+    bindings = adapter.registry.snapshot()
+    if not bindings:
+        raise ValueError("RAGFlow remote inventory requires non-empty local bindings")
+    if any(row.get("dataset_id") != adapter.config.dataset_id for row in bindings):
+        raise ValueError("RAGFlow bindings span a dataset other than the configured benchmark dataset")
+
+    expected_docs = sorted({row["document_id"] for row in bindings})
+    expected_chunks = sorted(row["chunk_id"] for row in bindings)
+    expected_external = tuple(sorted(row["external_id"] for row in bindings))
+    fixture_external = _fixture_external_ids(fixture)
+
+    documents = _list_ragflow_documents(
+        adapter,
+        page_size=page_size,
+        max_pages=max_pages,
+    )
+    remote_docs = sorted(row["id"] for row in documents)
+
+    remote_chunks: list[str] = []
+    for document_id in remote_docs:
+        remote_chunks.extend(
+            (row.get("id") or row.get("chunk_id"))
+            for row in _list_ragflow_chunks(
+                adapter,
+                document_id,
+                page_size=page_size,
+                max_pages=max_pages,
+            )
+        )
+    remote_chunks = sorted(remote_chunks)
+
+    missing_docs = sorted(set(expected_docs) - set(remote_docs))
+    extra_docs = sorted(set(remote_docs) - set(expected_docs))
+    missing_chunks = sorted(set(expected_chunks) - set(remote_chunks))
+    extra_chunks = sorted(set(remote_chunks) - set(expected_chunks))
+    binding_fixture_mismatch = expected_external != fixture_external
+
+    exact = not (
+        missing_docs
+        or extra_docs
+        or missing_chunks
+        or extra_chunks
+        or binding_fixture_mismatch
+    )
+
+    base_snapshot = build_index_snapshot(
+        fixture,
+        provider_index_id=adapter.config.dataset_id,
+        indexed_external_ids=expected_external,
+        isolated_namespace=True,
+    )
+    snapshot = dict(base_snapshot)
+    if exact:
+        snapshot.update(
+            {
+                "assurance": "remote-readback-complete",
+                "remote_inventory_verified": True,
+                "remote_document_count": len(remote_docs),
+                "remote_chunk_count": len(remote_chunks),
+                "remote_document_ids_digest": _digest(remote_docs),
+                "remote_chunk_ids_digest": _digest(remote_chunks),
+            }
+        )
+
+    return {
+        "schema": "drawing-context-rag-remote-inventory/1",
+        "provider": "ragflow",
+        "status": "VERIFIED" if exact else "BLOCKED",
+        "provider_index_id": adapter.config.dataset_id,
+        "expected_document_count": len(expected_docs),
+        "remote_document_count": len(remote_docs),
+        "expected_chunk_count": len(expected_chunks),
+        "remote_chunk_count": len(remote_chunks),
+        "missing_document_ids": missing_docs,
+        "extra_document_ids": extra_docs,
+        "missing_chunk_ids": missing_chunks,
+        "extra_chunk_ids": extra_chunks,
+        "binding_fixture_mismatch": binding_fixture_mismatch,
+        "index_snapshot": snapshot,
+        "remote_inventory_verified": exact,
+        "read_only": True,
+        "canonical_mutation": False,
+    }
+
+
+def _flatten_lightrag_documents(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the v1.5.x /documents status response without inventing chunks."""
+    if not isinstance(response, dict):
+        raise RuntimeError("LightRAG document inventory response must be an object")
+    statuses = response.get("statuses")
+    if isinstance(statuses, dict):
+        rows: list[dict[str, Any]] = []
+        for value in statuses.values():
+            if not isinstance(value, list):
+                raise RuntimeError("LightRAG document status bucket must be a list")
+            rows.extend(row for row in value if isinstance(row, dict))
+        return rows
+    documents = response.get("documents")
+    if isinstance(documents, list):
+        return [row for row in documents if isinstance(row, dict)]
+    raise RuntimeError("LightRAG /documents response has no supported document collection")
+
+
+def inspect_lightrag_remote_inventory(
+    adapter: LightRagHttpAdapter,
+) -> dict[str, Any]:
+    """Read public document inventory but never claim complete chunk verification."""
+    if not adapter.config.enabled:
+        raise RuntimeError("LightRAG adapter is disabled")
+    if not adapter._auth_verified:
+        adapter.verify_credentials()
+
+    documents = _flatten_lightrag_documents(adapter.sender("GET", "/documents", None))
+    document_ids: list[str] = []
+    observed_chunk_count = 0
+    missing_chunk_counts = 0
+
+    for row in documents:
+        doc_id = row.get("id")
+        if not isinstance(doc_id, str) or not doc_id:
+            raise RuntimeError("LightRAG document inventory row has no id")
+        document_ids.append(doc_id)
+        count = row.get("chunks_count")
+        if isinstance(count, int) and count >= 0:
+            observed_chunk_count += count
+        else:
+            missing_chunk_counts += 1
+
+    if len(document_ids) != len(set(document_ids)):
+        raise RuntimeError("LightRAG document inventory returned duplicate ids")
+
+    local_bindings = adapter.registry.snapshot()
+    return {
+        "schema": "drawing-context-rag-remote-inventory/1",
+        "provider": "lightrag",
+        "status": "PARTIAL",
+        "reason": (
+            "LightRAG v1.5.7 public /documents inventory exposes document ids and "
+            "chunk counts but not the complete chunk-id set required for exact "
+            "remote corpus proof."
+        ),
+        "remote_document_count": len(document_ids),
+        "remote_document_ids_digest": _digest(sorted(document_ids)),
+        "reported_chunk_count": observed_chunk_count,
+        "documents_without_chunk_count": missing_chunk_counts,
+        "local_bound_chunk_count": len(local_bindings),
+        "remote_inventory_verified": False,
+        "production_adoption_eligible": False,
+        "read_only": True,
+        "canonical_mutation": False,
+    }

@@ -260,7 +260,7 @@ def test_comparison_never_claims_canonical_mutation():
     assert report["production_adoption_eligible"] is False
     assert report["operator_approval_required"] is True
     assert report["remote_inventory_verified"] is False
-    assert "Production adoption is eligible only" in report["note"]
+    assert "never authorizes production adoption automatically" in report["note"]
 
 
 def test_fully_remote_verified_runs_become_evidence_ready_but_not_auto_approved():

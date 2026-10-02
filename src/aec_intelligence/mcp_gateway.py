@@ -22,7 +22,7 @@ from .asset3d_adapters import parse_3d_asset
 from .raster_adapters import RasterAdapterUnavailable, parse_raster
 from .cair import CAIRSnapshot, utc_now
 from .dxf import DXFParser
-from .dwg import ODAConverter
+from .dwg import select_dwg_converter
 from .format_pipeline import SemanticFormatIngestionPipeline
 from .formats import GISParser, IFCParser
 from .graph import write_graph_exports
@@ -40,6 +40,15 @@ from .storage import GoogleDriveArtifactStore, LocalArtifactStore
 from .validation_engine import validate_project, validate_repository, write_validation_report
 from .iterations import IterationManager
 from .intelligence_bridge import export_hydradb_projection, graph_backend_plan, inspect_code_context, preview_hydradb_projection
+
+
+def _dwg_converter(arguments: dict[str, Any]):
+    """Select the DWG converter honoring tool arguments, then AEC_DWG_CONVERTER / AEC_*_EXECUTABLE env settings."""
+    import os
+    mode = arguments.get("dwg_converter") or os.getenv("AEC_DWG_CONVERTER", "auto")
+    oda = arguments.get("oda_executable") or os.getenv("AEC_ODA_EXECUTABLE") or None
+    libre = arguments.get("libredwg_executable") or os.getenv("AEC_LIBREDWG_EXECUTABLE") or None
+    return select_dwg_converter(mode, oda, libre)
 
 
 @dataclass(frozen=True)
@@ -190,7 +199,7 @@ class MCPGateway:
             return self._format_ingest_result(DXFIngestionPipeline(self.repository_root).ingest(source, project_id, name, force))
         if source.suffix.lower() == ".dwg":
             output_dir = self.repository_root / ".cache" / "converted" / project_id
-            conversion = ODAConverter(arguments.get("oda_executable")).convert_to_dxf(source, output_dir)
+            conversion = _dwg_converter(arguments).convert_to_dxf(source, output_dir)
             if conversion.status != "SUCCESS" or not conversion.output:
                 return {"status": conversion.status, "project_id": project_id, "source_format": "DWG", "conversion": conversion.to_dict()}
             pipeline = DXFIngestionPipeline(self.repository_root)
@@ -433,7 +442,7 @@ class MCPGateway:
             parsed = DXFParser().parse(source)
             return {"status": "SUCCESS", "source_format": "DXF", "parse": parsed.to_dict()}
         if source.suffix.lower() == ".dwg":
-            conversion = ODAConverter(arguments.get("oda_executable")).convert_to_dxf(source, self.repository_root / ".cache" / "converted" / "parse")
+            conversion = _dwg_converter(arguments).convert_to_dxf(source, self.repository_root / ".cache" / "converted" / "parse")
             if conversion.status != "SUCCESS" or not conversion.output:
                 return {"status": conversion.status, "source_format": "DWG", "conversion": conversion.to_dict()}
             parsed = DXFParser().parse(Path(conversion.output))

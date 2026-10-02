@@ -21,6 +21,25 @@ from .census import _fs as long_path
 logger = logging.getLogger(__name__)
 
 
+def source_sha256(source_path: Path, payload: dict[str, Any] | None = None, chunk_size: int = 1 << 20) -> str:
+    """Return the source hash, preferring the census-provided ``sha256`` in the job payload.
+
+    Falls back to streaming the file in chunks so large CAD files are never loaded whole.
+    """
+    provided = (payload or {}).get("sha256")
+    if isinstance(provided, str) and len(provided) == 64:
+        return provided.lower()
+    import hashlib
+    try:
+        digest = hashlib.sha256()
+        with open(source_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(chunk_size), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return "unknown"
+
+
 class IngestionWorker:
     def __init__(self, db: Database, settings: Settings, queue: str = "cad", worker_id: str | None = None):
         self.db = db
@@ -112,12 +131,7 @@ class IngestionWorker:
         )
 
         # Build snapshot dictionary
-        source_hash = ""
-        try:
-            import hashlib
-            source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
-        except Exception:
-            source_hash = "unknown"
+        source_hash = source_sha256(source_path, payload)
 
         snapshot = {
             "document_id": doc_id,

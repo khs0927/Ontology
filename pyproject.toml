@@ -18,8 +18,8 @@ semantic = ["rdflib>=7", "pyoxigraph>=0.5"]
 shacl = ["rdflib>=7", "pyshacl>=0.40"]
 parquet = ["pyarrow>=15"]
 runtime = ["duckdb>=1", "neo4j>=5"]
-operational = ["fastapi>=0.115", "uvicorn>=0.30", "psycopg[binary]>=3.2", "jsonschema>=4"]
-dev = ["pytest>=8", "httpx>=0.27"]
+operational = ["psycopg[binary]>=3.1", "fastapi>=0.110", "uvicorn>=0.29", "ezdxf>=1.3", "Pillow>=10", "jsonschema>=4"]
+dev = ["pytest>=8", "httpx>=0.27", "jsonschema>=4", "fastapi>=0.110", "psycopg[binary]>=3.1"]
 
 [project.scripts]
 aec = "aec_intelligence.cli:main"
@@ -30,7 +30,7 @@ aec-mcp-http = "aec_intelligence.mcp_http:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-aec_intelligence = ["resources/*.json", "resources/*.ttl"]
+aec_intelligence = ["resources/*.json", "resources/*.ttl", "operational/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

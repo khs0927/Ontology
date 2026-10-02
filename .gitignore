@@ -8,6 +8,9 @@ runtime/
 projects/
 
 *.db
+!docker/Dockerfile.db
 *.sqlite3
 .cache/
 .coverage
+
+.env

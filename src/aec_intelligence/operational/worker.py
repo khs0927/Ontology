@@ -26,9 +26,17 @@ def source_sha256(source_path: Path, payload: dict[str, Any] | None = None, chun
 
     Falls back to streaming the file in chunks so large CAD files are never loaded whole.
     """
-    provided = (payload or {}).get("sha256")
+    payload = payload or {}
+    provided = payload.get("sha256")
     if isinstance(provided, str) and len(provided) == 64:
-        return provided.lower()
+        # Reuse the census hash only while the file still has the size census saw;
+        # a Drive sync after census must not leave a stale hash in provenance.
+        try:
+            current_size = os.stat(source_path).st_size
+        except OSError:
+            current_size = None
+        if payload.get("size") is not None and current_size == payload.get("size"):
+            return provided.lower()
     import hashlib
     try:
         digest = hashlib.sha256()
@@ -108,13 +116,15 @@ class IngestionWorker:
             raise ValueError("Job payload missing 'source' file path")
 
         # Long-path prefix on Windows: census hashes >260-char paths with it, so the worker must too.
-        source_path = Path(long_path(str(Path(source_path_str).resolve())))
+        # source_key keeps the plain resolved path; only OS access uses the prefixed one.
+        resolved_path = Path(source_path_str).resolve()
+        source_path = Path(long_path(str(resolved_path)))
         if not source_path.is_file():
             raise FileNotFoundError(f"Source file does not exist: {source_path}")
 
         project_id = str(payload.get("project_id", "default_project"))
-        doc_id = str(payload.get("document_id") or f"doc_{source_path.stem}")
-        doc_name = str(payload.get("name") or source_path.name)
+        doc_id = str(payload.get("document_id") or f"doc_{resolved_path.stem}")
+        doc_name = str(payload.get("name") or resolved_path.name)
         revision = int(payload.get("revision", 0))
 
         # Output artifact and preview directory
@@ -136,7 +146,7 @@ class IngestionWorker:
         snapshot = {
             "document_id": doc_id,
             "project_id": project_id,
-            "source_key": str(source_path),
+            "source_key": str(resolved_path),
             "name": doc_name,
             "revision": revision,
             "source_hash": source_hash,

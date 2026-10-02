@@ -9,6 +9,7 @@ on:
       - "feat/mcp-jev-graph-readonly-*"
       - "feat/code-intelligence-*"
       - "feat/ragflow-retrieval-benchmark-*"
+      - "feat/lightrag-comparison-*"
 
 permissions:
   contents: read

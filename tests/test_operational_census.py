@@ -11,12 +11,18 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
 from aec_intelligence.operational import backup, census
 
 DSN = os.getenv("AEC_TEST_DATABASE_URL")
+
+
+def _with_dbname(dsn: str, dbname: str) -> str:
+    parts = urlsplit(dsn)
+    return urlunsplit(parts._replace(path=f"/{dbname}"))
 needs_db = pytest.mark.skipif(not DSN, reason="AEC_TEST_DATABASE_URL not set")
 
 
@@ -286,13 +292,13 @@ def test_backup_and_restore_against_live_server(tmp_path, db):
 
     # Restore into a throw-away database on the same server.
     scratch = f"aec_restore_{uuid.uuid4().hex[:8]}"
-    admin = DSN.replace("/aec?", "/postgres?")
+    admin = _with_dbname(DSN, "postgres")
     try:
         with psycopg.connect(admin, autocommit=True) as conn:
             conn.execute(f'CREATE DATABASE "{scratch}"')
     except Exception as exc:  # pragma: no cover - depends on role privileges
         pytest.skip(f"cannot create scratch database: {exc}")
-    target = DSN.replace("/aec?", f"/{scratch}?")
+    target = _with_dbname(DSN, scratch)
     try:
         backup.run_restore(target, second["backup"], yes=True, clean=False)
         with psycopg.connect(target) as conn:

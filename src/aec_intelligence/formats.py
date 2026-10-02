@@ -87,16 +87,9 @@ class IFCParser:
             }
             entities.append(entity)
         relationships: list[dict[str, Any]] = []
-        relationship_predicates = {
-            "IfcRelAggregates": "contains",
-            "IfcRelContainedInSpatialStructure": "contains",
-            "IfcRelSpaceBoundary": "bounds",
-            "IfcRelAssociatesMaterial": "hasMaterial",
-            "IfcRelDefinesByProperties": "hasPropertySet",
-        }
         for relation in model:
             relation_type = relation.is_a()
-            predicate = relationship_predicates.get(relation_type)
+            predicate = IFC_RELATION_PREDICATES.get(relation_type)
             if not predicate:
                 continue
             subject = getattr(relation, "RelatingObject", None) or getattr(relation, "RelatingStructure", None) or getattr(relation, "RelatingMaterial", None)
@@ -169,6 +162,15 @@ class IFCParser:
 
     def parse_to_cair(self, path: str | Path, project_id: str, artifact_id: str | None = None, source_hash: str | None = None) -> CAIRSnapshot:
         return normalize_ifc_to_cair(self.parse(path), project_id, artifact_id, source_hash)
+
+
+IFC_RELATION_PREDICATES = {
+    "IfcRelAggregates": "contains",
+    "IfcRelContainedInSpatialStructure": "contains",
+    "IfcRelSpaceBoundary": "bounds",
+    "IfcRelAssociatesMaterial": "hasMaterial",
+    "IfcRelDefinesByProperties": "hasPropertySet",
+}
 
 
 IFC_SEMANTIC_TYPES = {

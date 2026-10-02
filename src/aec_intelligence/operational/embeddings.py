@@ -226,25 +226,40 @@ def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings
     return count
 
 
-def reindex_embeddings(db, settings: Settings, project_id: str | None = None) -> dict[str, Any]:
-    """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback).
+_STALE_SCOPE = """FROM aec.embeddings e JOIN aec.objects o ON o.id = e.object_id
+               WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND e.model <> %(m)s
+                 AND EXISTS (SELECT 1 FROM aec.embeddings t WHERE t.object_id = e.object_id AND t.model = %(m)s)"""
+
+
+def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *, batch_size: int | None = None,
+                       dry_run: bool = False, delete_stale: bool = False) -> dict[str, Any]:
+    """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback or a model change).
 
     Superseded hash-fallback vectors are removed only once the active model's vectors
-    are written, so a failed run leaves the previous state intact.
+    are written, so a failed run leaves the previous state intact. With ``delete_stale``
+    rows of any other model are dropped, but only for objects that already have a vector
+    of the active model. ``dry_run`` only counts what would happen.
     """
-    service = EmbeddingService(settings)
+    service = EmbeddingService(settings, batch_size=batch_size)
     target = service.active_model()
-    written, skipped = 0, 0
+    written, skipped, deleted = 0, 0, 0
+    params = {"p": project_id, "m": target}
     with db.connect() as conn:
         rows = conn.execute(
             """SELECT o.id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
                WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND o.kind <> 'CADEntity' AND o.search_text <> ''
                  AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %(m)s)
                ORDER BY o.id""",
-            {"p": project_id, "m": target},
+            params,
         ).fetchall()
-        for start in range(0, len(rows), service.batch_size * 8):
-            part = rows[start:start + service.batch_size * 8]
+        if dry_run:
+            stale = conn.execute("SELECT e.model, count(*) AS n " + _STALE_SCOPE + " GROUP BY e.model", params).fetchall()
+            return {"model": target, "dry_run": True, "pending": len(rows),
+                    "stale_by_model": {r["model"]: r["n"] for r in stale}, "written": 0, "skipped": 0, "deleted": 0,
+                    "error": None}
+        step = service.batch_size * 8
+        for start in range(0, len(rows), step):
+            part = rows[start:start + step]
             model, vectors = service.embed_with_model([r["search_text"] for r in part])
             if model != target:
                 skipped += len(rows) - start
@@ -261,4 +276,9 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None) ->
                     cur.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
                                 ([r["id"] for r in part], HASH_MODEL))
             written += len(part)
-    return {"model": target, "written": written, "skipped": skipped, "error": service.last_error}
+        if delete_stale:
+            deleted = conn.execute(
+                "DELETE FROM aec.embeddings d USING (SELECT e.object_id, e.model " + _STALE_SCOPE + ") s "
+                "WHERE d.object_id = s.object_id AND d.model = s.model", params).rowcount
+    return {"model": target, "dry_run": False, "pending": len(rows), "written": written, "skipped": skipped,
+            "deleted": deleted, "error": service.last_error}

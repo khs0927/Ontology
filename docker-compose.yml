@@ -10,9 +10,9 @@ services:
     environment:
       POSTGRES_DB: aec
       POSTGRES_USER: aec
-      POSTGRES_PASSWORD: change-me
+      POSTGRES_PASSWORD: ${AEC_DB_PASSWORD:-change-me}
     volumes:
-      - D:/AECData/docker/pgdata:/var/lib/postgresql/data
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}/docker/pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aec -d aec"]
@@ -29,11 +29,11 @@ services:
     ports:
       - "58000:8000"
     environment:
-      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
-      AEC_EMBEDDING_URL: ""
+      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL:-}
     volumes:
-      - D:/AECData:/data
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
     depends_on:
       db:
@@ -45,11 +45,11 @@ services:
     container_name: aec-worker-cad
     command: python -m aec_intelligence.operational.cli worker --queue cad
     environment:
-      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
-      AEC_EMBEDDING_URL: ""
+      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL:-}
     volumes:
-      - D:/AECData:/data
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
     depends_on:
       db:
@@ -61,10 +61,10 @@ services:
     container_name: aec-worker-ocr
     command: python -m aec_intelligence.operational.cli worker --queue ocr
     environment:
-      AEC_DATABASE_URL: postgresql://aec:change-me@db:5432/aec
+      AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
     volumes:
-      - D:/AECData:/data
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
     depends_on:
       db:

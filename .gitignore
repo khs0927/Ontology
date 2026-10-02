@@ -11,3 +11,5 @@ projects/
 *.sqlite3
 .cache/
 .coverage
+
+.env

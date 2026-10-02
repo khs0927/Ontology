@@ -10,6 +10,10 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 
+MIGRATIONS_DIR = Path(__file__).with_name('migrations')
+CYPHER_TAG = '$aec_cypher$'
+
+
 def graph_name(project: str) -> str:
     return "aec_" + hashlib.sha256(project.encode()).hexdigest()[:24]
 
@@ -27,8 +31,21 @@ class Database:
             yield conn
 
     def initialize(self):
-        with psycopg.connect(self.dsn) as conn:
-            conn.execute(Path(__file__).with_name('schema.sql').read_text())
+        """Apply pending numbered migrations in order; each runs once, in its own transaction."""
+        applied = []
+        with psycopg.connect(self.dsn, autocommit=True) as conn:
+            conn.execute('CREATE SCHEMA IF NOT EXISTS aec')
+            conn.execute('''CREATE TABLE IF NOT EXISTS aec.schema_migrations (
+                version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())''')
+            done = {row[0] for row in conn.execute('SELECT version FROM aec.schema_migrations')}
+            for path in sorted(MIGRATIONS_DIR.glob('[0-9][0-9][0-9][0-9]_*.sql')):
+                if path.stem in done:
+                    continue
+                with conn.transaction():
+                    conn.execute(path.read_text(encoding='utf-8-sig'))
+                    conn.execute('INSERT INTO aec.schema_migrations(version) VALUES(%s)', (path.stem,))
+                applied.append(path.stem)
+        return applied
 
     def enqueue(self, payload, dedup_key):
         with self.connect() as conn:
@@ -64,9 +81,12 @@ class Database:
                  'failed' if error else 'complete',job_id,owner)).rowcount == 1
 
     def cypher(self, conn, graph, query):
-        # Both the graph name and entire Cypher expression are SQL literals, never interpolated SQL.
+        # AGE only accepts the Cypher text as a dollar-quoted constant. The graph name stays a SQL
+        # literal; the query is wrapped in a fixed tag that it may not contain, so it cannot escape.
+        if CYPHER_TAG in query:
+            raise ValueError('Cypher text contains the reserved dollar-quote tag')
         return conn.execute(sql.SQL('SELECT * FROM cypher({}, {}) AS (value agtype)').format(
-            sql.Literal(graph),sql.Literal(query))).fetchall()
+            sql.Literal(graph),sql.SQL(CYPHER_TAG + query + CYPHER_TAG))).fetchall()
 
     def project_graph(self, conn, snapshot):
         graph = graph_name(snapshot['project_id'])

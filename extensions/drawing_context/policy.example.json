@@ -77,5 +77,19 @@
     "silent_model_fallback": false,
     "model_revision_required": true
   },
-  "note": "Design policy; this reference package does not launch these services."
+  "note": "Design policy; this reference package does not launch these services.",
+  "lightrag": {
+    "enabled": false,
+    "role": "comparison-derived-retrieval-only",
+    "release": "v1.5.7",
+    "release_image_digest": null,
+    "query_endpoint": "/query/data",
+    "auth_verify_endpoint": "/auth/verify",
+    "api_key_required": true,
+    "remote_requires_https": true,
+    "binding_registry": "derived-runtime-only",
+    "production_search": "mapped-authorized-current-revision-only",
+    "benchmark_search": "diagnostic-only",
+    "promotion_gate": "reuse-provider-neutral-benchmark"
+  }
 }

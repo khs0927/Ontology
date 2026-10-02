@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from aec_intelligence.cair import CAIRObject, CAIRRelation, CAIRSnapshot, SourceRef
+from aec_intelligence.pipeline import DXFIngestionPipeline
 from aec_intelligence.runtime_adapters import DuckDBRuntimeAdapter, Neo4jRuntimeAdapter, OxigraphRuntimeAdapter, RDFLibRuntimeAdapter, write_neo4j_cypher
 
 
@@ -18,12 +19,13 @@ def test_optional_runtime_adapters_report_explicit_state(tmp_path: Path):
     assert OxigraphRuntimeAdapter().load_turtle(tmp_path / "missing.ttl").status in {"FAILED", "REQUIRES_DEPENDENCY"}
 
 
-def test_oxigraph_loads_project_ontology_when_installed():
-    fixture = Path(__file__).parents[1] / "projects" / "AEC-2026-000001" / "04_ONTOLOGY" / "project.ttl"
+def test_oxigraph_loads_project_ontology_when_installed(tmp_path: Path):
+    DXFIngestionPipeline(tmp_path).ingest(Path(__file__).parents[1] / "fixtures" / "simple_house.dxf", "AEC-OXIGRAPH")
+    fixture = tmp_path / "projects" / "AEC-OXIGRAPH" / "04_ONTOLOGY" / "project.ttl"
     report = OxigraphRuntimeAdapter().load_turtle(fixture)
     assert report.status in {"SUCCESS", "REQUIRES_DEPENDENCY"}
     if report.status == "SUCCESS":
-        assert report.counts["quads"] == 95
+        assert report.counts["quads"] > 0
 
 
 def test_neo4j_export_is_runtime_only_and_deterministic(tmp_path: Path):

@@ -3,6 +3,7 @@
 Skipped unless AEC_TEST_DATABASE_URL points at a disposable database (the test writes to it).
 """
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -128,3 +129,35 @@ def test_concurrent_projection_into_a_new_project_graph(stack):
     finally:
         with db.connect() as conn:
             conn.execute("SELECT drop_graph(%s, true)", (graph_name(project),))
+
+
+def test_projection_writes_batched_nodes_and_only_authoritative_edges(stack):
+    import uuid
+
+    from aec_intelligence.operational.db import GRAPH_BATCH, graph_name
+
+    db, _, _ = stack
+    project = f"P-batch-{uuid.uuid4().hex[:8]}"
+    n = GRAPH_BATCH + 7  # crosses a batch boundary
+    objects = [{"id": f"obj-{i}", "type": "Wall" if i % 2 else "문", "state": "OBSERVED"} for i in range(n)]
+    relations = [{"subject": f"obj-{i}", "object": f"obj-{i + 1}", "predicate": "hosts", "state": "OBSERVED"}
+                 for i in range(n - 1)]
+    relations.append({"subject": "obj-0", "object": "obj-2", "predicate": "near", "state": "CANDIDATE"})
+    snapshot = {"project_id": project, "document_id": "doc-batch", "revision": 1,
+                "objects": objects, "relations": relations}
+    graph = graph_name(project)
+    try:
+        for _ in range(2):  # re-projection replaces, never duplicates
+            with db.connect() as conn:
+                db.project_graph(conn, snapshot)
+                conn.commit()
+        with db.connect() as conn:
+            nodes = db.cypher(conn, graph, "MATCH (n:Entity) RETURN count(n)")[0]["value"]
+            edges = db.cypher(conn, graph, "MATCH (:Entity)-[r:Rel]->(:Entity) RETURN count(r)")[0]["value"]
+            kinds = db.cypher(conn, graph, "MATCH (a:Entity {id: 'obj-0'})-[r:Rel]->(b:Entity) RETURN [r.kind, b.id, a.kind]")
+        assert str(nodes) == str(n)
+        assert str(edges) == str(n - 1)
+        assert [json.loads(str(row["value"])) for row in kinds] == [["hosts", "obj-1", "문"]]
+    finally:
+        with db.connect() as conn:
+            conn.execute("SELECT drop_graph(%s, true)", (graph,))

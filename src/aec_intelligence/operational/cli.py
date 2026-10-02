@@ -6,12 +6,24 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from .config import Settings
 from .db import Database
 from .parsers import SUPPORTED
 from .search import SearchRouter
 from .worker import IngestionWorker
+
+
+def redact_dsn(dsn: str) -> str:
+    """Return the DSN with any password replaced, so it can be printed."""
+    if "://" in dsn:
+        parts = urlsplit(dsn)
+        if parts.password is not None:
+            netloc = parts.netloc.replace(f":{parts.password}@", ":***@", 1)
+            return urlunsplit(parts._replace(netloc=netloc))
+        return dsn
+    return " ".join("password=***" if t.startswith("password=") else t for t in dsn.split())
 
 
 def main(args=None):
@@ -55,7 +67,7 @@ def main(args=None):
         return BATCH_COMMANDS[parsed.subcommand](parsed, settings, db)
 
     if parsed.subcommand == "init-db":
-        print(f"Initializing database at {settings.dsn}...")
+        print(f"Initializing database at {redact_dsn(settings.dsn)}...")
         db.initialize()
         print("Database schema and extensions initialized successfully.")
 

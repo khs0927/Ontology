@@ -20,7 +20,7 @@ AEC-INTELLIGENCE의 [docker-compose.yml](https://github.com/khs0927/Ontology/blo
 |                       ▼                                                 |
 |            [ aec-db (PostgreSQL 16 + Apache AGE) ]                      |
 |            - Port: 55432:5432                                           |
-|            - Volume: D:/AECData/docker/pgdata                           |
+|            - Volume: aec-pgdata (Docker named volume)                   |
 +───────────────────────┬─────────────────────────────────────────────────+
                         │ Zero-Disk Streaming (Pipe)
                         ▼
@@ -32,7 +32,7 @@ AEC-INTELLIGENCE의 [docker-compose.yml](https://github.com/khs0927/Ontology/blo
   * CAD/BIM 형상 메타데이터 및 도면 엔티티
   * Apache AGE 그래프 노드 및 엣지 (`ag_catalog` 레이블 및 그래프 메타데이터)
   * OCR 분석 결과 및 비동기 작업 큐 상태
-* **호스트 볼륨 경로**: `D:/AECData/docker/pgdata`
+* **DB 볼륨**: Docker named volume `aec-pgdata` (Windows 바인드 마운트는 WAL 쓰기 중 EINTR로 PANIC이 나서 사용하지 않음)
 
 ### 1.2. 스토리지 제약과 클라우드 백업 전략
 도면 및 3D 모델 메타데이터의 누적으로 로컬 호스트 디스크의 가용 공간이 극히 제한적인 환경입니다. 이에 따라 [docs/drive-integration.md](https://github.com/khs0927/Ontology/blob/master/docs/drive-integration.md)에 명시된 원격 스토리지 정책을 준용하여, **로컬 디스크에 일체의 중간 덤프 파일(`.dump`, `.sql`)을 생성하지 않고 Google Drive로 직접 스트리밍하는 파이프라인**을 운영 표준으로 정의합니다.

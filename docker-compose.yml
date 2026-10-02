@@ -18,7 +18,9 @@ services:
       POSTGRES_USER: aec
       POSTGRES_PASSWORD: ${AEC_DB_PASSWORD:-change-me}
     volumes:
-      - ${AEC_HOST_DATA_ROOT:-D:/AECData}/docker/pgdata:/var/lib/postgresql/data
+      # A named volume, not a Windows bind mount: Docker Desktop's file sharing returns EINTR on
+      # WAL writes and Postgres PANICs. Back up with `aec-ops backup` (pg_dump), not by copying files.
+      - aec-pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aec -d aec"]
@@ -103,3 +105,6 @@ services:
     restart: unless-stopped
     profiles:
       - embeddings
+
+volumes:
+  aec-pgdata:

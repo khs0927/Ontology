@@ -261,6 +261,16 @@ def _normalize_entity(entity: Any) -> NormalizedCADEntity:
         if attributes:
             properties["attributes"] = attributes
         bbox = _bbox_from_points([location])
+    elif entity_type == "HATCH":
+        properties["pattern_name"] = str(_safe_attr(entity, "pattern_name", "") or "")
+        properties["solid_fill"] = bool(_safe_attr(entity, "solid_fill", 0))
+        try:  # boundary extents: what the fill covers (lets a generic hatch inherit the outline it fills)
+            from ezdxf import bbox as ezdxf_bbox
+            box = ezdxf_bbox.extents([entity])
+            if box.has_data:
+                bbox = _bbox_from_points([_point(box.extmin), _point(box.extmax)])
+        except Exception:
+            pass
     else:
         for name in ("start", "end", "insert", "location", "center"):
             value = _safe_attr(entity, name)

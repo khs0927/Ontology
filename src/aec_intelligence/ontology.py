@@ -33,6 +33,30 @@ def _safe_class(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", value)
 
 
+# Data properties exported per class, as declared in ontology_model (name, CAIR property key, xsd type).
+CLASS_DATA_PROPERTIES: dict[str, tuple[tuple[str, str, str | None], ...]] = {
+    "Space": (("roomName", "roomName", None), ("roomNumber", "roomNumber", None), ("area", "area", "decimal")),
+    "SteelSection": (("sectionDesignation", "sectionDesignation", None),),
+    "Sheet": (("drawingCategory", "drawingCategory", None),),
+}
+
+
+def _data_lines(obj) -> list[str]:
+    lines = []
+    for name, key, datatype in CLASS_DATA_PROPERTIES.get(obj.type, ()):
+        value = (obj.properties or {}).get(key)
+        if value in (None, ""):
+            continue
+        if datatype == "decimal":
+            try:
+                lines.append(f'    aec:{name} "{float(value)}"^^xsd:decimal ;')
+            except (TypeError, ValueError):
+                continue
+        else:
+            lines.append(f"    aec:{name} {_literal(value)} ;")
+    return lines
+
+
 def snapshot_to_turtle(snapshot: CAIRSnapshot) -> str:
     lines = [PREFIXES]
     project_uri = f"aec://project/{snapshot.project_id}"
@@ -50,6 +74,7 @@ def snapshot_to_turtle(snapshot: CAIRSnapshot) -> str:
             f"    aec:sourceHandle {_literal(obj.source.entity_id or '')} ;",
             f"    aec:sourceLayer {_literal(obj.source.layer or '')} ;",
             f"    aec:sourceFile {_literal(obj.source.file)} ;",
+            *_data_lines(obj),
             f"    aec:classificationConfidence {obj.classification.confidence if obj.classification else 0.0} ;",
             f"    aec:classificationState {_literal(obj.classification.state if obj.classification else 'REQUIRES_REVIEW')} ;",
             f"    aec:hasGeometry {_uri(obj.geometry_ref or f'aec://geometry/{obj.id}')} .",

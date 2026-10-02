@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 import json
 
@@ -5,6 +6,7 @@ from jsonschema import validate
 
 from aec_intelligence.pipeline import DXFIngestionPipeline
 
+HAS_PYARROW = importlib.util.find_spec("pyarrow") is not None
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
 
@@ -13,14 +15,17 @@ def test_dxf_pipeline_writes_cair_ontology_preview_and_validation(tmp_path: Path
     result = DXFIngestionPipeline(tmp_path).ingest(FIXTURE, "AEC-TEST-000001", "Fixture House")
     assert result.validation.status == "SUCCESS"
     assert len(result.snapshot.objects) == 7
-    assert {obj.type for obj in result.snapshot.objects} >= {"Wall", "Door", "Window", "Column", "Annotation"}
+    # The "LIVING ROOM" label is the room itself (aec:Space), not a bare annotation.
+    assert {obj.type for obj in result.snapshot.objects} >= {"Wall", "Door", "Window", "Column", "Space"}
+    predicates = {relation.predicate for relation in result.snapshot.relations}
+    assert {"containsElement", "hostedBy"} <= predicates
     assert Path(result.outputs["cair"]).is_file()
     assert Path(result.outputs["ontology"]).read_text(encoding="utf-8").startswith("@prefix aec:")
     assert Path(result.outputs["jsonld"]).is_file()
     assert (tmp_path / "global" / "00_GLOBAL" / "global-relations.jsonl").is_file()
     assert (tmp_path / "global" / "00_GLOBAL" / "global-provenance.jsonl").is_file()
-    assert (tmp_path / "global" / "00_GLOBAL" / "global-object-registry.parquet").is_file()
-    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "nodes.parquet").is_file()
+    assert (tmp_path / "global" / "00_GLOBAL" / "global-object-registry.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
+    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "nodes.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
     assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "global.graphml").is_file()
     assert Path(result.outputs["preview"]).read_text(encoding="utf-8").startswith("<svg")
     report = json.loads(Path(result.outputs["validation"]).read_text(encoding="utf-8"))

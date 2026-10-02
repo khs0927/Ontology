@@ -405,8 +405,11 @@ def parse_source(source, doc, output, settings, source_name=None):
         relations.append(relation(parent['id'],'contains',obj['id'],source_hash=base['source_hash']))
     suffix = source.suffix.lower()
     if suffix == '.dwg':
-        from ..dwg import ODAConverter
-        converted = ODAConverter(settings.oda_executable or None).convert_to_dxf(source,output/'converted')
+        from ..dwg import select_dwg_converter
+        converter = select_dwg_converter(getattr(settings,'dwg_converter','auto'),
+                                         settings.oda_executable or None,
+                                         getattr(settings,'libredwg_executable','') or None)
+        converted = converter.convert_to_dxf(source,output/'converted')
         (output/'conversion.json').write_text(json.dumps(converted.to_dict(),ensure_ascii=False),encoding='utf-8')
         if converted.status != 'SUCCESS':
             raise ValueError('; '.join(converted.errors))
@@ -509,10 +512,14 @@ def parse_source(source, doc, output, settings, source_name=None):
         warnings.extend(parsed.warnings)
     elif suffix == '.pdf':
         import fitz
+        from .pdf_drawings import analyse_page, page_objects
+        for key in ('titleblocks', 'dimensions', 'grids', 'walls', 'textless_pages'):
+            result['metrics'].setdefault('pdf_' + key, 0)
         with fitz.open(source) as pdf:
             for i,page in enumerate(pdf):
                 page_obj = observation(doc,f'page:{i+1}','Page',f'{name} {i+1}페이지',
-                    {**base,'page':i+1,'coordinate_system':'PDF_POINTS','page_size':[page.rect.width,page.rect.height]})
+                    {**base,'page':i+1,'coordinate_system':'PDF_POINTS','page_size':[page.rect.width,page.rect.height],
+                     'rotation':page.rotation})
                 add(page_obj)
                 result['metrics']['pages'] += 1
                 blocks = page.get_text('blocks')
@@ -521,11 +528,48 @@ def parse_source(source, doc, output, settings, source_name=None):
                     if not str(text).strip(): continue
                     add(observation(doc,f'page:{i+1}:block:{j}','Annotation',str(text),
                         {**page_obj['evidence'],'bbox':[x,y,X,Y]},dict(min_x=x,min_y=y,max_x=X,max_y=Y)),page_obj)
-                (output/f'page-{i+1}-vectors.json').write_text(json.dumps(page.get_drawings(),default=str),encoding='utf-8')
+                drawings = page.get_drawings()
+                vectors_path = output/f'page-{i+1}-vectors.json'
+                vectors_path.write_text(json.dumps(drawings,default=str),encoding='utf-8')
+                try:
+                    analysis = analyse_page(page, drawings)
+                except Exception as exc:
+                    warnings.append(f'Page {i+1}: vector analysis failed: {exc}')
+                    analysis = {'title_block':None,'dimensions':[],'grids':[],'walls':[]}
+                def make(key, kind, text, bbox, state, props, extra, _page=page_obj, _i=i):
+                    return observation(doc,f'page:{_i+1}:{key}',kind,f'{text} {ALIASES.get(kind,kind)}',
+                        {**_page['evidence'],'bbox':[bbox['min_x'],bbox['min_y'],bbox['max_x'],bbox['max_y']],
+                         'vectors_path':_safe_relative(vectors_path, settings.data_root),**extra},
+                        bbox,state=state,properties=props)
+                title = None
+                for obj in page_objects(analysis, i+1, name, make, warnings):
+                    add(obj, page_obj)
+                    metric = {'TitleBlock':'titleblocks','Dimension':'dimensions','Grid':'grids','Wall':'walls'}[obj['type']]
+                    result['metrics']['pdf_'+metric] += 1
+                    if obj['type'] == 'TitleBlock':
+                        title = obj
+                fields = title['properties'] if title else {}
+                page_obj['properties'].update(drawing_category(('title_block', fields.get('drawingTitle', '')),
+                                                               ('file_name', name)))
+                if title:
+                    page_obj['properties'].update({k: fields[k] for k in ('drawingNumber','drawingTitle','scale','revisionLabel','date')
+                                                   if k in fields})
+                    page_obj['properties']['title_block'] = title['id']
+                    page_obj['search_text'] += f" {fields.get('drawingNumber','')} {fields.get('drawingTitle','')}"
+                    relations.append(relation(page_obj['id'],'hasTitleBlock',title['id'],'AI_INFERRED',
+                                              source_hash=base['source_hash'],method='pdf_label_value'))
                 if not any(str(b[4]).strip() for b in blocks):
+                    result['metrics']['pdf_textless_pages'] += 1
                     image = output/f'page-{i+1}.png'
                     page.get_pixmap(matrix=fitz.Matrix(2,2)).save(image)
-                    ocr_items = ocr(image,doc,f'page:{i+1}',{**page_obj['evidence'],'ocr_scale':2})
+                    try:
+                        ocr_items = ocr(image,doc,f'page:{i+1}',{**page_obj['evidence'],'ocr_scale':2})
+                    except RuntimeError as exc:
+                        if 'OCR_REQUIRED' not in str(exc): raise
+                        page_obj['properties']['ocr_required'] = True
+                        warnings.append(f'OCR_REQUIRED: page {i+1} has no text layer; indexed page and vectors only '
+                                        '(run the ocr-worker profile with PaddleOCR for text).')
+                        ocr_items = []
                     for obj in ocr_items: add(obj,page_obj)
         # Docling augments text/table content; coordinate-bearing blocks above remain the primary citations.
         try:

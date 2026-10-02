@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 import shutil
 
@@ -46,6 +47,7 @@ def test_mcp_gateway_uses_cair_and_rebuilds_runtime(tmp_path: Path):
 
 
 def test_mcp_gateway_dispatches_authoritative_ifc_gis_and_high_level_boundaries(tmp_path: Path):
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     gateway = MCPGateway(tmp_path)
     fixture_root = Path(__file__).parents[1] / "fixtures"
     ifc = gateway.call_tool("aec.ingest_file", {"source": str(fixture_root / "simple_house.ifc"), "project_id": "P-HIGH-IFC"})
@@ -98,7 +100,13 @@ def test_mcp_gateway_runs_dwg_through_oda_and_full_cair_pipeline(tmp_path: Path,
             shutil.copy2(dxf_fixture, output)
             return DWGConversionResult("SUCCESS", str(source_path), str(output), "ODA File Converter", [], {"returncode": 0, "output_size": output.stat().st_size})
 
-    monkeypatch.setattr(gateway_module, "ODAConverter", FakeODA)
+    selected = {}
+
+    def fake_select(mode="auto", oda_executable=None, libredwg_executable=None):
+        selected.update(mode=mode, oda=oda_executable, libre=libredwg_executable)
+        return FakeODA(oda_executable)
+
+    monkeypatch.setattr(gateway_module, "select_dwg_converter", fake_select)
     result = MCPGateway(tmp_path).call_tool("aec.ingest_file", {"source": str(source), "project_id": "P-DWG", "oda_executable": "fake-oda.exe"})
     assert result["status"] == "SUCCESS"
     assert result["source_format"] == "DWG"
@@ -108,3 +116,16 @@ def test_mcp_gateway_runs_dwg_through_oda_and_full_cair_pipeline(tmp_path: Path,
     assert result["converted_source"]["artifact_type"] == "CAD/DXF"
     manifest = (tmp_path / "projects" / "P-DWG" / "00_MANIFEST" / "project-manifest.json").read_text(encoding="utf-8")
     assert "authoritative_source_artifact" in manifest
+
+
+def test_mcp_gateway_dwg_converter_honors_env_and_arguments(monkeypatch):
+    import aec_intelligence.mcp_gateway as gateway_module
+    from aec_intelligence.dwg import LibreDWGConverter, ODAConverter
+
+    monkeypatch.setenv("AEC_DWG_CONVERTER", "libredwg")
+    monkeypatch.setenv("AEC_LIBREDWG_EXECUTABLE", "/opt/dwg2dxf")
+    converter = gateway_module._dwg_converter({})
+    assert isinstance(converter, LibreDWGConverter)
+    # explicit tool argument overrides env
+    converter = gateway_module._dwg_converter({"dwg_converter": "oda", "oda_executable": "fake-oda.exe"})
+    assert isinstance(converter, ODAConverter)

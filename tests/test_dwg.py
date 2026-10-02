@@ -3,6 +3,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -55,3 +56,23 @@ def test_real_dwg_fixture_matches_known_ground_truth_when_oda_is_available(tmp_p
     assert parsed.counts["text_count"] == ground_truth["converted_text_count"]
     assert parsed.counts["unsupported_count"] == ground_truth["unsupported_entity_count"]
     assert hashlib.sha256(source.read_bytes()).hexdigest().upper() == before_hash
+
+
+def test_oda_converter_tolerates_undecodable_console_output(tmp_path: Path):
+    # ODA on a Korean Windows console prints in the OEM code page; a strict decode would crash the job.
+    source = tmp_path / "plan.dwg"
+    source.write_bytes(b"dwg")
+    fake = tmp_path / "fake_oda.py"
+    fake.write_text(
+        "import sys, pathlib\n"
+        "out = pathlib.Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)\n"
+        "(out / 'plan.dxf').write_bytes(b'dxf')\n"
+        "sys.stdout.buffer.write(b'\\xb5\\xb5\\xb8\\xe9 \\xff ok\\n')\n",
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "oda.sh"
+    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8")
+    wrapper.chmod(0o755)
+    result = ODAConverter(str(wrapper)).convert_to_dxf(source, tmp_path / "converted")
+    assert result.status == "SUCCESS"
+    assert "ok" in result.checks["stdout"]

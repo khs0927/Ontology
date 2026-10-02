@@ -48,7 +48,9 @@ def write_global_registry_parquets(repository_root: str | Path) -> dict[str, Pat
         import pyarrow as pa
         import pyarrow.parquet as pq
     except ImportError:
-        return {}
+        # Parquet is an optional mirror; JSON mirrors and graph exports below
+        # must still be written without pyarrow.
+        pa = pq = None
     root = Path(repository_root).resolve()
     global_root = root / "global" / "00_GLOBAL"
     specs = {
@@ -76,6 +78,8 @@ def write_global_registry_parquets(repository_root: str | Path) -> dict[str, Pat
             if "derived_from_json" in columns:
                 value["derived_from_json"] = json.dumps(value.pop("derived_from", []) or [], ensure_ascii=False, sort_keys=True)
             normalized.append(value)
+        if pq is None:
+            continue
         path = global_root / f"{stem}.parquet"
         pq.write_table(pa.table({column: [row.get(column) for row in normalized] for column in columns}), path)
         outputs[stem] = path

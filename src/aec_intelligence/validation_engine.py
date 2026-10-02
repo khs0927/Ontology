@@ -92,9 +92,11 @@ def validate_project(repository_root: str | Path, project_id: str) -> ProjectVal
     parse_report = _read_json(project / "11_VALIDATION" / "parsing" / "parse-report.json")
     if parse_report and isinstance(parse_report.get("counts"), dict) and snapshot:
         parsed_count = parse_report["counts"].get("entity_count")
-        checks["parse_object_count_match"] = parsed_count == len(snapshot.objects)
-        if parsed_count != len(snapshot.objects):
-            errors.append(f"parse entity count {parsed_count} differs from CAIR object count {len(snapshot.objects)}")
+        # Objects synthesized from sheet metadata (Sheet, Storey) have no source entity of their own.
+        source_count = sum(1 for obj in snapshot.objects if not (obj.properties or {}).get("derived_by"))
+        checks["parse_object_count_match"] = parsed_count == source_count
+        if parsed_count != source_count:
+            errors.append(f"parse entity count {parsed_count} differs from CAIR object count {source_count}")
     else:
         checks["parse_object_count_match"] = None
         warnings.append("parse report is unavailable; cross-format count check was not performed")

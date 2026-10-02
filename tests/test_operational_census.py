@@ -306,3 +306,21 @@ def test_backup_and_restore_against_live_server(tmp_path, db):
     finally:
         with psycopg.connect(admin, autocommit=True) as conn:
             conn.execute(f'DROP DATABASE IF EXISTS "{scratch}" WITH (FORCE)')
+
+
+def test_long_path_prefix_on_windows(monkeypatch):
+    import ntpath
+    import types
+    from aec_intelligence.operational import census
+
+    monkeypatch.setattr(census, "os", types.SimpleNamespace(name="nt", path=ntpath))
+    long_dir = "G:\\내 드라이브\\" + "프로젝트\\" * 60
+    assert census._fs(long_dir + "a.dwg").startswith("\\\\?\\G:\\내 드라이브\\")
+    assert census._fs("G:\\내 드라이브\\a.dwg") == "G:\\내 드라이브\\a.dwg"
+    assert census._fs("\\\\server\\share\\" + "x" * 250).startswith("\\\\?\\UNC\\server\\share\\")
+
+
+def test_worker_opens_source_through_long_path_helper():
+    from aec_intelligence.operational import census, worker
+
+    assert worker.long_path is census._fs

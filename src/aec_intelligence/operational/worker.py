@@ -15,9 +15,37 @@ from .config import Settings
 from .db import Database
 from .embeddings import index_snapshot_embeddings
 from .parsers import parse_source
+from .census import _fs as long_path
 
 
 logger = logging.getLogger(__name__)
+
+
+def source_sha256(source_path: Path, payload: dict[str, Any] | None = None, chunk_size: int = 1 << 20) -> str:
+    """Return the source hash, preferring the census-provided ``sha256`` in the job payload.
+
+    Falls back to streaming the file in chunks so large CAD files are never loaded whole.
+    """
+    payload = payload or {}
+    provided = payload.get("sha256")
+    if isinstance(provided, str) and len(provided) == 64:
+        # Reuse the census hash only while the file still has the size census saw;
+        # a Drive sync after census must not leave a stale hash in provenance.
+        try:
+            current_size = os.stat(source_path).st_size
+        except OSError:
+            current_size = None
+        if payload.get("size") is not None and current_size == payload.get("size"):
+            return provided.lower()
+    import hashlib
+    try:
+        digest = hashlib.sha256()
+        with open(source_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(chunk_size), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return "unknown"
 
 
 class IngestionWorker:
@@ -87,13 +115,16 @@ class IngestionWorker:
         if not source_path_str:
             raise ValueError("Job payload missing 'source' file path")
 
-        source_path = Path(source_path_str).resolve()
+        # Long-path prefix on Windows: census hashes >260-char paths with it, so the worker must too.
+        # source_key keeps the plain resolved path; only OS access uses the prefixed one.
+        resolved_path = Path(source_path_str).resolve()
+        source_path = Path(long_path(str(resolved_path)))
         if not source_path.is_file():
             raise FileNotFoundError(f"Source file does not exist: {source_path}")
 
         project_id = str(payload.get("project_id", "default_project"))
-        doc_id = str(payload.get("document_id") or f"doc_{source_path.stem}")
-        doc_name = str(payload.get("name") or source_path.name)
+        doc_id = str(payload.get("document_id") or f"doc_{resolved_path.stem}")
+        doc_name = str(payload.get("name") or resolved_path.name)
         revision = int(payload.get("revision", 0))
 
         # Output artifact and preview directory
@@ -110,17 +141,12 @@ class IngestionWorker:
         )
 
         # Build snapshot dictionary
-        source_hash = ""
-        try:
-            import hashlib
-            source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
-        except Exception:
-            source_hash = "unknown"
+        source_hash = source_sha256(source_path, payload)
 
         snapshot = {
             "document_id": doc_id,
             "project_id": project_id,
-            "source_key": str(source_path),
+            "source_key": str(resolved_path),
             "name": doc_name,
             "revision": revision,
             "source_hash": source_hash,

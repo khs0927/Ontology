@@ -15,7 +15,10 @@ def test_dxf_pipeline_writes_cair_ontology_preview_and_validation(tmp_path: Path
     result = DXFIngestionPipeline(tmp_path).ingest(FIXTURE, "AEC-TEST-000001", "Fixture House")
     assert result.validation.status == "SUCCESS"
     assert len(result.snapshot.objects) == 7
-    assert {obj.type for obj in result.snapshot.objects} >= {"Wall", "Door", "Window", "Column", "Annotation"}
+    # The "LIVING ROOM" label is the room itself (aec:Space), not a bare annotation.
+    assert {obj.type for obj in result.snapshot.objects} >= {"Wall", "Door", "Window", "Column", "Space"}
+    predicates = {relation.predicate for relation in result.snapshot.relations}
+    assert {"containsElement", "hostedBy"} <= predicates
     assert Path(result.outputs["cair"]).is_file()
     assert Path(result.outputs["ontology"]).read_text(encoding="utf-8").startswith("@prefix aec:")
     assert Path(result.outputs["jsonld"]).is_file()

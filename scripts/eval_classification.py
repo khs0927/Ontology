@@ -118,10 +118,14 @@ def run_parser(path: Path, DXFParser, to_cair_object) -> tuple[dict[str, dict[st
     except Exception as exc:
         return {}, None, [f"parse failed: {exc!r}"]
     records: dict[str, dict[str, Any]] = {}
-    for entity in getattr(result, "entities", None) or []:
+    entities = list(getattr(result, "entities", None) or [])
+    cair_objects = _sheet_objects(entities, path, to_cair_object, errors)
+    for index, entity in enumerate(entities):
         handle = str(getattr(entity, "handle", "") or (_as_dict(entity) or {}).get("handle", ""))
         record: dict[str, Any] | None = None
-        if to_cair_object is not None:
+        if cair_objects is not None:
+            record = cair_objects[index].to_dict()
+        elif to_cair_object is not None:
             try:
                 record = to_cair_object(entity, "eval", str(path), "0" * 64).to_dict()
             except Exception as exc:
@@ -130,6 +134,26 @@ def run_parser(path: Path, DXFParser, to_cair_object) -> tuple[dict[str, dict[st
             record = _as_dict(entity) or {}
         records[handle] = record
     return records, result, errors
+
+
+def _sheet_objects(entities: list[Any], path: Path, to_cair_object, errors: list[str]) -> list[Any] | None:
+    """CAIR objects for the whole sheet plus the ingest pipeline's sheet-level refinement, when available."""
+    if to_cair_object is None:
+        return None
+    try:
+        objects = [to_cair_object(entity, "eval", str(path), "0" * 64) for entity in entities]
+    except Exception as exc:
+        errors.append(f"sheet to_cair_object failed: {exc!r}")
+        return None
+    try:
+        from aec_intelligence.classifier import refine_with_context
+    except ImportError:
+        return objects
+    try:
+        refine_with_context(objects, entities)
+    except Exception as exc:
+        errors.append(f"refine_with_context failed: {exc!r}")
+    return objects
 
 
 def _first(d: dict[str, Any], *keys: str) -> Any:

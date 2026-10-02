@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from .cair import CAIRRelation, CAIRSnapshot, utc_now
+from .spatial_relations import build_spatial_relations
+from .classifier import refine_with_context
 from .application_adapters import write_application_exchange_manifest
 from .classifier import to_cair_object
 from .dxf import DXFParser
@@ -125,15 +127,19 @@ class DXFIngestionPipeline:
             )
             for entity in parsed.entities
         ]
-        for obj in objects:
+        refine_with_context(objects, parsed.entities)
+        # Geometric relations also complete objects in place (area, section designation), so run before registering.
+        derived_objects, spatial_relations = build_spatial_relations(objects, parsed.entities, project_id, parsed.sheet, parsed.units)
+        for obj in objects + derived_objects:
             self.registry.register_object(obj.id, obj.project_id, obj.type, obj.classification.to_dict() if obj.classification else None, obj.geometry_ref)
         relations = [
             CAIRRelation(f"aec://project/{project_id}", "containsElement", obj.id, obj.classification.confidence if obj.classification else 1.0)
             for obj in objects
         ]
+        relations.extend(spatial_relations)
         snapshot = CAIRSnapshot(
             project_id=project_id,
-            objects=objects,
+            objects=objects + derived_objects,
             relations=relations,
             metadata={"parser": parser.name, "parser_version": parser.version, "parse": parsed.to_dict()},
         )

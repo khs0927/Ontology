@@ -3,6 +3,7 @@
 Every fixture is generated with ezdxf inside the test so the expectations sit next to the drawing they describe.
 """
 
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -297,3 +298,29 @@ def test_text_helpers():
     assert drawing_category(("t", "xyz"))["drawing_category"] == "기타"
     assert title_block_fields({"도면번호": "S-201", "도면명": "2층 구조평면도"}) == {"drawingNumber": "S-201", "drawingTitle": "2층 구조평면도"}
     assert title_block_fields({"TITLE": "x"}) is None
+
+
+@pytest.mark.skipif(not os.getenv("AEC_TEST_DATABASE_URL"), reason="AEC_TEST_DATABASE_URL not set")
+def test_generated_drawing_lands_in_postgres_with_block_edges(tmp_path: Path):
+    pytest.importorskip("psycopg")
+    from aec_intelligence.operational.db import Database, graph_name
+    from aec_intelligence.operational.worker import IngestionWorker
+
+    dsn = os.environ["AEC_TEST_DATABASE_URL"]
+    imports = tmp_path / "imports"
+    imports.mkdir()
+    source = build_drawing(imports / "blocks.dxf")
+    settings = Settings(dsn=dsn, data_root=tmp_path, import_roots=(imports,))
+    db = Database(dsn)
+    db.initialize()
+    project = f"P-blocks-{os.getpid()}"
+    db.enqueue({"source": str(source), "project_id": project, "document_id": f"doc_blocks_{os.getpid()}"},
+               dedup_key=f"blocks:{project}")
+    assert IngestionWorker(db, settings).run_once()
+    with db.connect() as conn:
+        job = conn.execute("SELECT state, error FROM aec.jobs WHERE dedup_key=%s", (f"blocks:{project}",)).fetchone()
+        assert job["state"] == "SUCCEEDED", job["error"]
+        kinds = {r["kind"] for r in conn.execute("SELECT DISTINCT kind FROM aec.objects WHERE project_id=%s", (project,))}
+        edges = db.cypher(conn, graph_name(project), "MATCH ()-[r:Rel]->() WHERE r.kind = 'instanceOf' RETURN count(r)")
+    assert {"BlockDefinition", "Layer", "Space", "TitleBlock", "SteelSection", "Door", "Window", "Furniture"} <= kinds
+    assert int(str(edges[0]["value"])) >= 7

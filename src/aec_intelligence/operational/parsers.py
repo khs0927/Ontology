@@ -362,7 +362,7 @@ class _DXFSemantics:
             found = _match(layer_name.lower())
             properties['semantic_type'] = found[0] if found else ''
             obj = observation(self.doc, 'layer:' + layer_name, 'Layer',
-                              f"{self.name} {layer_name} {properties['semantic_type']}", {**self.base, 'layer': layer_name},
+                              f"{self.name} {layer_name} {properties['semantic_type']}", {**self.base, 'layer_name': layer_name},
                               properties=properties)
             self.add(obj)
         self.metrics['layers'] = len(set(self.layer_counts) | set(self.block_layer_counts))

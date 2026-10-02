@@ -2,6 +2,8 @@ from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
+import os
+import re
 import uuid
 
 import psycopg
@@ -13,6 +15,10 @@ from psycopg.types.json import Jsonb
 MIGRATIONS_DIR = Path(__file__).with_name('migrations')
 CYPHER_TAG = '$aec_cypher$'
 GRAPH_BATCH = 500
+# Relation states that are authoritative on their own; AI_INFERRED edges need AEC_GRAPH_MIN_CONFIDENCE.
+GRAPH_STATES = ('OBSERVED', 'USER_CONFIRMED', 'CALCULATED')
+_EDGE_LABEL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,62}$')
+_RESERVED_LABELS = {'Entity', 'Rel'}
 
 
 def _batches(rows, size=GRAPH_BATCH):
@@ -24,6 +30,61 @@ def _cypher_list(rows):
     """Render rows of scalar values as a Cypher list-of-maps literal (keys are fixed identifiers)."""
     return '[' + ', '.join('{' + ', '.join(f'{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in row.items()) + '}'
                            for row in rows) + ']'
+
+
+def graph_min_confidence():
+    try:
+        return float(os.getenv('AEC_GRAPH_MIN_CONFIDENCE', '0.7'))
+    except ValueError:
+        return 0.7
+
+
+def edge_label(predicate):
+    """AGE edge label for a predicate ('hostedBy'), or 'Rel' when it is not a safe label name.
+
+    AGE labels are tables in the graph schema: a plain identifier of at most 63 bytes, and never
+    one of our own fixed labels or AGE's internal '_ag_*' tables.
+    """
+    predicate = str(predicate or '')
+    if _EDGE_LABEL_RE.match(predicate) and predicate not in _RESERVED_LABELS:
+        return predicate
+    return 'Rel'
+
+
+def relation_confidence(rel):
+    value = rel.get('confidence', (rel.get('evidence') or {}).get('confidence'))
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def graph_edges(relations, min_confidence=None):
+    """Relations projected into AGE: authoritative states, plus AI_INFERRED ones at or above the threshold.
+
+    Lower-confidence candidates remain SQL evidence only.
+    """
+    threshold = graph_min_confidence() if min_confidence is None else min_confidence
+    edges = []
+    for rel in relations:
+        confidence = relation_confidence(rel)
+        state = rel['state']
+        if state not in GRAPH_STATES and not (state == 'AI_INFERRED' and confidence is not None
+                                              and confidence >= threshold):
+            continue
+        props = {'kind': rel['predicate'], 'state': state}
+        if confidence is not None:
+            props['confidence'] = confidence
+        edges.append({'a': rel['subject'], 'b': rel['object'], 'label': edge_label(rel['predicate']), 'props': props})
+    return edges
+
+
+def _node_name(obj):
+    props = obj.get('properties') or {}
+    for key in ('storeyName', 'roomName', 'drawingTitle', 'sectionDesignation', 'name'):
+        if props.get(key):
+            return str(props[key])[:200]
+    return ''
 
 
 def graph_name(project: str) -> str:
@@ -100,7 +161,7 @@ class Database:
         return conn.execute(sql.SQL('SELECT * FROM cypher({}, {}) AS (value agtype)').format(
             sql.Literal(graph),sql.SQL(CYPHER_TAG + query + CYPHER_TAG))).fetchall()
 
-    def ensure_graph(self, graph):
+    def ensure_graph(self, graph, edge_labels=()):
         """Create the project graph and its Entity/Rel labels once, in a short transaction of its own.
 
         Workers ingesting the same new project would otherwise race on create_graph and on AGE's
@@ -123,37 +184,46 @@ class Database:
                     sql.Identifier(f'{graph}_entity_props'), sql.Identifier(graph), sql.Identifier('Entity')))
             if 'Rel' not in labels:
                 conn.execute("SELECT create_elabel(%s,'Rel')",(graph,))
+            # One edge label per predicate, each a child table of Rel: [:hostedBy] and the older
+            # [:Rel] patterns both match, since AGE scans a label table with its inheritance children.
+            for label in sorted(set(edge_labels) - labels - {'Rel'}):
+                conn.execute('SELECT create_elabel(%s,%s)',(graph,label))
+                conn.execute(sql.SQL('ALTER TABLE {}.{} INHERIT {}.{}').format(
+                    sql.Identifier(graph), sql.Identifier(label), sql.Identifier(graph), sql.Identifier('Rel')))
 
     def project_graph(self, conn, snapshot):
         graph = graph_name(snapshot['project_id'])
-        self.ensure_graph(graph)
+        edges = graph_edges(snapshot['relations'])
+        self.ensure_graph(graph, {e['label'] for e in edges})
         doc = json.dumps(snapshot['document_id'])
         self.cypher(conn,graph,f'MATCH (n:Entity) WHERE n.document_id={doc} DETACH DELETE n RETURN count(n)')
         # One Cypher call per batch, not per object: a 25k-object drawing took over 30 minutes
         # with one round trip and one plan per node.
         nodes = [{'id':obj['id'],'document_id':snapshot['document_id'],'kind':obj['type'],
-                  'revision':snapshot['revision'],'state':obj['state']} for obj in snapshot['objects']]
+                  'revision':snapshot['revision'],'state':obj['state'],'name':_node_name(obj),
+                  'storey':obj.get('storey') or ''} for obj in snapshot['objects']]
         for batch in _batches(nodes):
             self.cypher(conn,graph,f'UNWIND {_cypher_list(batch)} AS o '
                         'CREATE (n:Entity {id: o.id, document_id: o.document_id, kind: o.kind, '
-                        'revision: o.revision, state: o.state}) RETURN count(n)')
-        # Candidate links remain in SQL evidence, not the authoritative graph.
-        edges = [{'a':rel['subject'],'b':rel['object'],'kind':rel['predicate']} for rel in snapshot['relations']
-                 if rel['state'] in ('OBSERVED','USER_CONFIRMED','CALCULATED')]
+                        'revision: o.revision, state: o.state, name: o.name, storey: o.storey}) RETURN count(n)')
         if edges:
-            # Edges go straight into AGE's edge table: a Cypher MATCH per endpoint costs minutes per
+            # Edges go straight into AGE's edge tables: a Cypher MATCH per endpoint costs minutes per
             # large drawing. Node graph ids come from one Cypher read of this document's nodes; AGE fills
             # the edge id from the label's own sequence.
             ids = {}
             for row in self.cypher(conn, graph, f'MATCH (n:Entity) WHERE n.document_id = {doc} RETURN [id(n), n.id]'):
                 gid, oid = json.loads(str(row['value']))
                 ids[oid] = str(gid)
-            rows = [(ids[e['a']], ids[e['b']], json.dumps({'kind': e['kind']}, ensure_ascii=False))
-                    for e in edges if e['a'] in ids and e['b'] in ids]
+            by_label = {}
+            for e in edges:
+                if e['a'] in ids and e['b'] in ids:
+                    by_label.setdefault(e['label'], []).append(
+                        (ids[e['a']], ids[e['b']], json.dumps(e['props'], ensure_ascii=False)))
             with conn.cursor() as cur:
-                cur.executemany(sql.SQL('INSERT INTO {}.{} (start_id, end_id, properties) '
-                                        'VALUES (%s::graphid, %s::graphid, %s::agtype)').format(
-                                    sql.Identifier(graph), sql.Identifier('Rel')), rows)
+                for label, rows in sorted(by_label.items()):
+                    cur.executemany(sql.SQL('INSERT INTO {}.{} (start_id, end_id, properties) '
+                                            'VALUES (%s::graphid, %s::graphid, %s::agtype)').format(
+                                        sql.Identifier(graph), sql.Identifier(label)), rows)
         conn.execute('UPDATE aec.index_state SET graph_revision=%s WHERE document_id=%s',
                      (snapshot['revision'],snapshot['document_id']))
 

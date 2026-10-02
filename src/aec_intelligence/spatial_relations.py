@@ -159,10 +159,13 @@ def _derived_object(project_id: str, label: str, key: str, template: CAIRObject,
 
 
 def build_spatial_relations(objects: list[CAIRObject], entities: Sequence[Any], project_id: str,
-                            sheet: dict[str, Any] | None = None, units: str | None = None
-                            ) -> tuple[list[CAIRObject], list[CAIRRelation]]:
+                            sheet: dict[str, Any] | None = None, units: str | None = None,
+                            require_title_block: bool = True) -> tuple[list[CAIRObject], list[CAIRRelation]]:
     """Return (derived objects, relations). ``objects`` and ``entities`` are index aligned; objects are
-    completed in place (area / section designation). Output order is deterministic (source order)."""
+    completed in place (area / section designation). Output order is deterministic (source order).
+
+    Sheet and Storey objects need sheet metadata read from a title block unless ``require_title_block``
+    is false (the operational path, whose sheet title may come from drawing title text or the file name)."""
     scale = _UNIT_SCALE.get(str(units or "").lower(), 1.0)
     host_tolerance = 300.0 * scale      # half a thick wall plus frame offset, in drawing units
     label_tolerance = 800.0 * scale     # room-area / section label offset under its name or outline
@@ -289,7 +292,7 @@ def build_spatial_relations(objects: list[CAIRObject], entities: Sequence[Any], 
                                                     (*c.evidence, "no section designation label near outline"), "REQUIRE_VALIDATION")
 
     # 5. sheet and storey from sheet metadata
-    if objects and sheet and sheet.get("source") == "title_block":
+    if objects and sheet and (sheet.get("source") == "title_block" or (not require_title_block and sheet.get("title"))):
         template = objects[0]
         number = str(sheet.get("number") or "").strip()
         sheet_key = f"sheet:{number or template.source.file}"

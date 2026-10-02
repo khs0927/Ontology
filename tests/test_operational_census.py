@@ -232,6 +232,18 @@ def _dxf(path: Path, tag: str):
 
 
 @needs_db
+@needs_db
+def test_report_unique_files_match_census_summary(tmp_path, db):
+    """Content duplicated across two project folders counts once, under its canonical path's project."""
+    root = _tree(tmp_path, uuid.uuid4().hex[:8])
+    summary = census.run_census([root], tmp_path / "out").summary
+    projects = ["P-현장A-오피스텔", "P-현장B", "P-내-드라이브"]
+    report = census.build_report(db, tmp_path / "out", projects=projects)
+    assert report["census_unique_files"] == summary["unique_contents"] == 4
+    assert report["projects"]["P-현장A-오피스텔"]["census_unique_files"] == 2
+    assert report["projects"]["P-현장B"]["census_unique_files"] == 1
+
+
 def test_run_workers_drains_queue_with_two_processes(tmp_path, db):
     from aec_intelligence.operational.config import Settings
 

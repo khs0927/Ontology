@@ -601,11 +601,11 @@ def build_report(db, census: str | Path | None = None, projects: Iterable[str] =
                 error FROM aec.jobs {jfilt + (' AND' if jfilt else 'WHERE')} state='FAILED' ORDER BY updated_at DESC
                 LIMIT 1000""", params)]
     if census:
+        # Same assignment as enqueue-census: one document per sha256, owned by the project of its
+        # canonical path. Counting per folder counted content present in two folders twice.
         per_project: dict[str, set] = defaultdict(set)
-        for row in iter_census(census):
-            if row.get("status") == "ok" and row.get("sha256"):
-                folder = row.get("top_folder") or os.path.basename(row.get("root", "").rstrip("/\\"))
-                per_project[project_id_for(folder, prefix)].add(row["sha256"][:24])
+        for job in plan_jobs(census, prefix=prefix):
+            per_project[job["project_id"]].add(job["sha256"])
         for project, docs in per_project.items():
             if projects and project not in projects:
                 continue

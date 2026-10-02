@@ -20,12 +20,15 @@ read-only로 검증하는 것이다. CAIR, 원본, provider index를 수정하�
 - fixture projection external ID 집합
 - 각 local binding의 canonical_id / source_id / revision_id / project_id / sha256 / state가 fixture metadata와 정확히 일치
 - fixture의 source_id별 revision_id / sha256이 검증 시점의 current canonical source state와 정확히 일치
+- 모든 RAGFlow document가 parsing/indexing `DONE` 상태
+- document의 reported `chunk_count`와 실제 열거 chunk 수가 일치
 - 각 chunk의 실제 remote content와 fixture content의 exact SHA-256 identity
 - record count
 
 누락/추가/중복 document 또는 chunk가 하나라도 있거나, local binding provenance가 fixture와
-다르거나, fixture source revision/SHA가 현재 canonical source state와 다르거나, 같은 chunk ID라도
-remote content가 fixture content와 다르거나 content를 읽을 수 없으면 `BLOCKED`다.
+다르거나, fixture source revision/SHA가 현재 canonical source state와 다르거나, document가
+`DONE`이 아니거나 reported chunk_count가 실제 열거 수와 다르거나, 같은 chunk ID라도 remote
+content가 fixture content와 다르거나 content를 읽을 수 없으면 `BLOCKED`다.
 
 완전히 같을 때만 index snapshot을 다음 상태로 승격한다.
 
@@ -82,3 +85,26 @@ RAG provider comparison에서 production evidence 후보가 되려면:
 
 현재 LightRAG 공개 API 한계 때문에 RAGFlow vs LightRAG 비교는 기술 evidence
 ready 단계에도 도달하지 못한다. 이 제한은 의도적인 fail-closed 정책이다.
+
+
+## deployment identity 분리
+
+HTTP readback은 corpus identity를 검증하지만, 응답 서버가 실제로 설정된 pinned container image
+digest의 배포인지까지 독립적으로 증명하지는 않는다.
+
+따라서 RAGFlow remote inventory가 `VERIFIED`여도 생성 snapshot의 기본값은:
+
+```json
+{
+  "deployment_identity_verified": false
+}
+```
+
+이다.
+
+비교 보고서의 `production_evidence_ready=true`에는 corpus proof뿐 아니라 별도의
+deployment identity attestation이 필요하다. configured release/image digest를 그대로 믿어서
+`deployment_identity_verified=true`로 바꾸면 안 된다.
+
+그리고 technical evidence가 ready여도 실제 production 채택은 별도의 operator approval artifact가
+필수다.

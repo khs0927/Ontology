@@ -65,7 +65,8 @@ CLASSES: tuple[Term, ...] = (
     _c("Stair", "Element", "계단", "Stair.", "building"),
     _c("Ramp", "Element", "경사로", "Ramp.", "building"),
     _c("Opening", "Element", "개구부", "Opening in a host element.", "building"),
-    _c("Furniture", "Element", "가구", "Furniture.", "building"),
+    _c("Furniture", "Element", "가구", "Furniture or sanitary fixture (변기, 세면대, 욕조).", "building"),
+    _c("Elevator", "Element", "승강기", "Elevator / lift (IfcTransportElement).", "building"),
     _c("BuildingElementProxy", "Element", "기타 부재", "Element without a more specific type.", "building"),
     _c("StructuralMember", "Element", "구조 부재", "Load-bearing member.", "building"),
     _c("Column", "StructuralMember", "기둥", "Column.", "building"),
@@ -88,7 +89,7 @@ CLASSES: tuple[Term, ...] = (
     _c("Vegetation", "GISFeature", "식생", "Tree or vegetation.", "building"),
     # drawing
     _c("Document", "CAIRObject", "도면 파일", "Source document (DWG/DXF/PDF/IFC file).", "drawing"),
-    _c("Sheet", "CAIRObject", "시트", "A drawing sheet (paper-space layout with a title block).", "drawing"),
+    _c("Sheet", "View", "시트", "A drawing sheet (paper-space layout with a title block).", "drawing"),
     _c("View", "CAIRObject", "뷰", "A layout or view inside a document.", "drawing"),
     _c("Page", "CAIRObject", "페이지", "A page of a PDF/SVG reference document.", "drawing"),
     _c("Revision", "CAIRObject", "개정", "A revision of a document.", "drawing"),
@@ -132,7 +133,7 @@ PROPERTIES: tuple[Property, ...] = (
     _p("bounds", "object", "Element", "Space", "경계", "Element bounds a space.", "building"),
     _p("hostedBy", "object", "Element", "Element", "호스트", "Opening, door or window is hosted by a wall or slab.", "building"),
     _p("connects", "object", "Connection", "StructuralMember", "접합 대상", "Connection joins members.", "building"),
-    _p("hasSection", "object", "SteelMember", "SteelSection", "단면", "Member uses section profile.", "building"),
+    _p("hasSection", "object", "StructuralMember", "SteelSection", "단면", "Member uses section profile.", "building"),
     _p("hasMaterial", "object", "CAIRObject", "Material", "재료", "Object is made of material.", "building"),
     _p("hasPropertySet", "object", "CAIRObject", None, "속성 집합", "IFC property set attached to an object.", "building"),
     _p("sectionDesignation", "data", "SteelSection", "xsd:string", "단면 표기", "Normalized designation, e.g. H-400x200x8x13.", "building"),
@@ -143,14 +144,17 @@ PROPERTIES: tuple[Property, ...] = (
     # drawing
     _p("hasSheet", "object", "Document", "Sheet", "시트 보유", "Document has sheet.", "drawing", parent="contains"),
     _p("hasRevision", "object", "Document", "Revision", "개정 보유", "Document has revision.", "drawing"),
-    _p("hasTitleBlock", "object", "Sheet", "TitleBlock", "표제란", "Sheet carries title block.", "drawing", ["owl:FunctionalProperty"]),
+    _p("hasTitleBlock", "object", "View", "TitleBlock", "표제란", "Sheet or layout view carries title block.", "drawing", ["owl:FunctionalProperty"]),
     _p("onLayer", "object", "CAIRObject", "Layer", "레이어", "Object drawn on layer.", "drawing"),
     _p("depicts", "object", "View", "CAIRObject", "표현", "View or sheet depicts an object.", "drawing", inverse="depictedIn"),
     _p("depictedIn", "object", "CAIRObject", "View", "표현된 뷰", "Object appears in view.", "drawing", inverse="depicts"),
     _p("drawingNumber", "data", "TitleBlock", "xsd:string", "도면 번호", "Drawing number, e.g. A-101.", "drawing"),
     _p("drawingTitle", "data", "TitleBlock", "xsd:string", "도면명", "Drawing title.", "drawing"),
     _p("scale", "data", "TitleBlock", "xsd:string", "축척", "Scale, e.g. 1/100.", "drawing"),
-    _p("revisionLabel", "data", "Revision", "xsd:string", "개정 표기", "Revision label, e.g. R2.", "drawing"),
+    _p("revisionLabel", "data", None, "xsd:string", "개정 표기", "Revision label, e.g. R2 (on a Revision or TitleBlock).", "drawing"),
+    _p("instanceOf", "object", "CAIRObject", "BlockDefinition", "블록 인스턴스", "Object is an INSERT (block reference) of a block definition.", "drawing"),
+    _p("drawingCategory", "data", "View", "xsd:string", "도면 종류", "Drawing category, e.g. 평면도, 상세도, 창호도, 철골상세도.", "drawing"),
+    _p("blockName", "data", "CAIRObject", "xsd:string", "블록명", "Effective block name of a block definition or reference.", "drawing"),
 )
 
 MODULE_FILES = {

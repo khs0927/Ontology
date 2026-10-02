@@ -69,7 +69,11 @@ aec:Opening a owl:Class ;
 aec:Furniture a owl:Class ;
     rdfs:subClassOf aec:Element ;
     rdfs:label "가구"@ko ;
-    rdfs:comment "Furniture."@en .
+    rdfs:comment "Furniture or sanitary fixture (변기, 세면대, 욕조)."@en .
+aec:Elevator a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "승강기"@ko ;
+    rdfs:comment "Elevator / lift (IfcTransportElement)."@en .
 aec:BuildingElementProxy a owl:Class ;
     rdfs:subClassOf aec:Element ;
     rdfs:label "기타 부재"@ko ;
@@ -185,7 +189,7 @@ aec:connects a owl:ObjectProperty ;
     rdfs:label "접합 대상"@ko ;
     rdfs:comment "Connection joins members."@en .
 aec:hasSection a owl:ObjectProperty ;
-    rdfs:domain aec:SteelMember ;
+    rdfs:domain aec:StructuralMember ;
     rdfs:range aec:SteelSection ;
     rdfs:label "단면"@ko ;
     rdfs:comment "Member uses section profile."@en .

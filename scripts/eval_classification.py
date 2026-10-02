@@ -49,6 +49,7 @@ PARSER_LABEL_ALIASES: dict[str, str | None] = {
     "Stair": "BuildingElementProxy",
     "Railing": "BuildingElementProxy",
     "Fastener": "BuildingElementProxy",     # bolts
+    "Bolt": "BuildingElementProxy",         # ontology class aec:Bolt
     "Opening": None,
     "Room": "Space",
     "Text": "Annotation",

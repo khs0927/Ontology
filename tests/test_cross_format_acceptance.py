@@ -17,6 +17,7 @@ def _cad_semantic_counts(path: Path) -> Counter[str]:
 
 
 def test_dwg_dxf_ifc_fixture_mapping_preserves_shared_semantics(tmp_path: Path):
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     fixture_root = Path(__file__).parents[1] / "fixtures"
     ground_truth = json.loads((fixture_root / "known-ground-truth.json").read_text(encoding="utf-8"))
     shared_semantics = {"Wall", "Door", "Window"}

@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 import json
 
@@ -5,6 +6,7 @@ from jsonschema import validate
 
 from aec_intelligence.pipeline import DXFIngestionPipeline
 
+HAS_PYARROW = importlib.util.find_spec("pyarrow") is not None
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
 
@@ -19,8 +21,8 @@ def test_dxf_pipeline_writes_cair_ontology_preview_and_validation(tmp_path: Path
     assert Path(result.outputs["jsonld"]).is_file()
     assert (tmp_path / "global" / "00_GLOBAL" / "global-relations.jsonl").is_file()
     assert (tmp_path / "global" / "00_GLOBAL" / "global-provenance.jsonl").is_file()
-    assert (tmp_path / "global" / "00_GLOBAL" / "global-object-registry.parquet").is_file()
-    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "nodes.parquet").is_file()
+    assert (tmp_path / "global" / "00_GLOBAL" / "global-object-registry.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
+    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "nodes.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
     assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "global.graphml").is_file()
     assert Path(result.outputs["preview"]).read_text(encoding="utf-8").startswith("<svg")
     report = json.loads(Path(result.outputs["validation"]).read_text(encoding="utf-8"))

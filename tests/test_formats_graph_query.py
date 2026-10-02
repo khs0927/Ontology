@@ -42,6 +42,7 @@ def test_ifc_normalizer_maps_schema_types_and_relationships_to_cair():
 
 
 def test_ifc_fixture_is_authoritatively_parsed_and_normalized():
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     result = IFCParser().parse(Path(__file__).parents[1] / "fixtures" / "simple_house.ifc")
     snapshot = normalize_ifc_to_cair(result, "P-IFC-FIXTURE")
     assert result.schema == "IFC4"
@@ -56,6 +57,7 @@ def test_ifc_fixture_is_authoritatively_parsed_and_normalized():
 
 
 def test_ifc_geometry_fixture_extracts_mesh_outside_cair_objects():
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     ground_truth = json.loads((Path(__file__).parents[1] / "fixtures" / "known-ground-truth.json").read_text(encoding="utf-8"))["ifc_geometry"]
     result = IFCParser().parse(Path(__file__).parents[1] / "fixtures" / "simple_house_geometry.ifc")
     snapshot = normalize_ifc_to_cair(result, "P-IFC-GEOMETRY")

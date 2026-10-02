@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 
@@ -5,6 +6,7 @@ from aec_intelligence.pipeline import DXFIngestionPipeline
 from aec_intelligence.rebuild import rebuild_global_indexes_from_projects, rebuild_runtime_from_repository, refresh_derived_exports
 from aec_intelligence.storage import LocalArtifactStore
 
+HAS_PYARROW = importlib.util.find_spec("pyarrow") is not None
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
 
@@ -34,8 +36,8 @@ def test_global_rebuild_removes_projects_not_present_locally(tmp_path: Path):
     assert report["projects"] == 1
     assert report["relations"] == len(original_relations)
     assert "P-GONE" not in (global_root / "global-project-registry.jsonl").read_text(encoding="utf-8")
-    assert (global_root / "global-project-registry.parquet").is_file()
-    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "relationships.parquet").is_file()
+    assert (global_root / "global-project-registry.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
+    assert (tmp_path / "global" / "03_KNOWLEDGE_GRAPH" / "relationships.parquet").is_file() == HAS_PYARROW  # parquet mirrors need the [parquet] extra
 
 
 def test_global_rebuild_preserves_drive_materialized_global_artifacts(tmp_path: Path):

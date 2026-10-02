@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 import shutil
 
@@ -46,6 +47,7 @@ def test_mcp_gateway_uses_cair_and_rebuilds_runtime(tmp_path: Path):
 
 
 def test_mcp_gateway_dispatches_authoritative_ifc_gis_and_high_level_boundaries(tmp_path: Path):
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     gateway = MCPGateway(tmp_path)
     fixture_root = Path(__file__).parents[1] / "fixtures"
     ifc = gateway.call_tool("aec.ingest_file", {"source": str(fixture_root / "simple_house.ifc"), "project_id": "P-HIGH-IFC"})

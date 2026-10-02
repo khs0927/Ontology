@@ -1,3 +1,4 @@
+import pytest
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 
 def test_ifc_pipeline_preserves_ifc_semantics_and_builds_repository_outputs(tmp_path: Path):
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     result = SemanticFormatIngestionPipeline(tmp_path).ingest(FIXTURES / "simple_house.ifc", "P-IFC-PIPE", "IFC House")
     assert result.status == "SUCCESS"
     assert result.source_format == "IFC"
@@ -23,6 +25,7 @@ def test_ifc_pipeline_preserves_ifc_semantics_and_builds_repository_outputs(tmp_
 
 
 def test_ifc_geometry_pipeline_persists_mesh_in_portable_geometry_index(tmp_path: Path):
+    pytest.importorskip("ifcopenshell", reason="authoritative IFC parsing requires the [bim] extra")
     result = SemanticFormatIngestionPipeline(tmp_path).ingest(FIXTURES / "simple_house_geometry.ifc", "P-IFC-GEOMETRY-PIPE", "IFC Geometry House")
     assert result.status == "SUCCESS_WITH_WARNINGS"
     geometry_rows = [json.loads(line) for line in Path(result.outputs["geometry_index"]).read_text(encoding="utf-8").splitlines() if line.strip()]

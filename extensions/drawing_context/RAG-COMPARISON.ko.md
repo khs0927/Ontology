@@ -110,3 +110,26 @@ fixture projection과 정확히 일치해야 한다.
 - provider별 실제 dataset/workspace ID는 달라도 되지만, 그 안의 benchmark corpus identity는 같아야 함
 
 즉 기존 운영 인덱스에 benchmark 문서를 섞어서 결과를 비교하는 방식은 허용하지 않는다.
+
+
+## 오프라인 attestation 한계
+
+현재 `index_snapshot`은 provider의 isolated benchmark namespace에 대해
+**호출자/로컬 binding view가 제출한 attestation**이다.
+
+따라서 보고서에는 다음이 고정된다.
+
+```json
+{
+  "production_adoption_eligible": false,
+  "remote_inventory_verified": false
+}
+```
+
+이 비교기에서 `SELECTED`가 나와도 production provider 채택 근거로 사용하면 안 된다.
+RAGFlow와 LightRAG 각각에 대해 원격 전체 document/chunk inventory를 read-only로
+열거하고 fixture projection과 완전히 일치함을 독립 검증한 뒤에만 production 승격
+판정을 별도로 수행한다.
+
+즉 이 도구의 현재 역할은 **동일한 조건의 실험 결과를 정리하고 후보를 좁히는 것**이다.
+실서비스 채택 승인 도구가 아니다.

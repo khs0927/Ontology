@@ -186,21 +186,42 @@ def verify_ragflow_remote_inventory(
     remote_docs = sorted(row["id"] for row in documents)
 
     remote_chunk_rows: dict[str, dict[str, Any]] = {}
+    remote_chunk_count_by_document: dict[str, int] = {}
     for document_id in remote_docs:
-        for row in _list_ragflow_chunks(
+        document_chunks = _list_ragflow_chunks(
             adapter,
             document_id,
             page_size=page_size,
             max_pages=max_pages,
-        ):
+        )
+        remote_chunk_count_by_document[document_id] = len(document_chunks)
+        for row in document_chunks:
             chunk_id = row.get("id") or row.get("chunk_id")
             if chunk_id in remote_chunk_rows:
-                raise RuntimeError("RAGFlow remote inventory duplicated a chunk across documents")
+                raise RuntimeError(
+                    "RAGFlow remote inventory duplicated a chunk across documents"
+                )
             remote_chunk_rows[chunk_id] = row
     remote_chunks = sorted(remote_chunk_rows)
 
     missing_docs = sorted(set(expected_docs) - set(remote_docs))
     extra_docs = sorted(set(remote_docs) - set(expected_docs))
+
+    not_done_document_ids: list[str] = []
+    document_chunk_count_mismatch_ids: list[str] = []
+    for document in documents:
+        document_id = document["id"]
+        run_status = str(document.get("run", "")).upper()
+        if run_status not in {"3", "DONE"}:
+            not_done_document_ids.append(document_id)
+        reported_chunk_count = document.get("chunk_count")
+        actual_chunk_count = remote_chunk_count_by_document.get(document_id, 0)
+        if (
+            type(reported_chunk_count) is not int
+            or reported_chunk_count < 0
+            or reported_chunk_count != actual_chunk_count
+        ):
+            document_chunk_count_mismatch_ids.append(document_id)
     missing_chunks = sorted(set(expected_chunks) - set(remote_chunks))
     extra_chunks = sorted(set(remote_chunks) - set(expected_chunks))
     binding_fixture_mismatch = expected_external != fixture_external
@@ -312,6 +333,8 @@ def verify_ragflow_remote_inventory(
         or extra_docs
         or missing_chunks
         or extra_chunks
+        or not_done_document_ids
+        or document_chunk_count_mismatch_ids
         or binding_fixture_mismatch
         or inconsistent_fixture_source_ids
         or canonical_freshness_mismatch_source_ids
@@ -341,6 +364,8 @@ def verify_ragflow_remote_inventory(
                 "remote_projection_content_digest": remote_projection_content_digest,
                 "canonical_freshness_verified": True,
                 "current_source_state_digest": current_source_state_digest,
+                "processing_completion_verified": True,
+                "deployment_identity_verified": False,
             }
         )
 
@@ -357,6 +382,13 @@ def verify_ragflow_remote_inventory(
         "extra_document_ids": extra_docs,
         "missing_chunk_ids": missing_chunks,
         "extra_chunk_ids": extra_chunks,
+        "not_done_document_ids": sorted(not_done_document_ids),
+        "document_chunk_count_mismatch_ids": sorted(
+            document_chunk_count_mismatch_ids
+        ),
+        "processing_completion_verified": not (
+            not_done_document_ids or document_chunk_count_mismatch_ids
+        ),
         "binding_fixture_mismatch": binding_fixture_mismatch,
         "binding_metadata_mismatch_external_ids": sorted(
             set(binding_metadata_mismatch_external_ids)
@@ -366,8 +398,13 @@ def verify_ragflow_remote_inventory(
         "canonical_freshness_mismatch_source_ids": (
             canonical_freshness_mismatch_source_ids
         ),
-        "canonical_freshness_verified": exact,
+        "canonical_freshness_verified": not (
+            inconsistent_fixture_source_ids
+            or canonical_freshness_mismatch_source_ids
+            or missing_current_source_ids
+        ),
         "current_source_state_digest": current_source_state_digest,
+        "deployment_identity_verified": False,
         "content_mismatch_chunk_ids": content_mismatch_chunk_ids,
         "content_missing_chunk_ids": content_missing_chunk_ids,
         "expected_projection_content_digest": expected_projection_content_digest,

@@ -120,9 +120,11 @@ def test_parsers_dxf_source(tmp_path: Path):
     assert "<svg" in svg_previews[0].read_text(encoding="utf-8")
 
     # Check geometry jsonl
-    geom_files = list(output_dir.glob("geometry-*.jsonl"))
+    # One file per layout; the fixture's paper-space layout is empty, so
+    # check the model-space file (layout 0) rather than whichever globs first.
+    geom_files = sorted(output_dir.glob("geometry-*.jsonl"))
     assert len(geom_files) >= 1
-    assert geom_files[0].stat().st_size > 0
+    assert (output_dir / "geometry-0.jsonl").stat().st_size > 0
 
 
 def test_search_data_structures():

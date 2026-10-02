@@ -18,7 +18,8 @@ semantic = ["rdflib>=7", "pyoxigraph>=0.5"]
 shacl = ["rdflib>=7", "pyshacl>=0.40"]
 parquet = ["pyarrow>=15"]
 runtime = ["duckdb>=1", "neo4j>=5"]
-dev = ["pytest>=8"]
+operational = ["fastapi>=0.115", "uvicorn>=0.30", "psycopg[binary]>=3.2", "jsonschema>=4"]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 aec = "aec_intelligence.cli:main"

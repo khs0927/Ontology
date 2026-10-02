@@ -276,6 +276,8 @@ def test_fully_remote_verified_runs_become_evidence_ready_but_not_auto_approved(
         snapshot["remote_document_ids_digest"] = "a" * 64
         snapshot["remote_chunk_ids_digest"] = "b" * 64
         snapshot["remote_projection_content_digest"] = projection_content_digest(fixture())
+        snapshot["canonical_freshness_verified"] = True
+        snapshot["current_source_state_digest"] = "c" * 64
 
     report = compare_provider_runs([ragflow, light])
     assert report["status"] == "SELECTED"

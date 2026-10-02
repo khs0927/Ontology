@@ -21,6 +21,16 @@ from .lightrag_http import LightRagHttpAdapter
 from .ragflow_http import RagflowHttpAdapter
 
 
+_BINDING_METADATA_FIELDS = (
+    "canonical_id",
+    "source_id",
+    "revision_id",
+    "project_id",
+    "sha256",
+    "state",
+)
+
+
 def _digest(value: Any) -> str:
     encoded = json.dumps(
         value,
@@ -194,11 +204,39 @@ def verify_ragflow_remote_inventory(
     binding_fixture_mismatch = expected_external != fixture_external
 
     fixture_content_by_external: dict[str, str] = {}
+    fixture_metadata_by_external: dict[str, dict[str, str]] = {}
     for row in fixture["projection"]:
         content = row.get("content")
         if not isinstance(content, str):
             raise ValueError("benchmark projection rows require string content")
-        fixture_content_by_external[row["external_id"]] = content
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("benchmark projection rows require metadata")
+        normalized_metadata: dict[str, str] = {}
+        for field in _BINDING_METADATA_FIELDS:
+            value = metadata.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"benchmark projection metadata requires non-empty {field}"
+                )
+            normalized_metadata[field] = value
+        external_id = row["external_id"]
+        fixture_content_by_external[external_id] = content
+        fixture_metadata_by_external[external_id] = normalized_metadata
+
+    binding_metadata_mismatch_external_ids: list[str] = []
+    for binding in bindings:
+        external_id = binding["external_id"]
+        expected_metadata = fixture_metadata_by_external.get(external_id)
+        if expected_metadata is None:
+            binding_metadata_mismatch_external_ids.append(external_id)
+            continue
+        actual_metadata = {
+            field: binding.get(field)
+            for field in _BINDING_METADATA_FIELDS
+        }
+        if actual_metadata != expected_metadata:
+            binding_metadata_mismatch_external_ids.append(external_id)
 
     binding_by_chunk = {row["chunk_id"]: row for row in bindings}
     content_mismatch_chunk_ids: list[str] = []
@@ -239,6 +277,7 @@ def verify_ragflow_remote_inventory(
         or missing_chunks
         or extra_chunks
         or binding_fixture_mismatch
+        or binding_metadata_mismatch_external_ids
         or content_mismatch_chunk_ids
         or content_missing_chunk_ids
         or content_digest_mismatch
@@ -278,6 +317,9 @@ def verify_ragflow_remote_inventory(
         "missing_chunk_ids": missing_chunks,
         "extra_chunk_ids": extra_chunks,
         "binding_fixture_mismatch": binding_fixture_mismatch,
+        "binding_metadata_mismatch_external_ids": sorted(
+            set(binding_metadata_mismatch_external_ids)
+        ),
         "content_mismatch_chunk_ids": content_mismatch_chunk_ids,
         "content_missing_chunk_ids": content_missing_chunk_ids,
         "expected_projection_content_digest": expected_projection_content_digest,

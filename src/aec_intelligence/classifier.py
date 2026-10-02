@@ -59,6 +59,18 @@ BLOCK_ONLY_RULES: tuple[tuple[str, str], ...] = (
     ("Door", r"(sd|ad|wd|ssd|door)"),
     ("Window", r"(aw|pw|sw|ssw|alw|win)"),
 )
+# Whole-layer patterns tried only after RULES found nothing (drafting conventions without a
+# self-describing element word). Lower confidence: they describe what a layer usually holds.
+LAYER_FALLBACK_RULES: tuple[tuple[str, str, str, float], ...] = (
+    # Elevation outline = the facade/wall silhouette (A-ELEV-OTLN, A-ELEV-OUTL).
+    (r"(?:^|[-_])elev[-_](?:otln|outl|outline)(?:$|[-_])", "Wall", "elevation outline layer indicates wall silhouette", 0.76),
+    # Ground line in elevations/sections is a reference line, not an element (A-ELEV-GRND, GL).
+    (r"(?:^|[-_])(?:grnd|ground|gl|지반선|지반)(?:$|[-_])", "Annotation", "ground line layer indicates reference annotation", 0.76),
+    # Steel profile outlines in a steel detail (S-STEEL, S-STL, 철골).
+    (r"(?:^|[-_])(?:steel|stl|철골)(?:$|[-_])", "SteelSection", "steel layer indicates steel section profile", 0.76),
+    # Generic material hatch without an element word (A-HATCH, A-PATT).
+    (r"(?:^|[-_])(?:hatch|patt|pattern|해치)(?:$|[-_])", "BuildingElementProxy", "hatch layer indicates unspecified element fill", 0.6),
+)
 TITLE_BLOCK_TOKENS = ("=title", "^title", "titleblock", "도곽", "표제란", "=border", "타이틀")
 
 # Korean words that contain a short element token but mean something else.
@@ -173,11 +185,53 @@ def classify(entity: NormalizedCADEntity) -> tuple[str, Classification]:
             confidence = round(min(base_confidence + bonus, 0.95), 2)
             evidence = (f"{source} {reason}: {token}", f"entity_type={entity.entity_type}", f"layer={entity.layer}")
             return label, Classification(label, confidence, "hybrid_rules", evidence, _state(confidence))
+    if entity.entity_type not in {"TEXT", "MTEXT", "ATTRIB", "ATTDEF", "INSERT"}:
+        for pattern, label, reason, confidence in LAYER_FALLBACK_RULES:
+            if re.search(pattern, layer):
+                evidence = (f"layer {reason}", f"entity_type={entity.entity_type}", f"layer={entity.layer}")
+                return label, Classification(label, confidence, "layer_convention_rules", evidence, _state(confidence))
     if entity.entity_type in {"TEXT", "MTEXT"}:
         confidence = 0.78
         return "Annotation", Classification("Annotation", confidence, "entity_type_rule", ("entity_type=text", f"layer={entity.layer}"), _state(confidence))
     confidence = 0.35
     return "CADEntity", Classification("CADEntity", confidence, "fallback", (f"entity_type={entity.entity_type}", f"layer={entity.layer}"), _state(confidence))
+
+
+# Element classes whose outline a generic hatch may fill.
+_HATCH_HOSTS = ("Wall", "Slab", "Roof", "Column", "Beam", "Stair", "Foundation", "Ramp")
+
+
+def _bbox_iou(a: dict[str, float], b: dict[str, float]) -> float:
+    keys = ("min_x", "min_y", "max_x", "max_y")
+    if not all(k in a and k in b for k in keys):
+        return 0.0
+    ix = max(0.0, min(a["max_x"], b["max_x"]) - max(a["min_x"], b["min_x"]))
+    iy = max(0.0, min(a["max_y"], b["max_y"]) - max(a["min_y"], b["min_y"]))
+    inter = ix * iy
+    area = lambda r: max(0.0, r["max_x"] - r["min_x"]) * max(0.0, r["max_y"] - r["min_y"])
+    union = area(a) + area(b) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def refine_with_context(objects: list[CAIRObject], entities: list[NormalizedCADEntity]) -> list[CAIRObject]:
+    """Sheet-level refinement that needs neighbours: a hatch on a generic hatch layer (A-HATCH) is the fill
+    of the element outline it coincides with (bbox IoU >= 0.9), so it takes that element's class.
+    ``objects`` and ``entities`` are index aligned; objects are updated in place and returned."""
+    hosts = [(obj, entity) for obj, entity in zip(objects, entities)
+             if obj.type in _HATCH_HOSTS and entity.entity_type != "HATCH" and entity.bbox]
+    for obj, entity in zip(objects, entities):
+        if entity.entity_type != "HATCH" or not entity.bbox or not obj.classification \
+                or obj.classification.method != "layer_convention_rules":
+            continue
+        matches = sorted(((_bbox_iou(entity.bbox, h.bbox), host.source.entity_id or "", host) for host, h in hosts), key=lambda m: (-m[0], m[1]))
+        if matches and matches[0][0] >= 0.9:
+            iou, _, host = matches[0]
+            confidence = 0.8
+            evidence = (f"hatch fills {host.type} outline {host.source.entity_id} (bbox IoU {iou:.2f})", *obj.classification.evidence)
+            obj.type = host.type
+            obj.classification = Classification(host.type, confidence, "hatch_fill_of_outline", evidence, _state(confidence))
+            obj.properties["fills"] = host.id
+    return objects
 
 
 def _title_block(entity: NormalizedCADEntity) -> str | None:
@@ -218,6 +272,10 @@ def semantic_class(entity: NormalizedCADEntity, label: str | None = None) -> tup
         return "SteelSection", {"sectionDesignation": sections[0]["sectionDesignation"],
                                 "sectionDesignations": [s["sectionDesignation"] for s in sections]}
     return label, {}
+
+
+# Text-derived classes that replace the Annotation type of their label (with the minimum confidence used).
+PROMOTED_CLASSES: dict[str, float] = {"Space": 0.82, "SteelSection": 0.82}
 
 
 def _state(confidence: float) -> str:
@@ -419,6 +477,16 @@ def to_cair_object(
 ) -> CAIRObject:
     label, classification = classify(entity)
     finer, finer_props = semantic_class(entity, label)
+    if finer in PROMOTED_CLASSES and finer != label:
+        # A room label denotes the room and a section designation denotes the profile: the text is the
+        # only evidence of them on a 2D sheet, so it becomes that object (ontology type + classification).
+        base = classification.confidence if classification else 0.78
+        confidence = round(min(max(base, PROMOTED_CLASSES[finer]), 0.95), 2)
+        evidence = (f"text denotes {finer}: {finer_props.get('roomName') or finer_props.get('sectionDesignation')}",
+                    *(classification.evidence if classification else ()))
+        classification = Classification(finer, confidence, "text_semantics", evidence, _state(confidence))
+        finer_props = {"annotation_role": label, **finer_props}
+        label = finer
     object_id = stable_object_id(project_id, label, "DXF", entity.handle)
     source = SourceRef(source_file, "DXF", entity.handle, entity.layer, artifact_id)
     provenance = Provenance(source_file, entity.handle, "DXF", source_hash, parser_name, parser_version)
@@ -431,7 +499,7 @@ def to_cair_object(
         bbox=entity.bbox,
         placement=entity.geometry.get("location", {}),
         properties={"cad_entity_type": entity.entity_type, "layer": entity.layer, **entity.properties,
-                    **({"semantic_class": finer, **finer_props} if finer != label else {})},
+                    **({"semantic_class": finer} if finer != label else {}), **finer_props},
         classification=classification,
         provenance=provenance,
     )

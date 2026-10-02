@@ -17,6 +17,7 @@ import base64
 import json
 from typing import Any, Iterable
 
+from ..classifier import normalize_storey
 from .db import Database, graph_name
 
 
@@ -312,8 +313,9 @@ def find_elements(db: Database, kind: str | Iterable[str] | None = None, project
                   document_id: str | None = None, drawing_category: str | None = None, layer: str | None = None,
                   block_name: str | None = None, text: str | None = None, bbox: Any = None,
                   limit: int | None = DEFAULT_LIMIT, cursor: str | None = None, state: str | None = None,
-                  include_properties: bool = False) -> dict[str, Any]:
+                  include_properties: bool = False, storey: str | None = None) -> dict[str, Any]:
     limit = _limit(limit)
+    storey = normalize_storey(storey)
     after = decode_cursor(cursor)
     kinds = resolve_kinds(kind)
     categories = resolve_category(drawing_category)
@@ -327,6 +329,8 @@ def find_elements(db: Database, kind: str | Iterable[str] | None = None, project
         where.append("o.kind = ANY(%(kinds)s)"); params["kinds"] = kinds
     if state:
         where.append("o.payload->>'state' = %(state)s"); params["state"] = state
+    if storey:
+        where.append("upper(o.storey) = upper(%(storey)s)"); params["storey"] = storey
     if layer:
         if any(c in layer for c in "*%?"):
             where.append(f"{layer_sql()} ILIKE %(layer)s")
@@ -368,7 +372,7 @@ def find_elements(db: Database, kind: str | Iterable[str] | None = None, project
     return {
         "filters": {"kind": kinds or None, "project_id": project_id, "document_id": document_id,
                     "drawing_category": categories[:1] or None, "layer": layer, "block_name": block_name,
-                    "text": text, "bbox": box, "state": state},
+                    "text": text, "bbox": box, "state": state, "storey": storey},
         "count": len(rows),
         "items": [_summary(r, include_properties) for r in rows],
         "next_cursor": encode_cursor(rows[-1]["id"]) if more and rows else None,

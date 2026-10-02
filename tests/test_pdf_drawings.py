@@ -66,6 +66,8 @@ def test_pdf_title_block_fields_match_dxf_schema(tmp_path, settings):
     assert page["properties"]["title_block"] == blocks[0]["id"]
     assert page["properties"]["drawing_category"] != "기타"
     assert any(r["predicate"] == "hasTitleBlock" and r["subject"] == page["id"] for r in result["relations"])
+    assert page["storey"] == "1F" and page["properties"]["storey_source"] == "title_block"
+    assert {o["storey"] for o in result["objects"] if o["type"] in {"Wall", "Annotation"}} == {"1F"}
 
 
 def test_pdf_vector_candidates(tmp_path, settings):

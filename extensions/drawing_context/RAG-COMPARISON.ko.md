@@ -117,7 +117,7 @@ fixture projection과 정확히 일치해야 한다.
 현재 `index_snapshot`은 provider의 isolated benchmark namespace에 대해
 **호출자/로컬 binding view가 제출한 attestation**이다.
 
-따라서 보고서에는 다음이 고정된다.
+caller-attested snapshot만 있는 경우 보고서는 다음과 같다.
 
 ```json
 {
@@ -126,10 +126,13 @@ fixture projection과 정확히 일치해야 한다.
 }
 ```
 
-이 비교기에서 `SELECTED`가 나와도 production provider 채택 근거로 사용하면 안 된다.
-RAGFlow와 LightRAG 각각에 대해 원격 전체 document/chunk inventory를 read-only로
-열거하고 fixture projection과 완전히 일치함을 독립 검증한 뒤에만 production 승격
-판정을 별도로 수행한다.
+provider별 complete read-only remote inventory proof가 추가되면 snapshot assurance는
+`remote-readback-complete`가 될 수 있다. 비교 대상 **모든 provider**가 이 proof를
+통과하고 promotion gate를 PASS한 뒤 단일 `SELECTED` provider가 있을 때만
+`production_adoption_eligible=true`가 된다.
 
-즉 이 도구의 현재 역할은 **동일한 조건의 실험 결과를 정리하고 후보를 좁히는 것**이다.
-실서비스 채택 승인 도구가 아니다.
+현재 구현 기준으로 RAGFlow는 dataset document/chunk 전체 readback이 가능하다.
+LightRAG v1.5.7 공개 REST API는 document와 `chunks_count`는 제공하지만 complete
+chunk-ID inventory를 제공하지 않으므로 아직 complete proof로 승격하지 않는다.
+
+따라서 live proof가 없는 결과는 계속 **실험 결과 정리/후보 축소** 용도다.

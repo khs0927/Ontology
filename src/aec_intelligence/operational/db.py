@@ -12,6 +12,18 @@ from psycopg.types.json import Jsonb
 
 MIGRATIONS_DIR = Path(__file__).with_name('migrations')
 CYPHER_TAG = '$aec_cypher$'
+GRAPH_BATCH = 500
+
+
+def _batches(rows, size=GRAPH_BATCH):
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
+def _cypher_list(rows):
+    """Render rows of scalar values as a Cypher list-of-maps literal (keys are fixed identifiers)."""
+    return '[' + ', '.join('{' + ', '.join(f'{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in row.items()) + '}'
+                           for row in rows) + ']'
 
 
 def graph_name(project: str) -> str:
@@ -104,6 +116,11 @@ class Database:
                 'WHERE g.name=%s',(graph,))}
             if 'Entity' not in labels:
                 conn.execute("SELECT create_vlabel(%s,'Entity')",(graph,))
+                # Property filters such as n.document_id = ... compile to properties @> ..., which this
+                # GIN index serves. Created with the label only: CREATE INDEX would wait on any open
+                # ingest transaction of the project.
+                conn.execute(sql.SQL('CREATE INDEX {} ON {}.{} USING gin (properties)').format(
+                    sql.Identifier(f'{graph}_entity_props'), sql.Identifier(graph), sql.Identifier('Entity')))
             if 'Rel' not in labels:
                 conn.execute("SELECT create_elabel(%s,'Rel')",(graph,))
 
@@ -112,18 +129,31 @@ class Database:
         self.ensure_graph(graph)
         doc = json.dumps(snapshot['document_id'])
         self.cypher(conn,graph,f'MATCH (n:Entity) WHERE n.document_id={doc} DETACH DELETE n RETURN count(n)')
-        for obj in snapshot['objects']:
-            props = ', '.join(f'{k}: {json.dumps(v,ensure_ascii=False)}' for k,v in {
-                'id':obj['id'],'document_id':snapshot['document_id'],'kind':obj['type'],
-                'revision':snapshot['revision'],'state':obj['state']}.items())
-            self.cypher(conn,graph,f'CREATE (n:Entity {{{props}}}) RETURN n.id')
-        for rel in snapshot['relations']:
-            # Candidate links remain in SQL evidence, not the authoritative graph.
-            if rel['state'] not in ('OBSERVED','USER_CONFIRMED','CALCULATED'):
-                continue
-            a,b,kind = (json.dumps(rel[k]) for k in ('subject','object','predicate'))
-            self.cypher(conn,graph,f'MATCH (a:Entity),(b:Entity) WHERE a.id={a} AND b.id={b} '
-                        f'CREATE (a)-[r:Rel {{kind:{kind}}}]->(b) RETURN r.kind')
+        # One Cypher call per batch, not per object: a 25k-object drawing took over 30 minutes
+        # with one round trip and one plan per node.
+        nodes = [{'id':obj['id'],'document_id':snapshot['document_id'],'kind':obj['type'],
+                  'revision':snapshot['revision'],'state':obj['state']} for obj in snapshot['objects']]
+        for batch in _batches(nodes):
+            self.cypher(conn,graph,f'UNWIND {_cypher_list(batch)} AS o '
+                        'CREATE (n:Entity {id: o.id, document_id: o.document_id, kind: o.kind, '
+                        'revision: o.revision, state: o.state}) RETURN count(n)')
+        # Candidate links remain in SQL evidence, not the authoritative graph.
+        edges = [{'a':rel['subject'],'b':rel['object'],'kind':rel['predicate']} for rel in snapshot['relations']
+                 if rel['state'] in ('OBSERVED','USER_CONFIRMED','CALCULATED')]
+        if edges:
+            # Edges go straight into AGE's edge table: a Cypher MATCH per endpoint costs minutes per
+            # large drawing. Node graph ids come from one Cypher read of this document's nodes; AGE fills
+            # the edge id from the label's own sequence.
+            ids = {}
+            for row in self.cypher(conn, graph, f'MATCH (n:Entity) WHERE n.document_id = {doc} RETURN [id(n), n.id]'):
+                gid, oid = json.loads(str(row['value']))
+                ids[oid] = str(gid)
+            rows = [(ids[e['a']], ids[e['b']], json.dumps({'kind': e['kind']}, ensure_ascii=False))
+                    for e in edges if e['a'] in ids and e['b'] in ids]
+            with conn.cursor() as cur:
+                cur.executemany(sql.SQL('INSERT INTO {}.{} (start_id, end_id, properties) '
+                                        'VALUES (%s::graphid, %s::graphid, %s::agtype)').format(
+                                    sql.Identifier(graph), sql.Identifier('Rel')), rows)
         conn.execute('UPDATE aec.index_state SET graph_revision=%s WHERE document_id=%s',
                      (snapshot['revision'],snapshot['document_id']))
 

@@ -1,4 +1,5 @@
 import json
+import struct
 from pathlib import Path
 
 from aec_intelligence.asset3d_adapters import GLTFParser, OBJParser, STLParser, STEPParser, parse_3d_asset
@@ -34,13 +35,44 @@ def test_obj_and_ascii_stl_parsers_report_mesh_evidence(tmp_path: Path):
     assert stl_result.metadata["vertex_count"] == 3
 
 
+def _write_minimal_glb(path: Path) -> Path:
+    document = {
+        "asset": {"version": "2.0"},
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"componentType": 5126, "count": 3, "type": "VEC3"}],
+    }
+    payload = json.dumps(document).encode("utf-8")
+    payload += b" " * (-len(payload) % 4)
+    total = 12 + 8 + len(payload)
+    path.write_bytes(b"glTF" + struct.pack("<II", 2, total) + struct.pack("<II", len(payload), 0x4E4F534A) + payload)
+    return path
+
+
 def test_step_and_glb_parsers_read_actual_exchange_artifacts(tmp_path: Path):
-    step = next((Path(__file__).parents[1] / "projects" / "AEC-2026-000004" / "02_DERIVED" / "BIM" / "STEP").glob("*.step"))
+    step = tmp_path / "wall.step"
+    step.write_text(
+        "ISO-10303-21;\n"
+        "HEADER;\nFILE_DESCRIPTION(('wall'),'2;1');\nFILE_NAME('wall.step','',(''),(''),'','','');\n"
+        "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\n"
+        "DATA;\n"
+        "#1=CARTESIAN_POINT('',(0.,0.,0.));\n"
+        "#2=ADVANCED_FACE('',(),#3,.T.);\n"
+        "#3=PLANE('',#4);\n"
+        "#4=AXIS2_PLACEMENT_3D('',#1,$,$);\n"
+        "#5=MANIFOLD_SOLID_BREP('',#6);\n"
+        "#6=CLOSED_SHELL('',(#2));\n"
+        "ENDSEC;\nEND-ISO-10303-21;\n",
+        encoding="utf-8",
+    )
     step_result = STEPParser().parse(step)
     assert step_result.source_format == "STEP"
-    assert step_result.metadata["part21_entity_count"] > 0
+    assert step_result.metadata["part21_entity_count"] == 6
+    assert step_result.metadata["solid_entity_count"] == 1
+    assert step_result.metadata["advanced_face_count"] == 1
 
-    glb = next((Path(__file__).parents[1] / "projects" / "AEC-2026-000004" / "02_DERIVED" / "BIM" / "GLB").glob("*.glb"))
+    glb = _write_minimal_glb(tmp_path / "wall.glb")
     glb_result = parse_3d_asset(glb)
     assert glb_result.source_format == "GLB"
     assert glb_result.metadata["glb_version"] == 2

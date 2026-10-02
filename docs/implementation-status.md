@@ -45,6 +45,8 @@ Completed sequential phases:
 - Cross-format fixture acceptance compares shared Wall/Door/Window semantics across DXF, ODA-derived DWG, and IFC; FreeCAD round-trip acceptance measures planar STEP bounding-box deviation and records the explicit wireframe/solid representation policy.
 - FreeCAD now supports an explicit opt-in solid review mode: closed planar CAIR polylines are extruded into separate FCStd/STEP derived artifacts, while the default wireframe route and authoritative CAIR/raw sources remain unchanged. The fixture acceptance path produced two STEP solids with zero planar bounding-box deviation and is exposed through `aec.open_in_freecad.solid_mode`.
 - FreeCAD NativeIFC geometry import is now an explicit headless acceptance boundary: `probe-native-ifc` and `aec.probe_native_ifc` use `strategy=2` and `shapemode=0`, stage Windows process paths as ASCII, require a machine-readable report with a non-null shape, and preserve the authoritative IFC/CAIR sources. The current FreeCAD 1.1.2 probe imports the geometry-bearing fixture's Wall as one solid with 12 edges and 6 faces; semantic-only IFC remains a truthful no-geometry failure.
+- `aec audit` validates every project `04_ONTOLOGY/project.ttl` against packaged SHACL shapes (`resources/cair-shapes.ttl`) through pySHACL when the `shacl` extra is installed; non-conforming exports fail the gate, and a missing pySHACL is reported as a note rather than a silent pass.
+- The `bim` extra now targets IfcOpenShell 0.9; the IFC parse, mesh-extraction and format-pipeline tests pass against 0.9.0.
 
 Remaining environment-bound phases:
 

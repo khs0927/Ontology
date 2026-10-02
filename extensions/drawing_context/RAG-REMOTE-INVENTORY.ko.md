@@ -69,7 +69,11 @@ RAG provider comparison에서 production evidence 후보가 되려면:
 4. 동일 projection corpus identity
 5. 비교 결과가 `SELECTED` (TIE 아님)
 
-을 모두 만족해야 한다.
+을 모두 만족하면 기술적 evidence가 `production_evidence_ready=true`가 된다.
 
-현재 LightRAG 공개 API 한계 때문에 RAGFlow vs LightRAG 비교는 여전히 production
-승격 전 단계로 남는다. 이 제한은 의도적인 fail-closed 정책이다.
+그 상태에서도 자동 production 승격은 하지 않는다.
+`production_adoption_eligible=false`, `operator_approval_required=true`를 유지하고
+별도의 명시적 운영자 승인 artifact가 있어야 실제 전환할 수 있다.
+
+현재 LightRAG 공개 API 한계 때문에 RAGFlow vs LightRAG 비교는 기술 evidence
+ready 단계에도 도달하지 못한다. 이 제한은 의도적인 fail-closed 정책이다.

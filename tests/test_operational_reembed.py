@@ -27,7 +27,19 @@ def test_settings_from_env_uses_pathsep(monkeypatch, tmp_path):
     assert roots == (a.resolve(), b.resolve(), (tmp_path / "c").resolve())
 
 
+def test_reembed_delete_stale_requires_embedding_url(monkeypatch, capsys):
+    from aec_intelligence.operational import embeddings
+
+    monkeypatch.delenv("AEC_EMBEDDING_URL", raising=False)
+    monkeypatch.setattr(embeddings, "reindex_embeddings", lambda *a, **k: pytest.fail("must not run"))
+    monkeypatch.setattr(cli, "Database", lambda dsn: object())
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["reembed", "--delete-stale"])
+    assert exc.value.code != 0 and "AEC_EMBEDDING_URL" in capsys.readouterr().err
+
+
 def test_reembed_cli_passes_options(monkeypatch):
+    monkeypatch.setenv("AEC_EMBEDDING_URL", "http://127.0.0.1:9")
     from aec_intelligence.operational import embeddings
 
     seen = {}

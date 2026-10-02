@@ -44,6 +44,7 @@ jobs:
           tests/test_format_pipeline.py
           tests/test_formats_graph_query.py
           tests/test_ontology_model.py
+          tests/test_ko_fixtures.py
           tests/test_cross_format_acceptance.py
 
       - name: Test MCP intelligence bridge

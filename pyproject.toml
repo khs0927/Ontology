@@ -17,7 +17,7 @@ pdf = ["PyMuPDF>=1.24"]
 semantic = ["rdflib>=7", "pyoxigraph>=0.5"]
 parquet = ["pyarrow>=15"]
 runtime = ["duckdb>=1", "neo4j>=5"]
-operational = ["psycopg[binary]>=3.1", "fastapi>=0.110", "uvicorn>=0.29", "ezdxf>=1.3"]
+operational = ["psycopg[binary]>=3.1", "fastapi>=0.110", "uvicorn>=0.29", "ezdxf>=1.3", "Pillow>=10"]
 dev = ["pytest>=8", "httpx>=0.27", "jsonschema>=4", "fastapi>=0.110", "psycopg[binary]>=3.1"]
 
 [project.scripts]

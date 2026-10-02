@@ -9,6 +9,7 @@ from context_fabric.compare import (
     compare_provider_runs,
     fixture_digest,
     profile_digest,
+    projection_content_digest,
     wrap_provider_result,
 )
 
@@ -274,6 +275,7 @@ def test_fully_remote_verified_runs_become_evidence_ready_but_not_auto_approved(
         snapshot["remote_chunk_count"] = 1
         snapshot["remote_document_ids_digest"] = "a" * 64
         snapshot["remote_chunk_ids_digest"] = "b" * 64
+        snapshot["remote_projection_content_digest"] = projection_content_digest(fixture())
 
     report = compare_provider_runs([ragflow, light])
     assert report["status"] == "SELECTED"

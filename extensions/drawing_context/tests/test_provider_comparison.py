@@ -19,7 +19,7 @@ def fixture(provider="neutral"):
         "schema": "drawing-context-rag-benchmark/1",
         "provider": provider,
         "canonical_mutation": False,
-        "projection": [{"external_id": "ctx-1"}],
+        "projection": [{"external_id": "ctx-1", "content": "door"}],
         "cases": [{"case_id": "q1", "query": "door"}],
     }
 
@@ -261,7 +261,7 @@ def test_comparison_never_claims_canonical_mutation():
     assert report["production_adoption_eligible"] is False
     assert report["operator_approval_required"] is True
     assert report["remote_inventory_verified"] is False
-    assert "never authorizes production adoption automatically" in report["note"]
+    assert "execution-provenance layer" in report["note"]
 
 
 def test_remote_corpus_proof_without_deployment_identity_is_not_evidence_ready():

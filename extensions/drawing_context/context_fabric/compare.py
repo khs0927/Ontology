@@ -2,7 +2,8 @@
 
 Comparison never promotes a retrieval provider into canonical storage. Only
 providers that pass the existing provenance/ACL/revision/quality promotion gate
-are eligible. Every run also records a reproducible provider execution profile.
+are eligible. Every run records a reproducible provider execution profile and a
+cryptographic snapshot of the exact indexed projection.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from .benchmark import PromotionThresholds, promotion_decision
 
 _RUN_SCHEMA = "drawing-context-rag-provider-run/1"
 _COMPARISON_SCHEMA = "drawing-context-rag-provider-comparison/1"
+_INDEX_SCHEMA = "drawing-context-rag-index-snapshot/1"
 _REQUIRED_PROFILE_FIELDS = (
     "provider_version",
     "retrieval_mode",
@@ -39,6 +41,30 @@ def _stable_digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_fixture(fixture: dict[str, Any]) -> None:
+    if not isinstance(fixture, dict):
+        raise ValueError("benchmark fixture must be an object")
+    if fixture.get("schema") != "drawing-context-rag-benchmark/1":
+        raise ValueError("unsupported benchmark fixture schema")
+    if fixture.get("canonical_mutation") is not False:
+        raise ValueError("benchmark fixture must declare canonical_mutation=false")
+    projection = fixture.get("projection")
+    if not isinstance(projection, list):
+        raise ValueError("benchmark fixture requires projection")
+    if not isinstance(fixture.get("cases"), list) or not fixture["cases"]:
+        raise ValueError("benchmark fixture requires non-empty cases")
+    seen: set[str] = set()
+    for row in projection:
+        if not isinstance(row, dict):
+            raise ValueError("benchmark projection rows must be objects")
+        external_id = row.get("external_id")
+        if not isinstance(external_id, str) or not external_id.strip():
+            raise ValueError("benchmark projection rows require external_id")
+        if external_id in seen:
+            raise ValueError("benchmark projection external_id values must be unique")
+        seen.add(external_id)
+
+
 def fixture_digest(fixture: dict[str, Any]) -> str:
     """Digest provider-neutral benchmark inputs.
 
@@ -46,18 +72,63 @@ def fixture_digest(fixture: dict[str, Any]) -> str:
     only excluded field so RAGFlow and LightRAG can compare the same projection
     and cases while every other fixture field remains identical.
     """
-    if not isinstance(fixture, dict):
-        raise ValueError("benchmark fixture must be an object")
-    if fixture.get("schema") != "drawing-context-rag-benchmark/1":
-        raise ValueError("unsupported benchmark fixture schema")
-    if fixture.get("canonical_mutation") is not False:
-        raise ValueError("benchmark fixture must declare canonical_mutation=false")
-    if not isinstance(fixture.get("projection"), list):
-        raise ValueError("benchmark fixture requires projection")
-    if not isinstance(fixture.get("cases"), list) or not fixture["cases"]:
-        raise ValueError("benchmark fixture requires non-empty cases")
+    _validate_fixture(fixture)
     normalized = {key: value for key, value in fixture.items() if key != "provider"}
     return _stable_digest(normalized)
+
+
+def projection_digest(fixture: dict[str, Any]) -> str:
+    _validate_fixture(fixture)
+    return _stable_digest(fixture["projection"])
+
+
+def _fixture_external_ids(fixture: dict[str, Any]) -> tuple[str, ...]:
+    _validate_fixture(fixture)
+    return tuple(sorted(row["external_id"] for row in fixture["projection"]))
+
+
+def external_ids_digest(external_ids: Iterable[str]) -> str:
+    values = list(external_ids)
+    if any(not isinstance(value, str) or not value.strip() for value in values):
+        raise ValueError("indexed external IDs must be non-empty strings")
+    if len(values) != len(set(values)):
+        raise ValueError("indexed external IDs must be unique")
+    return _stable_digest(sorted(values))
+
+
+def build_index_snapshot(
+    fixture: dict[str, Any],
+    *,
+    provider_index_id: str,
+    indexed_external_ids: Iterable[str],
+    isolated_namespace: bool,
+) -> dict[str, Any]:
+    """Bind an observed provider index to the exact fixture projection.
+
+    Callers must pass the external IDs actually bound/indexed in the provider
+    namespace. The helper refuses missing, extra or duplicated IDs.
+    """
+    _validate_fixture(fixture)
+    if not isinstance(provider_index_id, str) or not provider_index_id.strip():
+        raise ValueError("provider_index_id must be non-empty")
+    if isolated_namespace is not True:
+        raise ValueError("benchmark provider index must use an isolated namespace")
+
+    expected = _fixture_external_ids(fixture)
+    observed = tuple(sorted(indexed_external_ids))
+    if len(observed) != len(set(observed)):
+        raise ValueError("indexed external IDs must be unique")
+    if observed != expected:
+        raise ValueError("indexed provider corpus does not exactly match fixture projection")
+
+    return {
+        "schema": _INDEX_SCHEMA,
+        "provider_index_id": provider_index_id,
+        "isolated_namespace": True,
+        "record_count": len(observed),
+        "projection_digest": projection_digest(fixture),
+        "external_ids_digest": external_ids_digest(observed),
+    }
 
 
 def _validate_profile(profile: dict[str, Any]) -> None:
@@ -74,23 +145,65 @@ def profile_digest(profile: dict[str, Any]) -> str:
     return _stable_digest(profile)
 
 
+def _validate_hex_digest(value: Any, name: str) -> str:
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"{name} requires a SHA-256 digest")
+    try:
+        int(value, 16)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be hexadecimal SHA-256") from exc
+    return value
+
+
+def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
+    if not isinstance(snapshot, dict) or snapshot.get("schema") != _INDEX_SCHEMA:
+        raise ValueError("unsupported provider index snapshot schema")
+    index_id = snapshot.get("provider_index_id")
+    if not isinstance(index_id, str) or not index_id.strip():
+        raise ValueError("provider index snapshot requires provider_index_id")
+    if snapshot.get("isolated_namespace") is not True:
+        raise ValueError("provider index snapshot must declare isolated_namespace=true")
+    count = snapshot.get("record_count")
+    if type(count) is not int or count < 0:
+        raise ValueError("provider index record_count must be a non-negative integer")
+    _validate_hex_digest(snapshot.get("projection_digest"), "projection_digest")
+    _validate_hex_digest(snapshot.get("external_ids_digest"), "external_ids_digest")
+
+
+def _validate_snapshot_against_fixture(
+    snapshot: dict[str, Any],
+    fixture: dict[str, Any],
+) -> None:
+    _validate_index_snapshot(snapshot)
+    expected_ids = _fixture_external_ids(fixture)
+    if snapshot["record_count"] != len(expected_ids):
+        raise ValueError("provider index record_count does not match fixture projection")
+    if snapshot["projection_digest"] != projection_digest(fixture):
+        raise ValueError("provider index projection digest does not match fixture")
+    if snapshot["external_ids_digest"] != external_ids_digest(expected_ids):
+        raise ValueError("provider index external ID digest does not match fixture")
+
+
 def wrap_provider_result(
     provider: str,
     fixture: dict[str, Any],
     metrics: dict[str, Any],
     profile: dict[str, Any],
+    index_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     provider = provider.strip().lower()
     if not provider:
         raise ValueError("provider must be non-empty")
     _validate_metrics(metrics)
     _validate_profile(profile)
+    _validate_snapshot_against_fixture(index_snapshot, fixture)
     return {
         "schema": _RUN_SCHEMA,
         "provider": provider,
         "fixture_digest": fixture_digest(fixture),
         "profile": profile,
         "profile_digest": profile_digest(profile),
+        "index_snapshot": index_snapshot,
         "metrics": metrics,
         "canonical_mutation": False,
     }
@@ -145,19 +258,16 @@ def _validate_metrics(metrics: dict[str, Any]) -> None:
     _case_ids(metrics)
 
 
-def _validate_hex_digest(value: Any, name: str) -> str:
-    if not isinstance(value, str) or len(value) != 64:
-        raise ValueError(f"{name} requires a SHA-256 digest")
-    try:
-        int(value, 16)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be hexadecimal SHA-256") from exc
-    return value
-
-
 def _validate_run(
     run: dict[str, Any],
-) -> tuple[str, str, dict[str, Any], str, dict[str, Any]]:
+) -> tuple[
+    str,
+    str,
+    dict[str, Any],
+    str,
+    dict[str, Any],
+    dict[str, Any],
+]:
     if not isinstance(run, dict) or run.get("schema") != _RUN_SCHEMA:
         raise ValueError("unsupported provider run schema")
     if run.get("canonical_mutation") is not False:
@@ -173,9 +283,11 @@ def _validate_run(
         run.get("profile_digest"),
         "profile_digest",
     )
-    actual_profile_hash = profile_digest(profile)
-    if declared_profile_hash != actual_profile_hash:
+    if declared_profile_hash != profile_digest(profile):
         raise ValueError("provider profile digest does not match profile contents")
+
+    index_snapshot = run.get("index_snapshot")
+    _validate_index_snapshot(index_snapshot)
 
     metrics = run.get("metrics")
     _validate_metrics(metrics)
@@ -184,6 +296,7 @@ def _validate_run(
         fixture_hash,
         profile,
         declared_profile_hash,
+        index_snapshot,
         metrics,
     )
 
@@ -207,7 +320,7 @@ def compare_provider_runs(
     runs: Iterable[dict[str, Any]],
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
-    """Compare runs produced from the same benchmark inputs.
+    """Compare runs produced from the same benchmark inputs and index corpus.
 
     Winner selection is intentionally non-weighted:
     1. Existing promotion gate must PASS.
@@ -215,38 +328,46 @@ def compare_provider_runs(
     3. Higher MRR.
     4. Lower p95 only if every still-tied provider reported p95.
     Otherwise the result remains a tie.
-
-    Provider profiles are recorded, not required to match: comparing different
-    retrieval systems is the purpose of the benchmark, while the profile makes
-    each system configuration reproducible.
     """
     rows = list(runs)
     if len(rows) < 2:
         raise ValueError("comparison requires at least two provider runs")
 
     parsed = [_validate_run(row) for row in rows]
-    providers = [provider for provider, _, _, _, _ in parsed]
+    providers = [provider for provider, _, _, _, _, _ in parsed]
     if len(set(providers)) != len(providers):
         raise ValueError("provider names must be unique")
 
-    digests = {digest for _, digest, _, _, _ in parsed}
-    if len(digests) != 1:
+    fixture_hashes = {digest for _, digest, _, _, _, _ in parsed}
+    if len(fixture_hashes) != 1:
         raise ValueError("providers must use the exact same benchmark fixture")
 
-    ks = {metrics["k"] for _, _, _, _, metrics in parsed}
-    case_sets = {_case_ids(metrics) for _, _, _, _, metrics in parsed}
+    index_identities = {
+        (
+            snapshot["record_count"],
+            snapshot["projection_digest"],
+            snapshot["external_ids_digest"],
+        )
+        for _, _, _, _, snapshot, _ in parsed
+    }
+    if len(index_identities) != 1:
+        raise ValueError("providers must index the exact same projection corpus")
+
+    ks = {metrics["k"] for _, _, _, _, _, metrics in parsed}
+    case_sets = {_case_ids(metrics) for _, _, _, _, _, metrics in parsed}
     if len(ks) != 1 or len(case_sets) != 1:
         raise ValueError("providers must use identical k and ordered case ids")
 
     thresholds = thresholds or PromotionThresholds()
     report_rows: list[dict[str, Any]] = []
     eligible: list[tuple[str, dict[str, Any]]] = []
-    for provider, _, profile, profile_hash, metrics in parsed:
+    for provider, _, profile, profile_hash, index_snapshot, metrics in parsed:
         gate = promotion_decision(metrics, thresholds)
         row = {
             "provider": provider,
             "profile": profile,
             "profile_digest": profile_hash,
+            "index_snapshot": index_snapshot,
             "promotion_status": gate["status"],
             "checks": gate["checks"],
             "recall_at_k": metrics["recall_at_k"],
@@ -312,9 +433,15 @@ def compare_provider_runs(
                     status = "TIE"
                     tied = sorted(provider for provider, _ in finalists)
 
+    index_identity = next(iter(index_identities))
     return {
         "schema": _COMPARISON_SCHEMA,
-        "fixture_digest": next(iter(digests)),
+        "fixture_digest": next(iter(fixture_hashes)),
+        "index_corpus": {
+            "record_count": index_identity[0],
+            "projection_digest": index_identity[1],
+            "external_ids_digest": index_identity[2],
+        },
         "k": next(iter(ks)),
         "case_ids": list(next(iter(case_sets))),
         "thresholds": asdict(thresholds),
@@ -325,8 +452,9 @@ def compare_provider_runs(
         "tied_providers": tied,
         "canonical_mutation": False,
         "note": (
-            "Selection applies only to this benchmark fixture and recorded "
-            "provider profiles. It does not make the provider canonical."
+            "Selection applies only to this benchmark fixture, exact indexed "
+            "projection corpus and recorded provider profiles. It does not "
+            "make the provider canonical."
         ),
     }
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from ..cair import Classification
-from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text,
+from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text, semantic_class,
                           steel_sections, title_block_fields)
 from ..dxf import (_normalize_entity, INSUNITS, NormalizedCADEntity, block_effective_name, decode_dxf_text,
                    effective_block_name, read_dxf)
@@ -192,8 +192,8 @@ class _DXFSemantics:
         mark = element_mark(text)
         if mark:
             obj['properties'].update(mark)
-        room = room_from_text(text)
-        if room:
+        finer, room = semantic_class(normalized, kind)
+        if finer == 'Space':
             self._space(obj, room, evidence, 'text')
         for i, section in enumerate(steel_sections(text)):
             self._section(obj, section, evidence, i, normalized)

@@ -42,7 +42,7 @@ def build_drawing(path: Path) -> Path:
     _add_block(doc, "ROOMTAG", ("ROOM_NAME", "ROOM_NO", "AREA"))
     _add_block(doc, "TB_A1", ("DWG_NO", "TITLE", "SCALE", "DATE", "REV"))
     _add_block(doc, "BEAMTAG", ("SIZE",))
-    _add_block(doc, "UNKNOWN_SYMBOL")
+    _add_block(doc, "UNKNOWN_THING")
     # Dynamic block: the anonymous *U representation names its source in AcDbBlockRepBTag XDATA.
     source = _add_block(doc, "DOOR_DYN")
     rep = _add_block(doc, "*U7")
@@ -56,7 +56,7 @@ def build_drawing(path: Path) -> Path:
     msp.add_blockref("변기", (8000, 7000), dxfattribs={"layer": "가구"})
     msp.add_blockref("창고표시", (500, 500))
     msp.add_blockref("*U7", (3000, 0), dxfattribs={"layer": "A-DOOR"})
-    msp.add_blockref("UNKNOWN_SYMBOL", (9000, 100))
+    msp.add_blockref("UNKNOWN_THING", (9000, 100))
     msp.add_blockref("ROOMTAG", (2000, 6000)).add_auto_attribs({"ROOM_NAME": "회의실", "ROOM_NO": "101", "AREA": "25.5㎡"})
     msp.add_text("거실", height=200, dxfattribs={"layer": "A-ANNO"}).set_placement((4000, 4000))
     msp.add_text("창고", height=200, dxfattribs={"layer": "A-ANNO"}).set_placement((500, 1500))
@@ -117,7 +117,7 @@ def test_ids_are_unique_and_every_term_is_declared(parsed):
 
 def test_block_catalog_lists_every_definition_with_attdefs_and_counts(parsed):
     blocks = {o["properties"]["name"]: o for o in _by_type(parsed, "BlockDefinition")}
-    assert {"SD1", "AW-1", "변기", "ROOMTAG", "TB_A1", "DOOR_DYN", "*U7", "UNKNOWN_SYMBOL"} <= set(blocks)
+    assert {"SD1", "AW-1", "변기", "ROOMTAG", "TB_A1", "DOOR_DYN", "*U7", "UNKNOWN_THING"} <= set(blocks)
     assert not any(name.lower().startswith(("*model_space", "*paper_space")) for name in blocks)
     roomtag = blocks["ROOMTAG"]["properties"]
     assert [a["tag"] for a in roomtag["attribute_defs"]] == ["ROOM_NAME", "ROOM_NO", "AREA"]
@@ -148,8 +148,8 @@ def test_inserts_become_typed_instances_of_their_definitions(parsed):
     assert dynamic["properties"]["effective_name"] == "DOOR_DYN"
     assert instance_of[dynamic["id"]] == blocks["DOOR_DYN"]
     assert _one(parsed, "Furniture", block_name="변기")["id"] in instance_of
-    unknown = _one(parsed, "CADEntity", block_name="UNKNOWN_SYMBOL")
-    assert unknown["state"] == "OBSERVED" and instance_of[unknown["id"]] == blocks["UNKNOWN_SYMBOL"]
+    unknown = _one(parsed, "CADEntity", block_name="UNKNOWN_THING")
+    assert unknown["state"] == "OBSERVED" and instance_of[unknown["id"]] == blocks["UNKNOWN_THING"]
     # 창고 (storage room) is never a window.
     assert _one(parsed, "CADEntity", block_name="창고표시")
     tag = _one(parsed, "CADEntity", block_name="ROOMTAG")
@@ -262,7 +262,7 @@ def test_unicode_escapes_and_recover_fallback(tmp_path: Path):
     ("창", "Window"), ("창호", "Window"), ("고정창", "Window"), ("미서기", "Window"), ("미닫이창", "Window"),
     ("창문", "Window"), ("aw1", "Window"), ("w3", "Window"), ("기둥", "Column"), ("c1", "Column"),
     ("큰보", "Beam"), ("보", "Beam"), ("계단", "Stair"), ("stair", "Stair"), ("변기", "Furniture"), ("세면대", "Furniture"),
-    ("욕조", "Furniture"), ("wc", "Furniture"), ("sink", "Furniture"), ("elev", "Elevator"), ("승강기", "Elevator"),
+    ("욕조", "Furniture"), ("wc", "Furniture"), ("sink", "Furniture"), ("ev1", "Elevator"), ("a-elev-glaz", "Window"), ("승강기", "Elevator"),
     ("grid", "Grid"), ("슬래브", "Slab"), ("벽체", "Wall"),
 ])
 def test_rule_vocabulary(name, label):
@@ -292,7 +292,7 @@ def test_text_helpers():
     assert element_mark("AW-03") == {"mark": "AW03", "mark_kind": "Window"}
     assert element_mark("SD") is None
     assert detail_title("주의: 상세 참조") is None
-    assert drawing_category(("t", "창호일람표"))["drawing_category"] == "창호도"
+    assert drawing_category(("t", "창호일람표"))["drawing_category"] == "일람표"
     assert drawing_category(("t", "구조평면도"))["drawing_category"] == "구조평면도"
     assert drawing_category(("t", "도면목록"))["drawing_category"] == "표지/목록"
     assert drawing_category(("t", "xyz"))["drawing_category"] == "기타"
@@ -324,3 +324,23 @@ def test_generated_drawing_lands_in_postgres_with_block_edges(tmp_path: Path):
         edges = db.cypher(conn, graph_name(project), "MATCH ()-[r:Rel]->() WHERE r.kind = 'instanceOf' RETURN count(r)")
     assert {"BlockDefinition", "Layer", "Space", "TitleBlock", "SteelSection", "Door", "Window", "Furniture"} <= kinds
     assert int(str(edges[0]["value"])) >= 7
+
+
+def test_korean_fixture_classification_eval_gate():
+    """Regression gate on the golden Korean drawing set (scripts/eval_classification.py)."""
+    import importlib.util
+    import json
+
+    root = Path(__file__).parents[1]
+    fixtures = root / "tests" / "fixtures" / "drawings_ko"
+    if not (fixtures / "labels.json").is_file():
+        pytest.skip("Korean fixture set not present")
+    spec = importlib.util.spec_from_file_location("eval_classification", root / "scripts" / "eval_classification.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    report = module.evaluate(json.loads((fixtures / "labels.json").read_text(encoding="utf-8")), fixtures, root / "src")
+    assert report["entities"]["accuracy"] >= 0.95 and report["entities"]["macro_f1"] >= 0.95, report["confusion"]
+    assert report["sheets"]["category_accuracy"] == 1.0 and report["sheets"]["number_accuracy"] == 1.0
+    assert report["blocks"]["accuracy"] >= 0.95
+    # No false positives: every remaining miss is an abstention, never a wrong class.
+    assert all(row["predicted"] == "(unclassified)" for row in report["confusion"]), report["confusion"]

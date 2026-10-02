@@ -32,10 +32,13 @@ from .dxf import NormalizedCADEntity
 RULES: list[tuple[str, tuple[str, ...], str, float]] = [
     ("Furniture", ("furniture", "furn", "toilet", "lavatory", "bathtub", "urinal", "shower", "sofa", "=sink", "=wc",
                    "=bed", "=desk", "=chair", "=lav", "=ub", "가구", "변기", "소변기", "세면대", "욕조", "싱크",
-                   "샤워", "침대", "소파", "책상", "의자", "위생기구", "수전"), "name indicates furniture/sanitary fixture", 0.86),
-    ("Elevator", ("elevator", "=elev", "=lift", "#ev\\d{0,2}", "엘리베이터", "승강기"), "name indicates elevator", 0.86),
-    ("Stair", ("stair", "계단"), "name indicates stair", 0.87),
-    ("Window", ("window", "a-wi", "w-window", "#(?:aw|pw|sw|ssw|alw|ww|fw)\\d{1,3}[a-z]?", "#w\\d{1,2}[a-z]?",
+                   "샤워", "침대", "소파", "책상", "의자", "위생기구", "수전", "실외기", "^eqpm", "equipment", "화장실"),
+     "name indicates furniture/sanitary fixture/equipment", 0.86),
+    # "ELEV" is deliberately absent: in AIA/KCS layer names (A-ELEV-*) it means elevation.
+    ("Elevator", ("elevator", "=lift", "#ev\\d{1,2}", "엘리베이터", "승강기"), "name indicates elevator", 0.86),
+    ("Stair", ("stair", "=strs", "계단"), "name indicates stair", 0.87),
+    ("Bolt", ("=bolt", "^bolt", "s-bolt", "anchor", "볼트", "앵커"), "name indicates bolt", 0.84),
+    ("Window", ("window", "a-wi", "w-window", "^win", "^glaz", "glazing", "#(?:aw|pw|sw|ssw|alw|ww|fw)\\d{1,3}[a-z]?", "#w\\d{1,2}[a-z]?",
                 "=창", "$창", "창호", "창문", "창틀", "고정창", "미서기", "미닫이창", "프로젝트창", "커튼월"),
      "name indicates window", 0.90),
     ("Door", ("door", "a-dr", "d-door", "#(?:ssd|asd|sd|wd|fd|ad|ald|gd|pd|hd)\\d{1,3}[a-z]?", "#d\\d{1,2}[a-z]?",
@@ -46,7 +49,17 @@ RULES: list[tuple[str, tuple[str, ...], str, float]] = [
     ("Wall", ("wall", "partition", "a-wal", "w-wall", "벽", "조적", "칸막이"), "name indicates wall", 0.91),
     ("Slab", ("slab", "floor", "s-slab", "바닥", "슬래브", "슬라브"), "name indicates slab", 0.86),
     ("Grid", ("grid", "axis", "a-grid", "그리드", "중심선", "통심"), "name indicates grid", 0.84),
+    # Drafting symbols and annotation layers (section/detail marks, level marks, north arrows, schedule tables).
+    ("Annotation", ("anno", "^symb", "=mark", "^tabl", "=note", "=text", "=level", "=lvl", "north", "=iden",
+                    "방위", "레벨", "기호", "주석", "표기"), "name indicates annotation", 0.8),
 ]
+
+# Bare abbreviations that are only trusted as a whole block name (an "SD" layer is a smoke detector).
+BLOCK_ONLY_RULES: tuple[tuple[str, str], ...] = (
+    ("Door", r"(sd|ad|wd|ssd|door)"),
+    ("Window", r"(aw|pw|sw|ssw|alw|win)"),
+)
+TITLE_BLOCK_TOKENS = ("=title", "^title", "titleblock", "도곽", "표제란", "=border", "타이틀")
 
 # Korean words that contain a short element token but mean something else.
 # They are blanked out before Korean substring/segment matching (창고 = storage room, 문자 = text ...).
@@ -127,11 +140,34 @@ def classify(entity: NormalizedCADEntity) -> tuple[str, Classification]:
         if attributes:
             values = " ".join(f"{tag} {value}" for tag, value in attributes.items())
             sources.append(("attribute", values.lower(), 0.0))
+    if entity.entity_type in {"DIMENSION", "ARC_DIMENSION", "LARGE_RADIAL_DIMENSION"}:
+        confidence = 0.82
+        return "Dimension", Classification("Dimension", confidence, "entity_type_rule", (f"entity_type={entity.entity_type}",), _state(confidence))
+    if entity.entity_type in {"LEADER", "MLEADER", "MULTILEADER", "TOLERANCE"}:
+        # A leader points at something with a note; it is an annotation, not a measured dimension.
+        confidence = 0.82
+        return "Annotation", Classification("Annotation", confidence, "entity_type_rule", (f"entity_type={entity.entity_type}",), _state(confidence))
+    if entity.entity_type == "INSERT":
+        title = _title_block(entity)
+        if title:
+            return "TitleBlock", Classification("TitleBlock", 0.9, "attribute_rules", (title, f"layer={entity.layer}"), _state(0.9))
+        for source, value, _ in sources:
+            if source != "block":
+                continue
+            for label, pattern in BLOCK_ONLY_RULES:
+                if re.fullmatch(pattern, value):
+                    evidence = (f"block abbreviation indicates {label.lower()}: {value}", f"layer={entity.layer}")
+                    return label, Classification(label, 0.88, "hybrid_rules", evidence, _state(0.88))
     if entity.entity_type not in {"TEXT", "MTEXT", "ATTRIB", "ATTDEF"}:
         # A tag such as "SD1" or a note "방화문 상세" on a door layer annotates a door; it is not one.
         sources.append(("layer", layer, 0.0))
     for source, value, bonus in sources:
         found = _match(value)
+        if not found and source == "block":
+            # Last resort for block names only: a type prefix such as "D-EL-현관" / "W_1500".
+            prefix = re.match(r"([dw])[-_]", value)
+            if prefix:
+                found = ("Door" if prefix.group(1) == "d" else "Window", "block name prefix indicates opening", 0.8, prefix.group(0))
         if found:
             label, reason, base_confidence, token = found
             confidence = round(min(base_confidence + bonus, 0.95), 2)
@@ -140,11 +176,48 @@ def classify(entity: NormalizedCADEntity) -> tuple[str, Classification]:
     if entity.entity_type in {"TEXT", "MTEXT"}:
         confidence = 0.78
         return "Annotation", Classification("Annotation", confidence, "entity_type_rule", ("entity_type=text", f"layer={entity.layer}"), _state(confidence))
-    if entity.entity_type in {"DIMENSION", "LEADER", "MLEADER"}:
-        confidence = 0.82
-        return "Dimension", Classification("Dimension", confidence, "entity_type_rule", (f"entity_type={entity.entity_type}",), _state(confidence))
     confidence = 0.35
     return "CADEntity", Classification("CADEntity", confidence, "fallback", (f"entity_type={entity.entity_type}", f"layer={entity.layer}"), _state(confidence))
+
+
+def _title_block(entity: NormalizedCADEntity) -> str | None:
+    """Evidence string when an INSERT is a title block (도곽): title attributes, or a title-ish block name/layer."""
+    props = entity.properties
+    fields = title_block_fields(props.get("attributes") or {})
+    if fields:
+        return "attribute tags indicate title block: " + ", ".join(sorted(fields))
+    names = " ".join(str(props.get(k) or "") for k in ("effective_name", "block_name") if not str(props.get(k) or "").startswith("*"))
+    for source, value in (("block", names.lower()), ("layer", entity.layer.lower())):
+        evidence = _Evidence(value)
+        for token in TITLE_BLOCK_TOKENS:
+            if value.strip() and _token_matches(evidence, token):
+                return f"{source} name indicates title block: {token.lstrip('=^')}"
+    return None
+
+
+def semantic_class(entity: NormalizedCADEntity, label: str | None = None) -> tuple[str, dict[str, Any]]:
+    """Finer evidence-based class for reporting and retrieval, plus the properties that justify it.
+
+    The ontology type stays ``label`` (a room-name TEXT is still an Annotation object); this adds what the
+    annotation denotes: a ``Space`` (room vocabulary or an area-identification layer), a ``SteelSection``
+    (section designation), or the class of a tagged element (mark such as SD1).
+    """
+    label = label or classify(entity)[0]
+    if entity.entity_type not in {"TEXT", "MTEXT"}:
+        return label, {}
+    text = str(entity.properties.get("text") or "").strip()
+    room = room_from_text(text)
+    layer = entity.layer.lower()
+    if not room and re.search(r"area-?iden|room-?(?:name|iden)|실명", layer) and 0 < len(text) <= 20 \
+            and re.search(r"[A-Za-z가-힣]", text):
+        room = {"roomName": text.split("\n")[0].strip()}
+    if room:
+        return "Space", room
+    sections = steel_sections(text)
+    if sections:
+        return "SteelSection", {"sectionDesignation": sections[0]["sectionDesignation"],
+                                "sectionDesignations": [s["sectionDesignation"] for s in sections]}
+    return label, {}
 
 
 def _state(confidence: float) -> str:
@@ -274,15 +347,23 @@ def detail_title(text: str) -> dict[str, Any] | None:
 DRAWING_CATEGORIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("철골상세도", "steel_detail", (r"철골.*상세", r"STEEL.*DETAIL", r"CONNECTION\s+DETAIL", r"접합.*상세")),
     ("구조평면도", "structural_plan", (r"구조.*평면", r"STRUCTURAL.*PLAN", r"FRAMING\s+PLAN", r"(보|기둥|슬래브)\s*배근", r"골조.*평면")),
-    ("창호도", "door_window", (r"창호", r"WINDOW\s+(SCHEDULE|ELEVATION|DETAIL)", r"DOOR\s*(&|AND)?\s*WINDOW")),
     ("일람표", "schedule", (r"일람", r"SCHEDULE", r"리스트표", r"부재표", r"마감표")),
+    ("창호도", "door_window", (r"창호", r"WINDOW\s+(ELEVATION|DETAIL)", r"DOOR\s*(&|AND)?\s*WINDOW")),
     ("표지/목록", "cover_index", (r"표지", r"목록", r"COVER", r"DRAWING\s+(LIST|INDEX)", r"\bINDEX\b")),
     ("상세도", "detail", (r"상세", r"DETAIL", r"\bDET\b", r"확대")),
     ("단면도", "section", (r"단면", r"SECTION")),
-    ("입면도", "elevation", (r"입면", r"ELEVATION")),
+    ("입면도", "elevation", (r"입면", r"정면도", r"측면도", r"배면도", r"ELEVATION")),
     ("배치도", "site_plan", (r"배치", r"SITE\s*PLAN", r"LAYOUT\s+PLAN")),
     ("평면도", "plan", (r"평면", r"\bPLAN\b", r"FLOOR", r"\d+\s*층", r"\bB?\d+F\b")),
 )
+
+
+# Coarse sheet groups used for discipline-level filtering (and by the classification eval).
+DRAWING_CATEGORY_GROUPS = {
+    "plan": "plan", "site_plan": "plan", "elevation": "elevation", "section": "section", "detail": "detail",
+    "steel_detail": "detail", "door_window": "detail", "structural_plan": "structural", "schedule": "schedule",
+    "cover_index": "cover", "other": "other",
+}
 
 
 def drawing_category(*candidates: tuple[str, str]) -> dict[str, str]:
@@ -294,8 +375,10 @@ def drawing_category(*candidates: tuple[str, str]) -> dict[str, str]:
             for pattern in patterns:
                 if re.search(pattern, str(text), re.IGNORECASE):
                     return {"drawing_category": ko, "drawing_category_en": en,
+                            "drawing_category_group": DRAWING_CATEGORY_GROUPS[en],
                             "drawing_category_source": source, "drawing_category_evidence": str(text)[:120]}
-    return {"drawing_category": "기타", "drawing_category_en": "other", "drawing_category_source": "none",
+    return {"drawing_category": "기타", "drawing_category_en": "other", "drawing_category_group": "other",
+            "drawing_category_source": "none",
             "drawing_category_evidence": ""}
 
 
@@ -335,6 +418,7 @@ def to_cair_object(
     geometry_index_ref: str | None = None,
 ) -> CAIRObject:
     label, classification = classify(entity)
+    finer, finer_props = semantic_class(entity, label)
     object_id = stable_object_id(project_id, label, "DXF", entity.handle)
     source = SourceRef(source_file, "DXF", entity.handle, entity.layer, artifact_id)
     provenance = Provenance(source_file, entity.handle, "DXF", source_hash, parser_name, parser_version)
@@ -346,7 +430,8 @@ def to_cair_object(
         geometry_ref=geometry_index_ref or f"aec://geometry/{project_id}/{entity.handle}",
         bbox=entity.bbox,
         placement=entity.geometry.get("location", {}),
-        properties={"cad_entity_type": entity.entity_type, "layer": entity.layer, **entity.properties},
+        properties={"cad_entity_type": entity.entity_type, "layer": entity.layer, **entity.properties,
+                    **({"semantic_class": finer, **finer_props} if finer != label else {})},
         classification=classification,
         provenance=provenance,
     )

@@ -65,6 +65,9 @@ class DXFParseResult:
     extents: dict[str, float]
     unsupported_entity_types: list[str]
     warnings: list[str] = field(default_factory=list)
+    # Sheet metadata (title block / file name) and the block library with a semantic category per definition.
+    sheet: dict[str, Any] | None = None
+    block_definitions: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def counts(self) -> dict[str, int]:
@@ -89,6 +92,8 @@ class DXFParseResult:
             "extents": self.extents,
             "unsupported_entity_types": self.unsupported_entity_types,
             "warnings": self.warnings,
+            "sheet": self.sheet,
+            "block_definitions": self.block_definitions,
         }
 
 
@@ -357,14 +362,23 @@ class DXFParser:
         doc, warnings = read_dxf(source_path)
         entities: list[NormalizedCADEntity] = []
         unsupported: set[str] = set()
-        for entity in doc.modelspace():
-            entity_type = entity.dxftype()
-            if entity_type not in SUPPORTED_ENTITY_TYPES:
-                unsupported.add(entity_type)
-            try:
-                entities.append(_normalize_entity(entity))
-            except Exception as exc:  # preserve partial ingest and report the failure
-                warnings.append(f"entity {getattr(entity.dxf, 'handle', 'unknown')} normalization failed: {exc}")
+        model_entities: list[NormalizedCADEntity] = []
+        for space in doc.layouts:
+            # Model space first; paper-space entities (title blocks, sheet notes) carry their layout name.
+            for entity in space:
+                entity_type = entity.dxftype()
+                if entity_type not in SUPPORTED_ENTITY_TYPES:
+                    unsupported.add(entity_type)
+                try:
+                    normalized = _normalize_entity(entity)
+                except Exception as exc:  # preserve partial ingest and report the failure
+                    warnings.append(f"entity {getattr(entity.dxf, 'handle', 'unknown')} normalization failed: {exc}")
+                    continue
+                if space.is_modelspace:
+                    model_entities.append(normalized)
+                else:
+                    normalized.properties["layout"] = str(space.name)
+                entities.append(normalized)
 
         header_extents = {}
         for key, target in (("$EXTMIN", "min"), ("$EXTMAX", "max")):
@@ -372,7 +386,7 @@ class DXFParser:
             if value is not None:
                 point = _point(value)
                 header_extents[f"{target}_x"], header_extents[f"{target}_y"], header_extents[f"{target}_z"] = point
-        boxes = [entity.bbox for entity in entities if entity.bbox]
+        boxes = [entity.bbox for entity in model_entities if entity.bbox]
         geometric_extents = {
             "min_x": min(box["min_x"] for box in boxes),
             "min_y": min(box["min_y"] for box in boxes),
@@ -396,5 +410,62 @@ class DXFParser:
             extents=geometric_extents,
             unsupported_entity_types=sorted(unsupported),
             warnings=warnings,
+            sheet=sheet_metadata(entities, source_path.stem),
+            block_definitions=block_definitions(doc),
         )
+
+
+def block_definitions(doc: Any) -> list[dict[str, Any]]:
+    """Every non-layout block definition with its effective name, ATTDEFs and semantic category."""
+    from .classifier import classify
+
+    rows: list[dict[str, Any]] = []
+    for block in doc.blocks:
+        if block.is_any_layout:
+            continue
+        dxf_name = str(block.name)
+        name = decode_dxf_text(dxf_name)
+        flags = int(block.block.dxf.get("flags", 0) or 0)
+        is_xref = bool(flags & 4 or flags & 8)
+        effective = decode_dxf_text(block_effective_name(block.block_record) or dxf_name)
+        attdefs = [{"tag": decode_dxf_text(e.dxf.get("tag", "")), "prompt": decode_dxf_text(e.dxf.get("prompt", "")),
+                    "default": decode_dxf_text(e.dxf.get("text", ""))} for e in block if e.dxftype() == "ATTDEF"]
+        if is_xref:
+            category: str | None = "Xref"
+        elif name.upper().startswith("*D"):
+            category = "Dimension"
+        else:
+            probe = NormalizedCADEntity(name, "INSERT", "0", properties={
+                "block_name": name, "effective_name": effective,
+                "attributes": {a["tag"]: a["default"] or a["tag"] for a in attdefs}})
+            label = classify(probe)[0]
+            category = None if label == "CADEntity" else label
+        rows.append({"name": name, "effective_name": effective, "category": category, "is_xref": is_xref,
+                     "is_anonymous": name.startswith("*") or bool(flags & 1), "attribute_defs": attdefs,
+                     "entity_count": len(block)})
+    return rows
+
+
+_SHEET_NUMBER_RE = re.compile(r"^([A-Z]{1,3}-?\d{2,4}[A-Z]?)")
+
+
+def sheet_metadata(entities: list[NormalizedCADEntity], file_stem: str) -> dict[str, Any]:
+    """Sheet number/title/scale from the title-block INSERT (paper space preferred), else from the file name."""
+    from .classifier import drawing_category, title_block_fields
+
+    fields: dict[str, str] = {}
+    source = "file_name"
+    inserts = [e for e in entities if e.entity_type == "INSERT" and e.properties.get("attributes")]
+    for entity in sorted(inserts, key=lambda e: "layout" not in e.properties):
+        found = title_block_fields(entity.properties["attributes"])
+        if found:
+            fields, source = found, "title_block"
+            break
+    number = fields.get("drawingNumber") or (m.group(1) if (m := _SHEET_NUMBER_RE.match(file_stem)) else None)
+    title = fields.get("drawingTitle") or (re.sub(r"^[A-Z]{1,3}-?\d{2,4}[A-Z]?[_\s-]*", "", file_stem).split("_")[0] or None)
+    category = drawing_category(("title_block", fields.get("drawingTitle", "")), ("file_name", file_stem))
+    return {"number": number, "title": title, "scale": fields.get("scale"), "revision": fields.get("revisionLabel"),
+            "date": fields.get("date"), "category": category["drawing_category_group"],
+            "drawing_category": category["drawing_category"], "drawing_category_en": category["drawing_category_en"],
+            "source": source}
 

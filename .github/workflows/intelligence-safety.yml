@@ -29,10 +29,21 @@ jobs:
       - name: Install test runtime
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,cad,bim,shacl,semantic]" pillow
 
       - name: Compile Python sources
         run: python -m compileall -q src extensions
+
+      - name: Test CAIR ontology SHACL gate and DXF/IFC adapters
+        run: >-
+          python -m pytest -q
+          tests/test_shacl.py
+          tests/test_compliance.py
+          tests/test_cair.py
+          tests/test_dxf.py
+          tests/test_format_pipeline.py
+          tests/test_formats_graph_query.py
+          tests/test_cross_format_acceptance.py
 
       - name: Test MCP intelligence bridge
         run: python -m pytest -q tests/test_intelligence_bridge.py

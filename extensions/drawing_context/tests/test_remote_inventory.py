@@ -101,7 +101,7 @@ def test_ragflow_complete_readback_upgrades_snapshot_to_verified():
             ): {
                 "code": 0,
                 "data": {
-                    "chunks": [{"id": "chunk-1", "document_id": "doc-1"}],
+                    "chunks": [{"id": "chunk-1", "document_id": "doc-1", "content": "door"}],
                     "total": 1,
                 },
             },
@@ -142,7 +142,7 @@ def test_ragflow_extra_remote_chunk_blocks_complete_proof():
                 "data": {
                     "chunks": [
                         {"id": "chunk-1", "document_id": "doc-1"},
-                        {"id": "unknown", "document_id": "doc-1"},
+                        {"id": "unknown", "document_id": "doc-1", "content": "extra"},
                     ],
                     "total": 2,
                 },
@@ -181,7 +181,7 @@ def test_ragflow_unknown_document_blocks_complete_proof_before_claiming_success(
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
-            ): {"code": 0, "data": {"chunks": [{"id": "chunk-1"}], "total": 1}},
+            ): {"code": 0, "data": {"chunks": [{"id": "chunk-1", "content": "door"}], "total": 1}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/extra-doc/chunks?page=1&page_size=100",
@@ -276,3 +276,73 @@ def test_lightrag_malformed_document_inventory_fails_closed():
     )
     with pytest.raises(RuntimeError, match="supported document collection"):
         inspect_lightrag_remote_inventory(adapter)
+
+
+def test_ragflow_same_chunk_id_with_changed_content_blocks_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "tampered remote content",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(adapter, fixture())
+
+    assert result["status"] == "BLOCKED"
+    assert result["remote_inventory_verified"] is False
+    assert result["content_mismatch_chunk_ids"] == ["chunk-1"]
+    assert result["index_snapshot"]["assurance"] == "caller-attested-local-view"
+
+
+def test_ragflow_missing_remote_chunk_content_blocks_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [{"id": "chunk-1", "document_id": "doc-1"}],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(adapter, fixture())
+
+    assert result["status"] == "BLOCKED"
+    assert result["content_missing_chunk_ids"] == ["chunk-1"]

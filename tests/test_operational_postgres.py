@@ -68,6 +68,33 @@ def test_dxf_job_lands_in_sql_graph_and_vector_index(stack):
     assert result.hits
 
 
+def test_open_projection_does_not_block_another_document_of_the_same_project(stack):
+    import uuid
+
+    from aec_intelligence.operational.db import graph_name
+
+    db, _, _ = stack
+    project = f"P-hold-{uuid.uuid4().hex[:8]}"
+
+    def snapshot(i):
+        return {"project_id": project, "document_id": f"doc-hold-{i}", "revision": 1,
+                "objects": [{"id": f"obj-hold-{i}", "type": "Wall", "state": "OBSERVED"}], "relations": []}
+
+    try:
+        with db.connect() as slow:
+            db.project_graph(slow, snapshot(1))  # transaction still open, as during a long ingest
+            with db.connect() as fast:
+                fast.execute("SET lock_timeout = '2s'")
+                db.project_graph(fast, snapshot(2))
+                fast.commit()
+        with db.connect() as conn:
+            count = db.cypher(conn, graph_name(project), "MATCH (n:Entity) RETURN count(n)")[0]["value"]
+        assert str(count) == "2"
+    finally:
+        with db.connect() as conn:
+            conn.execute("SELECT drop_graph(%s, true)", (graph_name(project),))
+
+
 def test_concurrent_projection_into_a_new_project_graph(stack):
     import threading
     import uuid

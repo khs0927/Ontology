@@ -88,13 +88,28 @@ class Database:
         return conn.execute(sql.SQL('SELECT * FROM cypher({}, {}) AS (value agtype)').format(
             sql.Literal(graph),sql.SQL(CYPHER_TAG + query + CYPHER_TAG))).fetchall()
 
+    def ensure_graph(self, graph):
+        """Create the project graph and its Entity/Rel labels once, in a short transaction of its own.
+
+        Workers ingesting the same new project would otherwise race on create_graph and on AGE's
+        implicit label creation. The lock is held only while those catalog rows are created, so a
+        long projection in one worker never blocks (or times out) another worker of the same project.
+        """
+        with self.connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext('aec_graph:' || %s))",(graph,))
+            if not conn.execute('SELECT 1 FROM ag_catalog.ag_graph WHERE name=%s',(graph,)).fetchone():
+                conn.execute('SELECT create_graph(%s)',(graph,))
+            labels = {row['name'] for row in conn.execute(
+                'SELECT l.name FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON l.graph=g.graphid '
+                'WHERE g.name=%s',(graph,))}
+            if 'Entity' not in labels:
+                conn.execute("SELECT create_vlabel(%s,'Entity')",(graph,))
+            if 'Rel' not in labels:
+                conn.execute("SELECT create_elabel(%s,'Rel')",(graph,))
+
     def project_graph(self, conn, snapshot):
         graph = graph_name(snapshot['project_id'])
-        # Workers ingesting the same new project would otherwise race on create_graph and on the
-        # implicit Entity/Rel label creation; serialise per graph until this transaction ends.
-        conn.execute("SELECT pg_advisory_xact_lock(hashtext('aec_graph:' || %s))",(graph,))
-        if not conn.execute('SELECT 1 FROM ag_catalog.ag_graph WHERE name=%s',(graph,)).fetchone():
-            conn.execute('SELECT create_graph(%s)',(graph,))
+        self.ensure_graph(graph)
         doc = json.dumps(snapshot['document_id'])
         self.cypher(conn,graph,f'MATCH (n:Entity) WHERE n.document_id={doc} DETACH DELETE n RETURN count(n)')
         for obj in snapshot['objects']:

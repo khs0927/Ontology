@@ -15,6 +15,12 @@ from aec_intelligence.classifier import normalize_storey, storey_from, storey_to
     ("1층 및 지붕 평면도", {"1F", "RF"}),
     # Ranges, typical floors, drawing numbers, ceiling heights and steel sizes name no single storey.
     ("1~3층 평면도", set()),
+    ("1 ~ 3층 평면도", set()),
+    ("1 - 3층 평면도", set()),
+    ("1층~3층 평면도", set()),
+    ("지하1 ~ 지하3층 평면도", set()),
+    ("B1~3F 코어 평면도", set()),
+    ("지하1층~지상3층 단면도", set()),
     ("기준층 평면도", set()),
     ("A-201 단면도", set()),
     ("층고 3500", set()),

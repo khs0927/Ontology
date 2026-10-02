@@ -199,6 +199,8 @@ def test_sheets_and_their_elements_get_a_storey_from_title_or_file_name(parsed):
     walls = _by_type(parsed, "Wall")
     assert walls and all(w["storey"] == "1F" for w in walls)
     assert {s["storey"] for s in _by_type(parsed, "Space")} == {"1F"}
+    details = [o for o in _by_type(parsed, "View") if o["properties"].get("view_kind") == "detail"]
+    assert details and all(d["storey"] == "1F" for d in details)
 
 
 def test_detail_titles_create_detail_view_candidates(parsed):

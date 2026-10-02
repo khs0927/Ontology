@@ -402,6 +402,8 @@ def test_mcp_catalog_tools_with_database(seeded, tmp_path, monkeypatch):
     assert ctx["status"] == "SUCCESS" and ctx["nodes"]
     assert gateway.call_tool("aec.element_context", {"object_id": "obs_missing"})["status"] == "NOT_FOUND"
     assert gateway.call_tool("aec.find_elements", {"cursor": "%%%"})["status"] == "FAILED"
+    on_floor = gateway.call_tool("aec.find_elements", {"project_id": project, "storey": "1층"})
+    assert on_floor["status"] == "SUCCESS" and [i["evidence"]["handle"] for i in on_floor["items"]] == ["SD1"]
 
 
 # --------------------------------------------------------------------------- embeddings in Postgres

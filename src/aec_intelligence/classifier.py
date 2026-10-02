@@ -442,7 +442,11 @@ def drawing_category(*candidates: tuple[str, str]) -> dict[str, str]:
 
 # Storey tokens as Korean drawings write them: 지하1층/B1F -> B1, 3층/3F/3FL -> 3F, 지붕·옥상·옥탑 -> RF
 # (same names as spatial_relations.storey_from_sheet).
-# Ranges such as "1~3층" deliberately match nothing, so a multi-storey sheet stays unassigned.
+# Ranges such as "1~3층" or "지하1 ~ 지하3층" are removed first, so a multi-storey sheet stays unassigned.
+_STOREY_RANGE = re.compile(
+    r"(?:지하|지상|(?<![A-Z0-9])B)?\s*\d{1,3}\s*(?:층|FL|F)?\s*[~\-–～]\s*(?:지하|지상|B)?\s*\d{1,3}\s*(?:층|FL|F)?",
+    re.IGNORECASE,
+)
 _STOREY_TOKEN = re.compile(
     r"(?:지하\s*(?P<bn>\d{1,2})\s*층)"
     r"|(?:(?<![A-Z0-9])B\s*(?P<bn2>\d{1,2})\s*(?:FL|F|층)(?![A-Z0-9]))"
@@ -455,7 +459,7 @@ _STOREY_TOKEN = re.compile(
 def storey_tokens(text: str) -> set[str]:
     """Distinct normalised storeys named in ``text`` ('B1', '3F', 'RF')."""
     found = set()
-    for m in _STOREY_TOKEN.finditer(str(text or "")):
+    for m in _STOREY_TOKEN.finditer(_STOREY_RANGE.sub(" ", str(text or ""))):
         if m.group("bn") or m.group("bn2"):
             found.add(f"B{int(m.group('bn') or m.group('bn2'))}")
         elif m.group("roof"):

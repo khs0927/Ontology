@@ -509,10 +509,12 @@ def compare_provider_runs(
         snapshot.get("deployment_identity_verified") is True
         for _, _, _, _, snapshot, _ in parsed
     )
+    benchmark_execution_verified = False
     production_evidence_ready = (
         status == "SELECTED"
         and all_remote_verified
         and all_deployment_verified
+        and benchmark_execution_verified
     )
     return {
         "schema": _COMPARISON_SCHEMA,
@@ -538,11 +540,14 @@ def compare_provider_runs(
         "operator_approval_required": True,
         "remote_inventory_verified": all_remote_verified,
         "deployment_identity_verified": all_deployment_verified,
+        "benchmark_execution_verified": benchmark_execution_verified,
+        "execution_provenance_required": True,
         "note": (
             "Selection applies only to this benchmark fixture and recorded provider "
-            "profiles. Technical evidence becomes ready only when complete remote corpus "
-            "proof and deployment identity proof both exist. It never authorizes production "
-            "adoption automatically; a separate explicit operator approval artifact is "
+            "profiles. This PR verifies remote corpus state only. Benchmark execution "
+            "provenance is not yet implemented, so technical production evidence remains "
+            "not ready even if corpus and deployment proofs exist. A later execution-"
+            "provenance layer and a separate explicit operator approval artifact are both "
             "required. Canonical CAIR remains authoritative."
         ),
     }

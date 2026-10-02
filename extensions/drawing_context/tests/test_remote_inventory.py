@@ -58,6 +58,13 @@ def fixture():
     }
 
 
+def current_state():
+    return {
+        "current_revision_by_source": {"source-1": "rev-1"},
+        "current_sha256_by_source": {"source-1": "a" * 64},
+    }
+
+
 def ragflow_config():
     return RagflowHttpConfig(
         enabled=True,
@@ -113,7 +120,7 @@ def test_ragflow_complete_readback_upgrades_snapshot_to_verified():
         sender=sender,
     )
 
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
 
     assert result["status"] == "VERIFIED"
     assert result["remote_inventory_verified"] is True
@@ -155,7 +162,7 @@ def test_ragflow_extra_remote_chunk_blocks_complete_proof():
         sender=sender,
     )
 
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
 
     assert result["status"] == "BLOCKED"
     assert result["remote_inventory_verified"] is False
@@ -193,7 +200,7 @@ def test_ragflow_unknown_document_blocks_complete_proof_before_claiming_success(
         registry=ragflow_registry(),
         sender=sender,
     )
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
     assert result["status"] == "BLOCKED"
     assert result["extra_document_ids"] == ["extra-doc"]
 
@@ -309,7 +316,7 @@ def test_ragflow_same_chunk_id_with_changed_content_blocks_proof():
         sender=sender,
     )
 
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
 
     assert result["status"] == "BLOCKED"
     assert result["remote_inventory_verified"] is False
@@ -342,7 +349,7 @@ def test_ragflow_missing_remote_chunk_content_blocks_proof():
         sender=sender,
     )
 
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
 
     assert result["status"] == "BLOCKED"
     assert result["content_missing_chunk_ids"] == ["chunk-1"]
@@ -394,8 +401,94 @@ def test_ragflow_tampered_binding_provenance_blocks_proof():
         sender=sender,
     )
 
-    result = verify_ragflow_remote_inventory(adapter, fixture())
+    result = verify_ragflow_remote_inventory(adapter, fixture(), **current_state())
 
     assert result["status"] == "BLOCKED"
     assert result["remote_inventory_verified"] is False
     assert result["binding_metadata_mismatch_external_ids"] == ["ctx-1"]
+
+
+def test_ragflow_stale_canonical_source_blocks_remote_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "door",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(
+        adapter,
+        fixture(),
+        current_revision_by_source={"source-1": "rev-2"},
+        current_sha256_by_source={"source-1": "b" * 64},
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["remote_inventory_verified"] is False
+    assert result["canonical_freshness_verified"] is False
+    assert result["canonical_freshness_mismatch_source_ids"] == ["source-1"]
+
+
+def test_ragflow_missing_current_source_state_blocks_remote_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "door",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(
+        adapter,
+        fixture(),
+        current_revision_by_source={},
+        current_sha256_by_source={},
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["missing_current_source_ids"] == ["source-1"]

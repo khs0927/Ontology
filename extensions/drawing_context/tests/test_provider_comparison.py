@@ -123,6 +123,8 @@ def test_index_snapshot_requires_exact_isolated_fixture_corpus():
     )
     assert snapshot["record_count"] == 1
     assert snapshot["isolated_namespace"] is True
+    assert snapshot["assurance"] == "caller-attested-local-view"
+    assert snapshot["remote_inventory_verified"] is False
 
     with pytest.raises(ValueError, match="exactly match"):
         build_index_snapshot(
@@ -254,4 +256,6 @@ def test_comparison_never_claims_canonical_mutation():
         run("lightrag", metrics(p95=120)),
     ])
     assert report["canonical_mutation"] is False
-    assert "does not make the provider canonical" in report["note"]
+    assert report["production_adoption_eligible"] is False
+    assert report["remote_inventory_verified"] is False
+    assert "MUST NOT be used as production adoption evidence" in report["note"]

@@ -1,0 +1,12 @@
+# PostgreSQL 16 with every extension the AEC operational schema needs:
+# Apache AGE (graph), pgvector (embeddings), PostGIS (bounds), pg_trgm (bundled).
+FROM apache/age:release_PG16_1.6.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        postgresql-16-pgvector \
+        postgresql-16-postgis-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Runs once, on first start with an empty data directory.
+COPY init-extensions.sql /docker-entrypoint-initdb.d/10-init-extensions.sql

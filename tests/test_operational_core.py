@@ -122,7 +122,8 @@ def test_parsers_dxf_source(tmp_path: Path):
     # Check geometry jsonl
     geom_files = list(output_dir.glob("geometry-*.jsonl"))
     assert len(geom_files) >= 1
-    assert geom_files[0].stat().st_size > 0
+    # Paper-space layouts may legitimately be empty; model space must carry geometry.
+    assert any(f.stat().st_size > 0 for f in geom_files)
 
 
 def test_search_data_structures():

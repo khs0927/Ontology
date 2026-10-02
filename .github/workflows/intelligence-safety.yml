@@ -46,3 +46,32 @@ jobs:
         env:
           PYTHONPATH: extensions/drawing_context
         run: python -m pytest -q extensions/drawing_context/tests
+
+  operational-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start PostgreSQL (AGE + pgvector + PostGIS)
+        run: |
+          docker build -f docker/Dockerfile.db -t aec-postgres-age:ci docker
+          docker run -d --name aec-db -e POSTGRES_DB=aec -e POSTGRES_USER=aec \
+            -e POSTGRES_PASSWORD=ci -p 55432:5432 aec-postgres-age:ci
+          for i in $(seq 1 60); do docker exec aec-db pg_isready -U aec -d aec && break; sleep 1; done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,operational]"
+
+      - name: Test operational stack against PostgreSQL
+        env:
+          AEC_TEST_DATABASE_URL: postgresql://aec:ci@localhost:55432/aec
+        run: python -m pytest -q -rs tests/test_operational_postgres.py tests/test_operational_core.py

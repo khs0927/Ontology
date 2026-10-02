@@ -385,11 +385,15 @@ def drawing_category(*candidates: tuple[str, str]) -> dict[str, str]:
 TITLE_BLOCK_KEYS: dict[str, tuple[str, ...]] = {
     "drawingNumber": ("DWG_NO", "DWGNO", "DRAWING_NO", "DRAWINGNO", "DRAWING_NUMBER", "DWG_NUMBER", "SHEET_NO", "SHEETNO",
                       "DNO", "도면번호", "도번", "시트번호"),
-    "drawingTitle": ("TITLE", "DWG_TITLE", "DRAWING_TITLE", "DWG_NAME", "DRAWING_NAME", "SHEET_TITLE", "도면명", "도면제목", "제목"),
+    "drawingTitle": ("TITLE", "DWG_TITLE", "DRAWING_TITLE", "DWG_NAME", "DRAWING_NAME", "SHEET_TITLE", "NAME_OF_DRAWING", "도면명", "도면제목", "제목"),
     "scale": ("SCALE", "축척", "SCALE_A1", "SCALE_A3"),
     "date": ("DATE", "일자", "날짜", "작성일"),
     "revisionLabel": ("REV", "REVISION", "REV_NO", "개정", "개정번호"),
-    "projectName": ("PROJECT", "PROJECT_NAME", "PROJ_NAME", "공사명", "프로젝트", "사업명"),
+    "projectName": ("PROJECT", "PROJECT_NAME", "PROJ_NAME", "공사명", "프로젝트", "사업명",
+                    "PROJECT_TITLE", "작품명"),
+    "designer": ("DESIGNER", "DESIGNED_BY", "설계", "설계자", "건축사"),
+    "supervisor": ("SUPERVISOR", "감리", "감리자"),
+    "client": ("CLIENT", "OWNER", "건축주"),
 }
 _TITLE_LOOKUP = {re.sub(r"[\s._-]", "", key).upper(): field for field, keys in TITLE_BLOCK_KEYS.items() for key in keys}
 

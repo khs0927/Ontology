@@ -1,3 +1,9 @@
+# Optional real embeddings (BAAI/bge-m3, 1024 dims = aec.embeddings vector(1024)):
+#   docker compose --profile embeddings up -d
+# api/worker default AEC_EMBEDDING_URL to http://embeddings:80. Without the profile the
+# client fails fast (circuit breaker) and stores vectors under the offline hash model name;
+# search only compares vectors of the same model, so the two never mix. After enabling the
+# profile, re-embed old hash-only rows with operational.embeddings.reindex_embeddings().
 services:
   db:
     build:
@@ -31,7 +37,9 @@ services:
     environment:
       AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
-      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL:-}
+      # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
+      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
+      AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
@@ -47,7 +55,9 @@ services:
     environment:
       AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
-      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL:-}
+      # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
+      AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
+      AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
@@ -72,3 +82,24 @@ services:
     restart: unless-stopped
     profiles:
       - ocr
+
+  embeddings:
+    # Hugging Face text-embeddings-inference (CPU). Serves the OpenAI-compatible POST /v1/embeddings
+    # ({"input": [...], "model": ...} -> {"data": [{"embedding": [...], "index": i}]}) and native /embed.
+    image: ${AEC_TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9}
+    container_name: aec-embeddings
+    command:
+      - --model-id
+      - ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
+      - --port
+      - "80"
+    environment:
+      MAX_CLIENT_BATCH_SIZE: "32"
+      AUTO_TRUNCATE: "true"
+    ports:
+      - "58080:80"
+    volumes:
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}/docker/tei-cache:/data
+    restart: unless-stopped
+    profiles:
+      - embeddings

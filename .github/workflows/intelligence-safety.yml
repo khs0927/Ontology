@@ -43,6 +43,7 @@ jobs:
           tests/test_dxf.py
           tests/test_format_pipeline.py
           tests/test_formats_graph_query.py
+          tests/test_ontology_model.py
           tests/test_cross_format_acceptance.py
 
       - name: Test MCP intelligence bridge
@@ -85,4 +86,4 @@ jobs:
       - name: Test operational stack against PostgreSQL
         env:
           AEC_TEST_DATABASE_URL: postgresql://aec:ci@localhost:55432/aec
-        run: python -m pytest -q -rs tests/test_operational_postgres.py tests/test_operational_core.py
+        run: python -m pytest -q -rs tests/test_operational_postgres.py tests/test_operational_core.py tests/test_operational_census.py tests/test_operational_catalog.py

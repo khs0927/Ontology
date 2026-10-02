@@ -15,6 +15,8 @@ class Settings:
     oda_executable: str = ""
     lease_seconds: int = 300
     max_attempts: int = 3
+    dwg_converter: str = "auto"
+    libredwg_executable: str = ""
 
     @classmethod
     def from_env(cls):
@@ -25,6 +27,8 @@ class Settings:
             os.getenv("AEC_EMBEDDING_URL", ""), os.getenv("AEC_RAG_URL", ""),
             os.getenv("AEC_EMBEDDING_MODEL", "BAAI/bge-m3"), os.getenv("AEC_EMBEDDING_REVISION", ""),
             os.getenv("AEC_ODA_EXECUTABLE", ""),
+            dwg_converter=os.getenv("AEC_DWG_CONVERTER", "auto"),
+            libredwg_executable=os.getenv("AEC_LIBREDWG_EXECUTABLE", ""),
         )
 
     def allowed_source(self, value: str) -> Path:

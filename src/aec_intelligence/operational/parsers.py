@@ -405,8 +405,11 @@ def parse_source(source, doc, output, settings, source_name=None):
         relations.append(relation(parent['id'],'contains',obj['id'],source_hash=base['source_hash']))
     suffix = source.suffix.lower()
     if suffix == '.dwg':
-        from ..dwg import ODAConverter
-        converted = ODAConverter(settings.oda_executable or None).convert_to_dxf(source,output/'converted')
+        from ..dwg import select_dwg_converter
+        converter = select_dwg_converter(getattr(settings,'dwg_converter','auto'),
+                                         settings.oda_executable or None,
+                                         getattr(settings,'libredwg_executable','') or None)
+        converted = converter.convert_to_dxf(source,output/'converted')
         (output/'conversion.json').write_text(json.dumps(converted.to_dict(),ensure_ascii=False),encoding='utf-8')
         if converted.status != 'SUCCESS':
             raise ValueError('; '.join(converted.errors))

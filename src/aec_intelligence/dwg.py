@@ -66,7 +66,7 @@ class ODAConverter:
             shutil.copy2(source_path, run_source)
         command = [str(executable), str(run_source.parent), str(run_output_dir), "ACAD2018", "DXF", "0", "1"]
         try:
-            completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=300)
+            completed = subprocess.run(command, check=False, capture_output=True, text=True, errors="replace", timeout=300)
         except (OSError, subprocess.SubprocessError) as exc:
             if stage_root:
                 shutil.rmtree(stage_root, ignore_errors=True)
@@ -84,3 +84,74 @@ class ODAConverter:
             return DWGConversionResult("FAILED", str(source_path), str(output_path), self.name, ["ODA conversion did not produce a non-empty DXF"], checks)
         checks.update({"output_size": output_path.stat().st_size})
         return DWGConversionResult("SUCCESS", str(source_path), str(output_path), self.name, [], checks)
+
+
+class LibreDWGConverter:
+    """No-CAD fallback using GNU LibreDWG ``dwg2dxf``; never overwrites the source.
+
+    LibreDWG output is lower fidelity than ODA (some objects/proxies may be
+    skipped), so callers should prefer ODA when it is configured.
+    """
+
+    name = "LibreDWG dwg2dxf"
+
+    def __init__(self, executable: str | Path | None = None):
+        self.executable = Path(executable).resolve() if executable else None
+
+    def resolve_executable(self) -> str | None:
+        if self.executable:
+            return str(self.executable) if self.executable.is_file() else None
+        return shutil.which("dwg2dxf")
+
+    def convert_to_dxf(self, source: str | Path, output_dir: str | Path) -> DWGConversionResult:
+        source_path = Path(source).resolve()
+        target_dir = Path(output_dir).resolve()
+        if source_path.suffix.lower() != ".dwg":
+            return DWGConversionResult("FAILED", str(source_path), None, self.name, ["source is not a .dwg file"], {})
+        if not source_path.is_file():
+            return DWGConversionResult("FAILED", str(source_path), None, self.name, ["source file does not exist"], {})
+        executable = self.resolve_executable()
+        if not executable:
+            return DWGConversionResult("FAILED", str(source_path), None, self.name, ["dwg2dxf (LibreDWG) is not configured or installed"], {})
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_path = target_dir / f"{source_path.stem}.dxf"
+        if output_path.resolve() == source_path:
+            raise ValueError("converter output cannot overwrite source")
+        if output_path.exists():
+            output_path.unlink()
+        command = [executable, "-y", "-o", str(output_path), str(source_path)]
+        try:
+            completed = subprocess.run(command, check=False, capture_output=True, text=True, errors="replace", timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return DWGConversionResult("FAILED", str(source_path), None, self.name, [str(exc)], {"command": command})
+        checks: dict[str, Any] = {"returncode": completed.returncode, "stdout": completed.stdout[-2000:], "stderr": completed.stderr[-2000:]}
+        # dwg2dxf can return non-zero on recoverable read warnings while still
+        # writing a usable DXF; success requires a non-empty file ending in EOF.
+        success = output_path.is_file() and output_path.stat().st_size > 0 and _dxf_has_eof(output_path)
+        if not success:
+            return DWGConversionResult("FAILED", str(source_path), str(output_path), self.name, ["LibreDWG conversion did not produce a complete DXF"], checks)
+        checks["output_size"] = output_path.stat().st_size
+        return DWGConversionResult("SUCCESS", str(source_path), str(output_path), self.name, [], checks)
+
+
+def _dxf_has_eof(path: Path) -> bool:
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - 64))
+        return b"EOF" in handle.read()
+
+
+def select_dwg_converter(mode: str = "auto", oda_executable: str | Path | None = None, libredwg_executable: str | Path | None = None):
+    """Pick a DWG converter. ``auto`` prefers ODA and falls back to LibreDWG."""
+    mode = (mode or "auto").strip().lower()
+    if mode == "oda":
+        return ODAConverter(oda_executable)
+    if mode == "libredwg":
+        return LibreDWGConverter(libredwg_executable)
+    if mode != "auto":
+        raise ValueError(f"unknown DWG converter mode: {mode!r} (expected auto, oda or libredwg)")
+    if oda_executable or shutil.which("ODAFileConverter"):
+        return ODAConverter(oda_executable)
+    libre = LibreDWGConverter(libredwg_executable)
+    if libre.resolve_executable():
+        return libre
+    return ODAConverter(oda_executable)

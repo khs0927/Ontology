@@ -10,9 +10,11 @@
     "bSDD": "https://identifier.buildingsmart.org/uri/"
   },
   "files": [
+    "building/aec-building.ttl",
     "building/bot-alignment.ttl",
     "classification/bsdd-alignment.ttl",
     "core/aec-core.ttl",
+    "drawing/aec-drawing.ttl",
     "geometry/omg-fog-alignment.ttl",
     "gis/geosparql-alignment.ttl",
     "provenance/prov-o-alignment.ttl"

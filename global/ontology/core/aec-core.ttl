@@ -1,9 +1,89 @@
 @prefix aec: <https://example.org/aec#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-aec:CAIRObject a rdfs:Class .
-aec:Project a rdfs:Class ; rdfs:subClassOf aec:CAIRObject .
-aec:geometryRef a rdfs:Property .
-aec:classificationConfidence a rdfs:Property .
-aec:sourceFile a rdfs:Property .
-aec:derivedFrom a rdfs:Property .
+<https://example.org/aec/core> a owl:Ontology ;
+    rdfs:label "AEC core vocabulary"@en .
+
+aec:CAIRObject a owl:Class ;
+    rdfs:label "CAIR 객체"@ko ;
+    rdfs:comment "Any object in a Canonical AEC Intermediate Representation snapshot."@en .
+aec:Project a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "프로젝트"@ko ;
+    rdfs:comment "A design project; the root of a CAIR snapshot."@en .
+aec:IFCEntity a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "IFC 미분류 엔티티"@ko ;
+    rdfs:comment "IFC product whose type has no semantic mapping yet."@en .
+aec:CADEntity a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "CAD 미분류 엔티티"@ko ;
+    rdfs:comment "CAD entity that no rule classified; kept for evidence."@en .
+
+aec:projectId a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "프로젝트 ID"@ko ;
+    rdfs:comment "Owning project id."@en .
+aec:cairSnapshot a owl:DatatypeProperty ;
+    rdfs:domain aec:Project ;
+    rdfs:range xsd:string ;
+    rdfs:label "CAIR 스냅샷"@ko ;
+    rdfs:comment "Snapshot id the project graph came from."@en .
+aec:schemaVersion a owl:DatatypeProperty ;
+    rdfs:domain aec:Project ;
+    rdfs:range xsd:string ;
+    rdfs:label "스키마 버전"@ko ;
+    rdfs:comment "CAIR schema version."@en .
+aec:sourceHandle a owl:DatatypeProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range xsd:string ;
+    rdfs:label "원본 핸들"@ko ;
+    rdfs:comment "CAD handle or IFC GlobalId in the source file."@en .
+aec:sourceLayer a owl:DatatypeProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range xsd:string ;
+    rdfs:label "원본 레이어"@ko ;
+    rdfs:comment "Layer name in the source file."@en .
+aec:sourceFile a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "원본 파일"@ko ;
+    rdfs:comment "Source file path."@en .
+aec:sourceHash a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "원본 해시"@ko ;
+    rdfs:comment "SHA-256 of the source file."@en .
+aec:classificationConfidence a owl:DatatypeProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "분류 신뢰도"@ko ;
+    rdfs:comment "Classifier confidence in [0,1]."@en .
+aec:classificationState a owl:DatatypeProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range xsd:string ;
+    rdfs:label "분류 상태"@ko ;
+    rdfs:comment "Review state of the classification."@en .
+aec:geometryRef a owl:ObjectProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:label "형상 참조"@ko ;
+    rdfs:comment "Reference to external geometry."@en .
+aec:hasGeometry a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:geometryRef ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:label "형상"@ko ;
+    rdfs:comment "Geometry node of the object."@en .
+aec:derivedFrom a owl:ObjectProperty ;
+    rdfs:label "파생 원본"@ko ;
+    rdfs:comment "Object or artifact this was derived from."@en .
+aec:contains a owl:ObjectProperty ;
+    rdfs:label "포함"@ko ;
+    rdfs:comment "Generic containment (document contains view, aggregate contains part)."@en .
+aec:containsElement a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:contains ;
+    rdfs:range aec:CAIRObject ;
+    rdfs:label "요소 포함"@ko ;
+    rdfs:comment "Project or spatial element contains an object."@en .
+aec:relatedTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "관련"@ko ;
+    rdfs:comment "Untyped relation kept for evidence."@en .

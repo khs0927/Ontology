@@ -31,7 +31,7 @@ Google Drive is modeled as a replaceable persistent `ArtifactStore` adapter. The
 ## Quick start
 
 ```powershell
-python -m pip install -e ".[cad,bim,gis,pdf,semantic,parquet,runtime,dev]"
+python -m pip install -e ".[cad,bim,gis,pdf,semantic,shacl,parquet,runtime,dev]"
 python -m aec_intelligence.cli init .
 python -m aec_intelligence.cli ingest-dxf fixtures/simple_house.dxf --project-id AEC-2026-000001 --name "Simple House"
 python -m aec_intelligence.cli parse-3d projects/AEC-2026-000004/02_DERIVED/BIM/GLB/<file>.glb

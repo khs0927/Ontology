@@ -11,10 +11,11 @@ dependencies = []
 
 [project.optional-dependencies]
 cad = ["ezdxf>=1.3"]
-bim = ["ifcopenshell>=0.8"]
+bim = ["ifcopenshell>=0.9"]
 gis = ["shapely>=2", "pyproj>=3", "geopandas>=0.14", "rasterio>=1.3"]
 pdf = ["PyMuPDF>=1.24"]
 semantic = ["rdflib>=7", "pyoxigraph>=0.5"]
+shacl = ["rdflib>=7", "pyshacl>=0.40"]
 parquet = ["pyarrow>=15"]
 runtime = ["duckdb>=1", "neo4j>=5"]
 operational = ["psycopg[binary]>=3.1", "fastapi>=0.110", "uvicorn>=0.29", "ezdxf>=1.3", "Pillow>=10"]
@@ -29,7 +30,7 @@ aec-mcp-http = "aec_intelligence.mcp_http:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-aec_intelligence = ["resources/*.json", "operational/migrations/*.sql"]
+aec_intelligence = ["resources/*.json", "resources/*.ttl", "operational/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

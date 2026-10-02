@@ -1,0 +1,131 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# SHACL shapes for the CAIR Turtle export written by aec_intelligence.ontology.
+
+aec:ProjectShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:cairSnapshot ;
+    sh:property [
+        sh:path aec:projectId ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path aec:cairSnapshot ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:schemaVersion ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] .
+
+aec:CAIRObjectShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:classificationConfidence ;
+    sh:property [
+        sh:path aec:projectId ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path aec:sourceFile ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:classificationConfidence ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:classificationState ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( "AUTO_ACCEPT" "ACCEPT_WITH_WARNING" "REQUIRE_VALIDATION" "REQUIRES_REVIEW" ) ;
+    ] ;
+    sh:property [
+        sh:path aec:hasGeometry ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+    ] .
+
+# Building and steel vocabulary (src/aec_intelligence/ontology_model.py). These shapes only fire
+# when the relation or class is present, so exports from parsers that do not emit them still conform.
+
+aec:HasStoreyShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:hasStorey ;
+    sh:property [
+        sh:path aec:hasStorey ;
+        sh:class aec:Storey ;
+    ] .
+
+aec:HasSpaceShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:hasSpace ;
+    sh:property [
+        sh:path aec:hasSpace ;
+        sh:class aec:Space ;
+    ] .
+
+aec:OnStoreyShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:onStorey ;
+    sh:property [
+        sh:path aec:onStorey ;
+        sh:class aec:Storey ;
+        sh:maxCount 1 ;
+    ] .
+
+aec:HostedByShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:hostedBy ;
+    sh:property [
+        sh:path aec:hostedBy ;
+        sh:or ( [ sh:class aec:Wall ] [ sh:class aec:Slab ] [ sh:class aec:Roof ] ) ;
+    ] .
+
+aec:SteelMemberShape
+    a sh:NodeShape ;
+    sh:targetClass aec:SteelMember ;
+    sh:property [
+        sh:path aec:hasSection ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class aec:SteelSection ;
+    ] .
+
+aec:SteelSectionShape
+    a sh:NodeShape ;
+    sh:targetClass aec:SteelSection ;
+    sh:property [
+        sh:path aec:sectionDesignation ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:pattern "^(H|I|C|L|T|BH|PIPE|SHS|RHS|FB|PL)-?[0-9]" ;
+    ] .
+
+aec:SpaceShape
+    a sh:NodeShape ;
+    sh:targetClass aec:Space ;
+    sh:property [
+        sh:path aec:roomName ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path aec:area ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:decimal ;
+        sh:minExclusive 0 ;
+    ] .

@@ -1,0 +1,225 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/aec/building> a owl:Ontology ;
+    rdfs:label "AEC building vocabulary"@en .
+
+aec:SpatialElement a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "공간 요소"@ko ;
+    rdfs:comment "Spatial container (site, building, storey, space, zone)."@en .
+aec:Site a owl:Class ;
+    rdfs:subClassOf aec:SpatialElement ;
+    rdfs:label "대지"@ko ;
+    rdfs:comment "Site containing one or more buildings."@en .
+aec:Building a owl:Class ;
+    rdfs:subClassOf aec:SpatialElement ;
+    rdfs:label "건물"@ko ;
+    rdfs:comment "A building."@en .
+aec:Storey a owl:Class ;
+    rdfs:subClassOf aec:SpatialElement ;
+    rdfs:label "층"@ko ;
+    rdfs:comment "A building storey / level."@en .
+aec:Space a owl:Class ;
+    rdfs:subClassOf aec:SpatialElement ;
+    rdfs:label "실"@ko ;
+    rdfs:comment "A room or bounded space."@en .
+aec:Zone a owl:Class ;
+    rdfs:subClassOf aec:SpatialElement ;
+    rdfs:label "구역"@ko ;
+    rdfs:comment "A grouping of spaces (fire zone, unit, department)."@en .
+aec:Element a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "건축 부재"@ko ;
+    rdfs:comment "Physical building element."@en .
+aec:Wall a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "벽"@ko ;
+    rdfs:comment "Wall."@en .
+aec:Door a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "문"@ko ;
+    rdfs:comment "Door."@en .
+aec:Window a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "창"@ko ;
+    rdfs:comment "Window."@en .
+aec:Slab a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "슬래브"@ko ;
+    rdfs:comment "Floor or roof slab."@en .
+aec:Roof a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "지붕"@ko ;
+    rdfs:comment "Roof."@en .
+aec:Stair a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "계단"@ko ;
+    rdfs:comment "Stair."@en .
+aec:Ramp a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "경사로"@ko ;
+    rdfs:comment "Ramp."@en .
+aec:Opening a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "개구부"@ko ;
+    rdfs:comment "Opening in a host element."@en .
+aec:Furniture a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "가구"@ko ;
+    rdfs:comment "Furniture."@en .
+aec:BuildingElementProxy a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "기타 부재"@ko ;
+    rdfs:comment "Element without a more specific type."@en .
+aec:StructuralMember a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "구조 부재"@ko ;
+    rdfs:comment "Load-bearing member."@en .
+aec:Column a owl:Class ;
+    rdfs:subClassOf aec:StructuralMember ;
+    rdfs:label "기둥"@ko ;
+    rdfs:comment "Column."@en .
+aec:Beam a owl:Class ;
+    rdfs:subClassOf aec:StructuralMember ;
+    rdfs:label "보"@ko ;
+    rdfs:comment "Beam or girder."@en .
+aec:Brace a owl:Class ;
+    rdfs:subClassOf aec:StructuralMember ;
+    rdfs:label "가새"@ko ;
+    rdfs:comment "Bracing member."@en .
+aec:Foundation a owl:Class ;
+    rdfs:subClassOf aec:StructuralMember ;
+    rdfs:label "기초"@ko ;
+    rdfs:comment "Footing or foundation."@en .
+aec:SteelMember a owl:Class ;
+    rdfs:subClassOf aec:StructuralMember ;
+    rdfs:label "철골 부재"@ko ;
+    rdfs:comment "Rolled or built-up steel member; has a section designation."@en .
+aec:SteelPlate a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "강판"@ko ;
+    rdfs:comment "Steel plate (base plate, gusset, stiffener)."@en .
+aec:Bolt a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "볼트"@ko ;
+    rdfs:comment "Bolt or anchor bolt."@en .
+aec:Connection a owl:Class ;
+    rdfs:subClassOf aec:Element ;
+    rdfs:label "접합부"@ko ;
+    rdfs:comment "Joint connecting structural members."@en .
+aec:SteelSection a owl:Class ;
+    rdfs:label "형강 단면"@ko ;
+    rdfs:comment "Section profile, e.g. H-400x200x8x13."@en .
+aec:Material a owl:Class ;
+    rdfs:label "재료"@ko ;
+    rdfs:comment "Material (e.g. SS275, C24)."@en .
+aec:GISFeature a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "GIS 피처"@ko ;
+    rdfs:comment "Geospatial feature without a more specific type."@en .
+aec:Parcel a owl:Class ;
+    rdfs:subClassOf aec:GISFeature ;
+    rdfs:label "필지"@ko ;
+    rdfs:comment "Land parcel."@en .
+aec:Road a owl:Class ;
+    rdfs:subClassOf aec:GISFeature ;
+    rdfs:label "도로"@ko ;
+    rdfs:comment "Road or street."@en .
+aec:WaterBody a owl:Class ;
+    rdfs:subClassOf aec:GISFeature ;
+    rdfs:label "수체"@ko ;
+    rdfs:comment "Water body."@en .
+aec:OpenSpace a owl:Class ;
+    rdfs:subClassOf aec:GISFeature ;
+    rdfs:label "오픈스페이스"@ko ;
+    rdfs:comment "Park or open space."@en .
+aec:Vegetation a owl:Class ;
+    rdfs:subClassOf aec:GISFeature ;
+    rdfs:label "식생"@ko ;
+    rdfs:comment "Tree or vegetation."@en .
+
+aec:hasBuilding a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:contains ;
+    rdfs:domain aec:Site ;
+    rdfs:range aec:Building ;
+    rdfs:label "건물 보유"@ko ;
+    rdfs:comment "Site has building."@en .
+aec:hasStorey a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:contains ;
+    rdfs:domain aec:Building ;
+    rdfs:range aec:Storey ;
+    rdfs:label "층 보유"@ko ;
+    rdfs:comment "Building has storey."@en .
+aec:hasSpace a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:contains ;
+    rdfs:domain aec:SpatialElement ;
+    rdfs:range aec:Space ;
+    rdfs:label "실 보유"@ko ;
+    rdfs:comment "Storey or zone has space."@en .
+aec:onStorey a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range aec:Storey ;
+    rdfs:label "소속 층"@ko ;
+    rdfs:comment "Element or space is located on a storey."@en .
+aec:adjacentTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain aec:SpatialElement ;
+    rdfs:range aec:SpatialElement ;
+    rdfs:label "인접"@ko ;
+    rdfs:comment "Spaces share a boundary."@en .
+aec:bounds a owl:ObjectProperty ;
+    rdfs:domain aec:Element ;
+    rdfs:range aec:Space ;
+    rdfs:label "경계"@ko ;
+    rdfs:comment "Element bounds a space."@en .
+aec:hostedBy a owl:ObjectProperty ;
+    rdfs:domain aec:Element ;
+    rdfs:range aec:Element ;
+    rdfs:label "호스트"@ko ;
+    rdfs:comment "Opening, door or window is hosted by a wall or slab."@en .
+aec:connects a owl:ObjectProperty ;
+    rdfs:domain aec:Connection ;
+    rdfs:range aec:StructuralMember ;
+    rdfs:label "접합 대상"@ko ;
+    rdfs:comment "Connection joins members."@en .
+aec:hasSection a owl:ObjectProperty ;
+    rdfs:domain aec:SteelMember ;
+    rdfs:range aec:SteelSection ;
+    rdfs:label "단면"@ko ;
+    rdfs:comment "Member uses section profile."@en .
+aec:hasMaterial a owl:ObjectProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range aec:Material ;
+    rdfs:label "재료"@ko ;
+    rdfs:comment "Object is made of material."@en .
+aec:hasPropertySet a owl:ObjectProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:label "속성 집합"@ko ;
+    rdfs:comment "IFC property set attached to an object."@en .
+aec:sectionDesignation a owl:DatatypeProperty ;
+    rdfs:domain aec:SteelSection ;
+    rdfs:range xsd:string ;
+    rdfs:label "단면 표기"@ko ;
+    rdfs:comment "Normalized designation, e.g. H-400x200x8x13."@en .
+aec:roomName a owl:DatatypeProperty ;
+    rdfs:domain aec:Space ;
+    rdfs:range xsd:string ;
+    rdfs:label "실명"@ko ;
+    rdfs:comment "Room name as written on the drawing."@en .
+aec:roomNumber a owl:DatatypeProperty ;
+    rdfs:domain aec:Space ;
+    rdfs:range xsd:string ;
+    rdfs:label "실 번호"@ko ;
+    rdfs:comment "Room number."@en .
+aec:area a owl:DatatypeProperty ;
+    rdfs:domain aec:Space ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "면적"@ko ;
+    rdfs:comment "Area in square metres."@en .
+aec:elevation a owl:DatatypeProperty ;
+    rdfs:domain aec:Storey ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "레벨"@ko ;
+    rdfs:comment "Storey elevation in metres."@en .

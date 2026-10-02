@@ -10,6 +10,8 @@ from typing import Any
 from .repository import RepositoryLayout
 from .storage import LocalArtifactStore
 from .ontology_alignment import ONTOLOGY_FILES
+from .shacl import shacl_available, validate_turtle_file
+from .ontology_model import undeclared_terms
 
 
 @dataclass
@@ -18,9 +20,10 @@ class ComplianceReport:
     checks: dict[str, bool]
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"status": self.status, "checks": self.checks, "errors": self.errors, "warnings": self.warnings}
+        return {"status": self.status, "checks": self.checks, "errors": self.errors, "warnings": self.warnings, "notes": self.notes}
 
 
 def audit_repository(repository_root: str | Path) -> ComplianceReport:
@@ -29,6 +32,7 @@ def audit_repository(repository_root: str | Path) -> ComplianceReport:
     checks: dict[str, bool] = {}
     errors: list[str] = []
     warnings: list[str] = []
+    notes: list[str] = []
     checks["cair_schema_present"] = (root / "global" / "schemas" / "cair" / "cair-v0.1.schema.json").is_file()
     checks["cair_table_schema_present"] = (root / "global" / "schemas" / "cair" / "cair-tables-v0.1.schema.json").is_file()
     checks["ontology_alignment_present"] = all((root / "global" / "ontology" / relative).is_file() for relative in ONTOLOGY_FILES)
@@ -62,6 +66,27 @@ def audit_repository(repository_root: str | Path) -> ComplianceReport:
     if not checks["application_exchange_manifests_present"] and project_dirs:
         warnings.append("one or more projects predates application exchange manifests")
 
+    ontology_exports = [path / "04_ONTOLOGY" / "project.ttl" for path in project_dirs if (path / "04_ONTOLOGY" / "project.ttl").is_file()]
+    if ontology_exports and shacl_available():
+        nonconforming = []
+        for export in ontology_exports:
+            shacl_report = validate_turtle_file(export, max_violations=1)
+            if not shacl_report.conforms:
+                first = shacl_report.violations[0] if shacl_report.violations else {}
+                nonconforming.append(f"{export.parent.parent.name} ({shacl_report.violation_count} violations; first: {first.get('focus_node', '')} {first.get('path', '')})")
+        checks["ontology_exports_shacl_conformant"] = not nonconforming
+        errors.extend(f"CAIR ontology export fails SHACL shapes: {item}" for item in nonconforming)
+    elif ontology_exports:
+        notes.append("SHACL validation skipped: install the 'shacl' extra (pyshacl)")
+    if ontology_exports:
+        vocabulary_gaps = []
+        for export in ontology_exports:
+            gaps = undeclared_terms(export.read_text(encoding="utf-8"))
+            if gaps["classes"] or gaps["predicates"]:
+                vocabulary_gaps.append(f"{export.parent.parent.name} (classes: {', '.join(gaps['classes']) or '-'}; predicates: {', '.join(gaps['predicates']) or '-'})")
+        checks["ontology_exports_use_declared_terms"] = not vocabulary_gaps
+        warnings.extend(f"CAIR ontology export uses terms missing from ontology_model: {item}" for item in vocabulary_gaps)
+
     store = LocalArtifactStore(root)
     records = store.list()
     checks["artifact_ids_unique"] = len({record.artifact_id for record in records}) == len(records)
@@ -86,4 +111,4 @@ def audit_repository(repository_root: str | Path) -> ComplianceReport:
         errors.append("one or more classification confidence values is outside [0,1]")
     if not objects:
         warnings.append("no global objects found; run an ingest before production use")
-    return ComplianceReport("FAIL" if errors else ("PASS_WITH_WARNINGS" if warnings else "PASS"), checks, errors, warnings)
+    return ComplianceReport("FAIL" if errors else ("PASS_WITH_WARNINGS" if warnings else "PASS"), checks, errors, warnings, notes)

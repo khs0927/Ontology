@@ -1,0 +1,106 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/aec/drawing> a owl:Ontology ;
+    rdfs:label "AEC drawing vocabulary"@en .
+
+aec:Document a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "도면 파일"@ko ;
+    rdfs:comment "Source document (DWG/DXF/PDF/IFC file)."@en .
+aec:Sheet a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "시트"@ko ;
+    rdfs:comment "A drawing sheet (paper-space layout with a title block)."@en .
+aec:View a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "뷰"@ko ;
+    rdfs:comment "A layout or view inside a document."@en .
+aec:Page a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "페이지"@ko ;
+    rdfs:comment "A page of a PDF/SVG reference document."@en .
+aec:Revision a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "개정"@ko ;
+    rdfs:comment "A revision of a document."@en .
+aec:TitleBlock a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "표제란"@ko ;
+    rdfs:comment "Title block carrying drawing number, scale, date."@en .
+aec:Layer a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "레이어"@ko ;
+    rdfs:comment "CAD layer."@en .
+aec:BlockDefinition a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "블록"@ko ;
+    rdfs:comment "CAD block definition."@en .
+aec:Annotation a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "주석"@ko ;
+    rdfs:comment "Text or leader annotation."@en .
+aec:Dimension a owl:Class ;
+    rdfs:subClassOf aec:Annotation ;
+    rdfs:label "치수"@ko ;
+    rdfs:comment "Dimension annotation."@en .
+aec:Grid a owl:Class ;
+    rdfs:subClassOf aec:CAIRObject ;
+    rdfs:label "그리드"@ko ;
+    rdfs:comment "Structural grid line or axis."@en .
+
+aec:hasSheet a owl:ObjectProperty ;
+    rdfs:subPropertyOf aec:contains ;
+    rdfs:domain aec:Document ;
+    rdfs:range aec:Sheet ;
+    rdfs:label "시트 보유"@ko ;
+    rdfs:comment "Document has sheet."@en .
+aec:hasRevision a owl:ObjectProperty ;
+    rdfs:domain aec:Document ;
+    rdfs:range aec:Revision ;
+    rdfs:label "개정 보유"@ko ;
+    rdfs:comment "Document has revision."@en .
+aec:hasTitleBlock a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:domain aec:Sheet ;
+    rdfs:range aec:TitleBlock ;
+    rdfs:label "표제란"@ko ;
+    rdfs:comment "Sheet carries title block."@en .
+aec:onLayer a owl:ObjectProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range aec:Layer ;
+    rdfs:label "레이어"@ko ;
+    rdfs:comment "Object drawn on layer."@en .
+aec:depicts a owl:ObjectProperty ;
+    rdfs:domain aec:View ;
+    rdfs:range aec:CAIRObject ;
+    owl:inverseOf aec:depictedIn ;
+    rdfs:label "표현"@ko ;
+    rdfs:comment "View or sheet depicts an object."@en .
+aec:depictedIn a owl:ObjectProperty ;
+    rdfs:domain aec:CAIRObject ;
+    rdfs:range aec:View ;
+    owl:inverseOf aec:depicts ;
+    rdfs:label "표현된 뷰"@ko ;
+    rdfs:comment "Object appears in view."@en .
+aec:drawingNumber a owl:DatatypeProperty ;
+    rdfs:domain aec:TitleBlock ;
+    rdfs:range xsd:string ;
+    rdfs:label "도면 번호"@ko ;
+    rdfs:comment "Drawing number, e.g. A-101."@en .
+aec:drawingTitle a owl:DatatypeProperty ;
+    rdfs:domain aec:TitleBlock ;
+    rdfs:range xsd:string ;
+    rdfs:label "도면명"@ko ;
+    rdfs:comment "Drawing title."@en .
+aec:scale a owl:DatatypeProperty ;
+    rdfs:domain aec:TitleBlock ;
+    rdfs:range xsd:string ;
+    rdfs:label "축척"@ko ;
+    rdfs:comment "Scale, e.g. 1/100."@en .
+aec:revisionLabel a owl:DatatypeProperty ;
+    rdfs:domain aec:Revision ;
+    rdfs:range xsd:string ;
+    rdfs:label "개정 표기"@ko ;
+    rdfs:comment "Revision label, e.g. R2."@en .

@@ -8,7 +8,7 @@ from typing import Any
 
 from .config import Settings
 from .db import Database, graph_name
-from .embeddings import EmbeddingService
+from .embeddings import EmbeddingService, vector_literal
 
 
 @dataclass
@@ -116,8 +116,14 @@ class SearchRouter:
         warnings: list[str] = []
         unresolved: list[dict[str, Any]] = []
 
-        query_vec = self.embedding_service.embed_text(query)
-        vec_str = "[" + ",".join(str(v) for v in query_vec) + "]"
+        # Only vectors produced by the same model as the query vector are comparable.
+        query_model, query_vecs = self.embedding_service.embed_with_model([query])
+        vec_str = vector_literal(query_vecs[0])
+        if query_model != self.embedding_service.active_model():
+            warnings.append(
+                f"Embedding endpoint unavailable ({self.embedding_service.last_error}); "
+                f"vector stage limited to '{query_model}' vectors"
+            )
 
         with self.db.connect() as conn:
             # 1. Base SQL filter conditions
@@ -160,7 +166,7 @@ class SearchRouter:
                     COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score
                 FROM aec.objects o
                 JOIN aec.documents d ON o.document_id = d.id
-                LEFT JOIN aec.embeddings e ON o.id = e.object_id
+                LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s
                 WHERE {where_sql}
                   AND (
                     o.search_text ILIKE %s
@@ -174,7 +180,7 @@ class SearchRouter:
 
             like_pattern = f"%{query}%"
             full_params = [
-                query, vec_str, *params,
+                query, vec_str, query_model, *params,
                 like_pattern, query, vec_str,
                 query, vec_str, top_k * 2
             ]

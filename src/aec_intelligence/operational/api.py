@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import catalog
 from .config import Settings
 from .db import Database
 from .parsers import SUPPORTED
@@ -202,6 +203,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "units": obj["units"],
             "relations": [dict(r) for r in rels],
         }
+
+    # --- Element catalog: discovery endpoints for agents / power-cad-mcp -------------
+    def _catalog_call(fn, *args, **kwargs):
+        try:
+            return fn(db, *args, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/v1/catalog")
+    def get_catalog(project_id: str | None = None) -> dict[str, Any]:
+        """Table of contents: counts by kind / drawing category / layer / block with Korean aliases."""
+        return _catalog_call(catalog.element_catalog, project_id=project_id)
+
+    @app.get("/v1/elements")
+    def list_elements(
+        kind: str | None = Query(default=None, description="Kind or Korean alias, comma separated (e.g. Door,창호)"),
+        project_id: str | None = None,
+        document_id: str | None = None,
+        drawing_category: str | None = Query(default=None, description="평면도/입면도/단면도/상세도/창호도 or plan/elevation/..."),
+        layer: str | None = Query(default=None, description="Exact layer (case-insensitive) or wildcard A-WALL*"),
+        block_name: str | None = Query(default=None, description="Block (effective) name, wildcards allowed"),
+        text: str | None = Query(default=None, description="Substring of label, search text or attribute values"),
+        bbox: str | None = Query(default=None, description="min_x,min_y,max_x,max_y in drawing coordinates"),
+        state: str | None = None,
+        include_properties: bool = False,
+        limit: int = Query(default=catalog.DEFAULT_LIMIT, ge=1, le=catalog.MAX_LIMIT),
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return _catalog_call(catalog.find_elements, kind=kind, project_id=project_id, document_id=document_id,
+                             drawing_category=drawing_category, layer=layer, block_name=block_name, text=text,
+                             bbox=bbox, state=state, include_properties=include_properties, limit=limit, cursor=cursor)
+
+    @app.get("/v1/blocks")
+    def list_blocks(
+        project_id: str | None = None,
+        name_like: str | None = Query(default=None, description="Substring or wildcard pattern of the block name"),
+        limit: int = Query(default=100, ge=1, le=catalog.MAX_LIMIT),
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return _catalog_call(catalog.block_catalog, project_id=project_id, name_like=name_like, limit=limit, cursor=cursor)
+
+    @app.get("/v1/drawings")
+    def list_drawings(
+        project_id: str | None = None,
+        category: str | None = Query(default=None, description="Drawing category filter (평면도, 상세도, detail ...)"),
+        limit: int = Query(default=100, ge=1, le=catalog.MAX_LIMIT),
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return _catalog_call(catalog.drawing_index, project_id=project_id, category=category, limit=limit, cursor=cursor)
+
+    @app.get("/v1/elements/{object_id}/context")
+    def get_element_context(object_id: str, hops: int = Query(default=1, ge=1, le=2),
+                            limit: int = Query(default=200, ge=1, le=1000)) -> dict[str, Any]:
+        result = _catalog_call(catalog.element_context, object_id, hops=hops, limit=limit)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Object not found")
+        return result
 
     @app.get("/v1/reviews")
     def list_review_candidates(project_id: str | None = None) -> list[dict[str, Any]]:

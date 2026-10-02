@@ -7,17 +7,28 @@ import pytest
 from context_fabric.compare import (
     compare_provider_runs,
     fixture_digest,
+    profile_digest,
     wrap_provider_result,
 )
 
 
-def fixture():
+def fixture(provider="neutral"):
     return {
         "schema": "drawing-context-rag-benchmark/1",
-        "provider": "neutral",
+        "provider": provider,
         "canonical_mutation": False,
         "projection": [{"external_id": "ctx-1"}],
         "cases": [{"case_id": "q1", "query": "door"}],
+    }
+
+
+def profile(provider):
+    return {
+        "provider_version": "v0.27.2" if provider == "ragflow" else "v1.5.7",
+        "retrieval_mode": "hybrid" if provider == "ragflow" else "mix",
+        "embedding_model": "BAAI/bge-m3",
+        "embedding_revision": "commit-123",
+        "index_revision": "fixture-index-1",
     }
 
 
@@ -57,20 +68,38 @@ def metrics(
     }
 
 
-def run(provider, result, *, f=None):
-    return wrap_provider_result(provider, f or fixture(), result)
+def run(provider, result, *, f=None, p=None):
+    return wrap_provider_result(
+        provider,
+        f or fixture(),
+        result,
+        p or profile(provider),
+    )
 
 
-def test_fixture_digest_is_stable_for_key_order():
-    a = fixture()
+def test_fixture_digest_is_stable_for_key_order_and_ignores_provider_label_only():
+    a = fixture("ragflow")
     b = {
         "cases": a["cases"],
         "projection": a["projection"],
         "canonical_mutation": False,
-        "provider": "neutral",
+        "provider": "lightrag",
         "schema": a["schema"],
     }
     assert fixture_digest(a) == fixture_digest(b)
+
+    changed = deepcopy(b)
+    changed["cases"][0]["query"] = "window"
+    assert fixture_digest(a) != fixture_digest(changed)
+
+
+def test_profile_digest_is_stable_and_profile_is_required():
+    p = profile("ragflow")
+    assert profile_digest(p) == profile_digest(dict(reversed(list(p.items()))))
+    bad = dict(p)
+    del bad["embedding_revision"]
+    with pytest.raises(ValueError, match="embedding_revision"):
+        profile_digest(bad)
 
 
 def test_security_failed_provider_is_never_selected_even_with_better_quality():
@@ -141,6 +170,26 @@ def test_case_or_k_mismatch_is_rejected_even_if_wrapper_is_manually_tampered():
     b["metrics"]["cases"][0]["case_id"] = "q2"
     with pytest.raises(ValueError, match="ordered case ids"):
         compare_provider_runs([a, b])
+
+
+def test_tampered_provider_profile_is_rejected():
+    a = run("ragflow", metrics())
+    b = run("lightrag", metrics())
+    b["profile"]["retrieval_mode"] = "tampered"
+    with pytest.raises(ValueError, match="profile digest"):
+        compare_provider_runs([a, b])
+
+
+def test_report_preserves_provider_execution_profiles_for_reproducibility():
+    ragflow = run("ragflow", metrics())
+    light = run("lightrag", metrics(p95=120))
+    report = compare_provider_runs([ragflow, light])
+
+    rows = {row["provider"]: row for row in report["providers"]}
+    assert rows["ragflow"]["profile"]["provider_version"] == "v0.27.2"
+    assert rows["lightrag"]["profile"]["provider_version"] == "v1.5.7"
+    assert rows["ragflow"]["profile_digest"] == profile_digest(profile("ragflow"))
+    assert rows["lightrag"]["profile_digest"] == profile_digest(profile("lightrag"))
 
 
 def test_no_provider_is_selected_when_all_fail_hard_or_quality_gate():

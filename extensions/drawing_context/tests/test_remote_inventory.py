@@ -101,7 +101,7 @@ def test_ragflow_complete_readback_upgrades_snapshot_to_verified():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -140,7 +140,7 @@ def test_ragflow_extra_remote_chunk_blocks_complete_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 2}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 2, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -180,8 +180,8 @@ def test_ragflow_unknown_document_blocks_complete_proof_before_claiming_success(
                 "code": 0,
                 "data": {
                     "docs": [
-                        {"id": "doc-1", "chunk_count": 1},
-                        {"id": "extra-doc", "chunk_count": 0},
+                        {"id": "doc-1", "chunk_count": 1, "run": "3"},
+                        {"id": "extra-doc", "chunk_count": 0, "run": "3"},
                     ]
                 },
             },
@@ -291,7 +291,7 @@ def test_ragflow_same_chunk_id_with_changed_content_blocks_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -330,7 +330,7 @@ def test_ragflow_missing_remote_chunk_content_blocks_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -376,7 +376,7 @@ def test_ragflow_tampered_binding_provenance_blocks_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -414,7 +414,7 @@ def test_ragflow_stale_canonical_source_blocks_remote_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -458,7 +458,7 @@ def test_ragflow_missing_current_source_state_blocks_remote_proof():
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
-            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1}]}},
+            ): {"code": 0, "data": {"docs": [{"id": "doc-1", "chunk_count": 1, "run": "3"}]}},
             (
                 "GET",
                 "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
@@ -492,3 +492,97 @@ def test_ragflow_missing_current_source_state_blocks_remote_proof():
 
     assert result["status"] == "BLOCKED"
     assert result["missing_current_source_ids"] == ["source-1"]
+
+
+def test_ragflow_unfinished_document_blocks_complete_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "docs": [{"id": "doc-1", "chunk_count": 1, "run": "1"}]
+                },
+            },
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "door",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(
+        adapter,
+        fixture(),
+        **current_state(),
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["not_done_document_ids"] == ["doc-1"]
+    assert result["processing_completion_verified"] is False
+
+
+def test_ragflow_reported_chunk_count_mismatch_blocks_complete_proof():
+    sender = PathSender(
+        {
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "docs": [{"id": "doc-1", "chunk_count": 2, "run": "3"}]
+                },
+            },
+            (
+                "GET",
+                "/api/v1/datasets/dataset-1/documents/doc-1/chunks?page=1&page_size=100",
+            ): {
+                "code": 0,
+                "data": {
+                    "chunks": [
+                        {
+                            "id": "chunk-1",
+                            "document_id": "doc-1",
+                            "content": "door",
+                        }
+                    ],
+                    "total": 1,
+                },
+            },
+        }
+    )
+    adapter = RagflowHttpAdapter(
+        ragflow_config(),
+        registry=ragflow_registry(),
+        sender=sender,
+    )
+
+    result = verify_ragflow_remote_inventory(
+        adapter,
+        fixture(),
+        **current_state(),
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["document_chunk_count_mismatch_ids"] == ["doc-1"]
+    assert result["processing_completion_verified"] is False

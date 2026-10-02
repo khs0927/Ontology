@@ -194,6 +194,24 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
             raise ValueError(
                 "remote-readback-complete snapshot requires canonical freshness proof"
             )
+        if snapshot.get("processing_completion_verified") is not True:
+            raise ValueError(
+                "remote-readback-complete snapshot requires completed provider indexing"
+            )
+        if type(snapshot.get("deployment_identity_verified")) is not bool:
+            raise ValueError(
+                "remote-readback-complete snapshot requires deployment identity state"
+            )
+        if snapshot.get("deployment_identity_verified") is True:
+            _validate_hex_digest(
+                snapshot.get("deployment_attestation_digest"),
+                "deployment_attestation_digest",
+            )
+            method = snapshot.get("deployment_verification_method")
+            if not isinstance(method, str) or not method.strip():
+                raise ValueError(
+                    "verified deployment identity requires verification method"
+                )
         for name in (
             "remote_document_count",
             "remote_chunk_count",
@@ -487,7 +505,15 @@ def compare_provider_runs(
         snapshot.get("remote_inventory_verified") is True
         for _, _, _, _, snapshot, _ in parsed
     )
-    production_evidence_ready = status == "SELECTED" and all_remote_verified
+    all_deployment_verified = all(
+        snapshot.get("deployment_identity_verified") is True
+        for _, _, _, _, snapshot, _ in parsed
+    )
+    production_evidence_ready = (
+        status == "SELECTED"
+        and all_remote_verified
+        and all_deployment_verified
+    )
     return {
         "schema": _COMPARISON_SCHEMA,
         "fixture_digest": next(iter(fixture_hashes)),
@@ -511,11 +537,13 @@ def compare_provider_runs(
         "production_adoption_eligible": False,
         "operator_approval_required": True,
         "remote_inventory_verified": all_remote_verified,
+        "deployment_identity_verified": all_deployment_verified,
         "note": (
             "Selection applies only to this benchmark fixture and recorded provider "
-            "profiles. Complete remote proof can make the technical evidence ready, but "
-            "it never authorizes production adoption automatically. A separate explicit "
-            "operator approval artifact is required. Canonical CAIR remains authoritative."
+            "profiles. Technical evidence becomes ready only when complete remote corpus "
+            "proof and deployment identity proof both exist. It never authorizes production "
+            "adoption automatically; a separate explicit operator approval artifact is "
+            "required. Canonical CAIR remains authoritative."
         ),
     }
 

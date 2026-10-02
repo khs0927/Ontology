@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from context_fabric.compare import (
+    build_index_snapshot,
     compare_provider_runs,
     fixture_digest,
     profile_digest,
@@ -69,11 +70,21 @@ def metrics(
 
 
 def run(provider, result, *, f=None, p=None):
+    benchmark_fixture = f or fixture()
+    index_snapshot = build_index_snapshot(
+        benchmark_fixture,
+        provider_index_id=f"{provider}-isolated-index",
+        indexed_external_ids=[
+            row["external_id"] for row in benchmark_fixture["projection"]
+        ],
+        isolated_namespace=True,
+    )
     return wrap_provider_result(
         provider,
-        f or fixture(),
+        benchmark_fixture,
         result,
         p or profile(provider),
+        index_snapshot,
     )
 
 
@@ -100,6 +111,33 @@ def test_profile_digest_is_stable_and_profile_is_required():
     del bad["embedding_revision"]
     with pytest.raises(ValueError, match="embedding_revision"):
         profile_digest(bad)
+
+
+def test_index_snapshot_requires_exact_isolated_fixture_corpus():
+    f = fixture()
+    snapshot = build_index_snapshot(
+        f,
+        provider_index_id="dataset-1",
+        indexed_external_ids=["ctx-1"],
+        isolated_namespace=True,
+    )
+    assert snapshot["record_count"] == 1
+    assert snapshot["isolated_namespace"] is True
+
+    with pytest.raises(ValueError, match="exactly match"):
+        build_index_snapshot(
+            f,
+            provider_index_id="dataset-1",
+            indexed_external_ids=[],
+            isolated_namespace=True,
+        )
+    with pytest.raises(ValueError, match="isolated namespace"):
+        build_index_snapshot(
+            f,
+            provider_index_id="dataset-1",
+            indexed_external_ids=["ctx-1"],
+            isolated_namespace=False,
+        )
 
 
 def test_security_failed_provider_is_never_selected_even_with_better_quality():
@@ -180,7 +218,15 @@ def test_tampered_provider_profile_is_rejected():
         compare_provider_runs([a, b])
 
 
-def test_report_preserves_provider_execution_profiles_for_reproducibility():
+def test_different_indexed_corpus_identity_is_rejected():
+    a = run("ragflow", metrics())
+    b = run("lightrag", metrics())
+    b["index_snapshot"]["external_ids_digest"] = "c" * 64
+    with pytest.raises(ValueError, match="exact same projection corpus"):
+        compare_provider_runs([a, b])
+
+
+def test_report_preserves_profiles_and_index_identity_for_reproducibility():
     ragflow = run("ragflow", metrics())
     light = run("lightrag", metrics(p95=120))
     report = compare_provider_runs([ragflow, light])
@@ -189,7 +235,8 @@ def test_report_preserves_provider_execution_profiles_for_reproducibility():
     assert rows["ragflow"]["profile"]["provider_version"] == "v0.27.2"
     assert rows["lightrag"]["profile"]["provider_version"] == "v1.5.7"
     assert rows["ragflow"]["profile_digest"] == profile_digest(profile("ragflow"))
-    assert rows["lightrag"]["profile_digest"] == profile_digest(profile("lightrag"))
+    assert rows["ragflow"]["index_snapshot"]["record_count"] == 1
+    assert report["index_corpus"]["record_count"] == 1
 
 
 def test_no_provider_is_selected_when_all_fail_hard_or_quality_gate():

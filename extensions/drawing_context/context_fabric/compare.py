@@ -82,6 +82,18 @@ def projection_digest(fixture: dict[str, Any]) -> str:
     return _stable_digest(fixture["projection"])
 
 
+def projection_content_digest(fixture: dict[str, Any]) -> str:
+    """Digest exact benchmark content keyed by stable external_id."""
+    _validate_fixture(fixture)
+    rows: list[dict[str, str]] = []
+    for row in fixture["projection"]:
+        content = row.get("content")
+        if not isinstance(content, str):
+            raise ValueError("benchmark projection rows require string content")
+        rows.append({"external_id": row["external_id"], "content": content})
+    return _stable_digest(sorted(rows, key=lambda row: row["external_id"]))
+
+
 def _fixture_external_ids(fixture: dict[str, Any]) -> tuple[str, ...]:
     _validate_fixture(fixture)
     return tuple(sorted(row["external_id"] for row in fixture["projection"]))
@@ -183,6 +195,7 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
             "remote_chunk_count",
             "remote_document_ids_digest",
             "remote_chunk_ids_digest",
+            "remote_projection_content_digest",
         ):
             if name.endswith("_count"):
                 value = snapshot.get(name)
@@ -206,6 +219,11 @@ def _validate_snapshot_against_fixture(
         raise ValueError("provider index projection digest does not match fixture")
     if snapshot["external_ids_digest"] != external_ids_digest(expected_ids):
         raise ValueError("provider index external ID digest does not match fixture")
+    if (
+        snapshot.get("assurance") == "remote-readback-complete"
+        and snapshot["remote_projection_content_digest"] != projection_content_digest(fixture)
+    ):
+        raise ValueError("provider remote content digest does not match fixture projection")
 
 
 def wrap_provider_result(
@@ -371,6 +389,7 @@ def compare_provider_runs(
             snapshot["record_count"],
             snapshot["projection_digest"],
             snapshot["external_ids_digest"],
+            snapshot.get("remote_projection_content_digest"),
         )
         for _, _, _, _, snapshot, _ in parsed
     }
@@ -470,6 +489,7 @@ def compare_provider_runs(
             "record_count": index_identity[0],
             "projection_digest": index_identity[1],
             "external_ids_digest": index_identity[2],
+            "remote_projection_content_digest": index_identity[3],
         },
         "k": next(iter(ks)),
         "case_ids": list(next(iter(case_sets))),

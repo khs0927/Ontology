@@ -16,7 +16,7 @@ import json
 from typing import Any
 from urllib.parse import quote
 
-from .compare import build_index_snapshot
+from .compare import build_index_snapshot, projection_content_digest
 from .lightrag_http import LightRagHttpAdapter
 from .ragflow_http import RagflowHttpAdapter
 
@@ -47,6 +47,14 @@ def _fixture_external_ids(fixture: dict[str, Any]) -> tuple[str, ...]:
     if len(values) != len(set(values)):
         raise ValueError("benchmark projection external_id values must be unique")
     return tuple(sorted(values))
+
+
+def _remote_chunk_content(row: dict[str, Any]) -> str | None:
+    for key in ("content", "content_with_weight", "text"):
+        value = row.get(key)
+        if isinstance(value, str):
+            return value
+    return None
 
 
 def _ragflow_data(response: dict[str, Any]) -> dict[str, Any]:
@@ -165,18 +173,19 @@ def verify_ragflow_remote_inventory(
     )
     remote_docs = sorted(row["id"] for row in documents)
 
-    remote_chunks: list[str] = []
+    remote_chunk_rows: dict[str, dict[str, Any]] = {}
     for document_id in remote_docs:
-        remote_chunks.extend(
-            (row.get("id") or row.get("chunk_id"))
-            for row in _list_ragflow_chunks(
-                adapter,
-                document_id,
-                page_size=page_size,
-                max_pages=max_pages,
-            )
-        )
-    remote_chunks = sorted(remote_chunks)
+        for row in _list_ragflow_chunks(
+            adapter,
+            document_id,
+            page_size=page_size,
+            max_pages=max_pages,
+        ):
+            chunk_id = row.get("id") or row.get("chunk_id")
+            if chunk_id in remote_chunk_rows:
+                raise RuntimeError("RAGFlow remote inventory duplicated a chunk across documents")
+            remote_chunk_rows[chunk_id] = row
+    remote_chunks = sorted(remote_chunk_rows)
 
     missing_docs = sorted(set(expected_docs) - set(remote_docs))
     extra_docs = sorted(set(remote_docs) - set(expected_docs))
@@ -184,12 +193,55 @@ def verify_ragflow_remote_inventory(
     extra_chunks = sorted(set(remote_chunks) - set(expected_chunks))
     binding_fixture_mismatch = expected_external != fixture_external
 
+    fixture_content_by_external: dict[str, str] = {}
+    for row in fixture["projection"]:
+        content = row.get("content")
+        if not isinstance(content, str):
+            raise ValueError("benchmark projection rows require string content")
+        fixture_content_by_external[row["external_id"]] = content
+
+    binding_by_chunk = {row["chunk_id"]: row for row in bindings}
+    content_mismatch_chunk_ids: list[str] = []
+    content_missing_chunk_ids: list[str] = []
+    verified_remote_content: list[dict[str, str]] = []
+    for chunk_id in sorted(set(expected_chunks) & set(remote_chunks)):
+        binding = binding_by_chunk[chunk_id]
+        external_id = binding["external_id"]
+        expected_content = fixture_content_by_external.get(external_id)
+        remote_content = _remote_chunk_content(remote_chunk_rows[chunk_id])
+        if expected_content is None:
+            content_mismatch_chunk_ids.append(chunk_id)
+            continue
+        if remote_content is None:
+            content_missing_chunk_ids.append(chunk_id)
+            continue
+        if remote_content != expected_content:
+            content_mismatch_chunk_ids.append(chunk_id)
+            continue
+        verified_remote_content.append(
+            {"external_id": external_id, "content": remote_content}
+        )
+
+    remote_projection_content_digest = (
+        _digest(sorted(verified_remote_content, key=lambda row: row["external_id"]))
+        if len(verified_remote_content) == len(expected_chunks)
+        else None
+    )
+    expected_projection_content_digest = projection_content_digest(fixture)
+    content_digest_mismatch = (
+        remote_projection_content_digest is not None
+        and remote_projection_content_digest != expected_projection_content_digest
+    )
+
     exact = not (
         missing_docs
         or extra_docs
         or missing_chunks
         or extra_chunks
         or binding_fixture_mismatch
+        or content_mismatch_chunk_ids
+        or content_missing_chunk_ids
+        or content_digest_mismatch
     )
 
     base_snapshot = build_index_snapshot(
@@ -208,6 +260,7 @@ def verify_ragflow_remote_inventory(
                 "remote_chunk_count": len(remote_chunks),
                 "remote_document_ids_digest": _digest(remote_docs),
                 "remote_chunk_ids_digest": _digest(remote_chunks),
+                "remote_projection_content_digest": remote_projection_content_digest,
             }
         )
 
@@ -225,6 +278,11 @@ def verify_ragflow_remote_inventory(
         "missing_chunk_ids": missing_chunks,
         "extra_chunk_ids": extra_chunks,
         "binding_fixture_mismatch": binding_fixture_mismatch,
+        "content_mismatch_chunk_ids": content_mismatch_chunk_ids,
+        "content_missing_chunk_ids": content_missing_chunk_ids,
+        "expected_projection_content_digest": expected_projection_content_digest,
+        "remote_projection_content_digest": remote_projection_content_digest,
+        "content_digest_mismatch": content_digest_mismatch,
         "index_snapshot": snapshot,
         "remote_inventory_verified": exact,
         "read_only": True,

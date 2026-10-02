@@ -50,6 +50,14 @@ provider benchmark 결과는 다음 wrapper로 저장한다.
     "index_revision": "<index-revision>"
   },
   "profile_digest": "<sha256>",
+  "index_snapshot": {
+    "schema": "drawing-context-rag-index-snapshot/1",
+    "provider_index_id": "<isolated-index-id>",
+    "isolated_namespace": true,
+    "record_count": 100,
+    "projection_digest": "<sha256>",
+    "external_ids_digest": "<sha256>"
+  },
   "metrics": {"schema": "drawing-context-rag-benchmark-result/1"},
   "canonical_mutation": false
 }
@@ -74,3 +82,31 @@ python scripts/compare_rag_results.py \
 
 fixture가 같아도 provider version, retrieval mode, embedding/index revision이 기록되지 않았다면
 재현 가능한 비교로 간주하지 않는다.
+
+
+## indexed corpus snapshot
+
+같은 fixture를 선언하는 것만으로는 충분하지 않다. 각 provider가 실제로 색인한 corpus가
+fixture projection과 정확히 일치해야 한다.
+
+각 run은 다음 index snapshot을 필수로 기록한다.
+
+```json
+{
+  "schema": "drawing-context-rag-index-snapshot/1",
+  "provider_index_id": "<isolated-dataset-or-workspace-id>",
+  "isolated_namespace": true,
+  "record_count": 100,
+  "projection_digest": "<sha256>",
+  "external_ids_digest": "<sha256>"
+}
+```
+
+비교기는 다음을 강제한다.
+
+- isolated namespace가 아니면 거부
+- fixture projection의 external ID 누락/추가/중복이 있으면 snapshot 생성 단계에서 거부
+- provider끼리 record count / projection digest / external ID digest가 다르면 비교 거부
+- provider별 실제 dataset/workspace ID는 달라도 되지만, 그 안의 benchmark corpus identity는 같아야 함
+
+즉 기존 운영 인덱스에 benchmark 문서를 섞어서 결과를 비교하는 방식은 허용하지 않는다.

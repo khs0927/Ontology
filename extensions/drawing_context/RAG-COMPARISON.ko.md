@@ -128,8 +128,13 @@ caller-attested snapshot만 있는 경우 보고서는 다음과 같다.
 
 provider별 complete read-only remote inventory proof가 추가되면 snapshot assurance는
 `remote-readback-complete`가 될 수 있다. 비교 대상 **모든 provider**가 이 proof를
-통과하고 promotion gate를 PASS한 뒤 단일 `SELECTED` provider가 있을 때만
-`production_adoption_eligible=true`가 된다.
+통과하고 promotion gate를 PASS한 뒤 단일 `SELECTED` provider가 있으면
+`production_evidence_ready=true`까지 올라간다.
+
+하지만 benchmark 코드가 production 채택을 자동 승인하지는 않는다.
+`production_adoption_eligible`는 계속 `false`이고,
+`operator_approval_required=true`가 유지된다. 실제 production 전환은 별도 승인
+artifact/운영 절차가 필요하다.
 
 현재 구현 기준으로 RAGFlow는 dataset document/chunk 전체 readback이 가능하다.
 LightRAG v1.5.7 공개 REST API는 document와 `chunks_count`는 제공하지만 complete

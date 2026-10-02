@@ -462,7 +462,7 @@ def compare_provider_runs(
         snapshot.get("remote_inventory_verified") is True
         for _, _, _, _, snapshot, _ in parsed
     )
-    production_eligible = status == "SELECTED" and all_remote_verified
+    production_evidence_ready = status == "SELECTED" and all_remote_verified
     return {
         "schema": _COMPARISON_SCHEMA,
         "fixture_digest": next(iter(fixture_hashes)),
@@ -480,13 +480,15 @@ def compare_provider_runs(
         "deciding_metric": deciding_metric,
         "tied_providers": tied,
         "canonical_mutation": False,
-        "production_adoption_eligible": production_eligible,
+        "production_evidence_ready": production_evidence_ready,
+        "production_adoption_eligible": False,
+        "operator_approval_required": True,
         "remote_inventory_verified": all_remote_verified,
         "note": (
             "Selection applies only to this benchmark fixture and recorded provider "
-            "profiles. Production adoption is eligible only when every compared provider "
-            "has a complete read-only remote inventory proof and the comparison selects "
-            "one provider. Canonical CAIR remains authoritative."
+            "profiles. Complete remote proof can make the technical evidence ready, but "
+            "it never authorizes production adoption automatically. A separate explicit "
+            "operator approval artifact is required. Canonical CAIR remains authoritative."
         ),
     }
 

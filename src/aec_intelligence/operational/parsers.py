@@ -55,6 +55,7 @@ class _DXFSemantics:
         self.block_layer_counts = Counter()
         self.metrics = Counter()
         self._relation_ids = set()
+        self.storeys = {}
 
     # ----------------------------------------------------------------- helpers
     def relate(self, subject, predicate, target, state='OBSERVED', **evidence):
@@ -152,6 +153,9 @@ class _DXFSemantics:
         self.is_paper = not sheet.is_modelspace
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
         self.layout_objects = []
+        # (observation, normalized entity) pairs in source order, for the geometric relation pass.
+        self.layout_pairs = []
+        self._normalized = None
 
     def count_entity(self, entity):
         self.layer_counts[decode_dxf_text(entity.dxf.get('layer', '0'))] += 1
@@ -168,6 +172,8 @@ class _DXFSemantics:
         kind = obj['type']
         obj['properties']['layer'] = normalized.layer
         self.layout_objects.append(obj)
+        self.layout_pairs.append((obj, normalized))
+        self._normalized = normalized
         if normalized.entity_type == 'INSERT':
             self.metrics['inserts'] += 1
             raw = str(props.get('block_name', ''))
@@ -245,6 +251,8 @@ class _DXFSemantics:
                                                            'state': 'ACCEPT_WITH_WARNING'}})
         self.add(space, self.view)
         self.layout_objects.append(space)
+        if self._normalized is not None:
+            self.layout_pairs.append((space, self._normalized))
         self.relate(space['id'], 'derivedFrom', source['id'], method=method)
         return space
 
@@ -257,6 +265,8 @@ class _DXFSemantics:
                                       'layer': source['properties'].get('layer', '')})
         self.add(sec, self.view)
         self.layout_objects.append(sec)
+        if normalized is not None:
+            self.layout_pairs.append((sec, normalized))
         self.relate(sec['id'], 'derivedFrom', source['id'], method='section_designation_text')
         if normalized is not None and source['bbox']:
             point = normalized.geometry.get('location') or [source['bbox']['min_x'], source['bbox']['min_y']]
@@ -300,6 +310,91 @@ class _DXFSemantics:
             # Elements inherit their sheet's category; detail-view candidates keep their own.
             obj['properties'].setdefault('drawing_category', category)
         self._link_sections()
+        self._spatial(fields, texts)
+
+    def _spatial(self, fields, texts):
+        """Run the shared geometric pass (spatial_relations) over this layout and map its output back.
+
+        Same objects and predicates as the CAIR pipeline: hostedBy, containsElement, hasSpace/onStorey,
+        depicts, plus the Sheet and Storey objects. Edges are AI_INFERRED with the measured confidence.
+        """
+        if not self.layout_pairs:
+            return
+        from ..cair import CAIRObject, SourceRef
+        from ..classifier import refine_with_context
+        from ..spatial_relations import build_spatial_relations
+
+        project = 'operational'
+        adapters, entities, by_id = [], [], {}
+        for obj, normalized in self.layout_pairs:
+            c = obj['properties'].get('classification') or {}
+            classification = None
+            if c.get('label'):
+                classification = Classification(c['label'], float(c.get('confidence') or 0.0), c.get('method', ''),
+                                                tuple(c.get('evidence') or ()), c.get('state', 'REQUIRES_REVIEW'))
+            adapter = CAIRObject(obj['id'], project, obj['type'],
+                                 SourceRef(self.name, 'DXF', obj['evidence'].get('handle'), normalized.layer),
+                                 properties=dict(obj['properties']), classification=classification)
+            adapters.append(adapter)
+            entities.append(normalized)
+            by_id[obj['id']] = obj
+        refine_with_context(adapters, entities)
+        view = self.view
+        title = (fields.get('drawingTitle') or view['properties'].get('drawing_category_evidence')
+                 or (texts[0] if texts else '') or self.name)
+        sheet = {'number': fields.get('drawingNumber') or f"{self.name}:{self.sheet.name}", 'title': title,
+                 'scale': fields.get('scale'), 'revision': fields.get('revisionLabel'),
+                 'category': view['properties'].get('drawing_category_group'),
+                 'drawing_category': view['properties'].get('drawing_category'),
+                 'source': 'title_block' if fields.get('drawingTitle') else view['properties'].get('drawing_category_source')}
+        derived, relations = build_spatial_relations(adapters, entities, project, sheet,
+                                                     self.result.get('units'), require_title_block=False)
+        for adapter in adapters:
+            obj = by_id[adapter.id]
+            if adapter.properties.get('fills') and adapter.type != obj['type']:
+                # A hatch filling an element outline takes that element's class.
+                obj['type'] = adapter.type
+                obj['properties']['fills'] = adapter.properties['fills']
+                obj['properties']['classification'] = adapter.classification.to_dict()
+                obj['search_text'] += f" {adapter.type} {ALIASES.get(adapter.type, '')}"
+            for key in ('area', 'sectionDesignation'):
+                if key in adapter.properties and key not in obj['properties']:
+                    obj['properties'][key] = adapter.properties[key]
+        mapped = {}
+        for item in derived:
+            if item.type == 'Storey':
+                name = item.properties.get('storeyName', '')
+                obj = self.storeys.get(name)
+                if obj is None:
+                    obj = observation(self.doc, f'storey:{name}', 'Storey', f'{self.name} {name} {ALIASES["Storey"]}',
+                                      {**self.base, 'layout': self.sheet.name, 'method': 'storey_from_sheet_title'},
+                                      state='AI_INFERRED', properties={**item.properties,
+                                                                       'classification': item.classification.to_dict()})
+                    obj['storey'] = name
+                    self.storeys[name] = obj
+                    self.add(obj)
+                    self.metrics['storeys'] += 1
+            else:
+                obj = observation(self.doc, f'sheet:{self.sheet.name}', item.type,
+                                  f"{self.name} {self.sheet.name} {item.properties.get('drawingTitle', '')} {item.properties.get('drawingNumber', '')}",
+                                  {**self.base, 'layout': self.sheet.name, 'method': 'sheet_metadata'},
+                                  state='AI_INFERRED', properties={**item.properties,
+                                                                   'classification': item.classification.to_dict()})
+                self.add(obj, view)
+                self.relate(view['id'], 'depicts', obj['id'], 'AI_INFERRED', confidence=1.0, method='layout_is_sheet')
+                self.metrics['sheets'] += 1
+            mapped[item.id] = obj['id']
+        for rel in relations:
+            if rel.subject == f'aec://project/{project}' or rel.predicate == 'hasTitleBlock':
+                continue  # the Document 'contains' them, and the View already has its title block
+            subject, target = mapped.get(rel.subject, rel.subject), mapped.get(rel.object, rel.object)
+            self.relate(subject, rel.predicate, target, 'AI_INFERRED', confidence=rel.confidence,
+                        **{k: v for k, v in rel.provenance.items() if k != 'confidence'})
+            self.metrics['spatial_relations'] += 1
+            if rel.predicate == 'onStorey' and subject in by_id:
+                storey = next((o for o in self.storeys.values() if o['id'] == target), None)
+                if storey is not None:
+                    by_id[subject]['storey'] = storey['storey']
 
     def _link_sections(self):
         """Relate a section text to a Beam/Column only when exactly one member's bbox (plus a margin) holds it."""

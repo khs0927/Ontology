@@ -128,6 +128,8 @@ def build_index_snapshot(
         "record_count": len(observed),
         "projection_digest": projection_digest(fixture),
         "external_ids_digest": external_ids_digest(observed),
+        "assurance": "caller-attested-local-view",
+        "remote_inventory_verified": False,
     }
 
 
@@ -168,6 +170,10 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("provider index record_count must be a non-negative integer")
     _validate_hex_digest(snapshot.get("projection_digest"), "projection_digest")
     _validate_hex_digest(snapshot.get("external_ids_digest"), "external_ids_digest")
+    if snapshot.get("assurance") != "caller-attested-local-view":
+        raise ValueError("provider index snapshot assurance must be caller-attested-local-view")
+    if snapshot.get("remote_inventory_verified") is not False:
+        raise ValueError("offline comparison snapshot cannot claim remote inventory verification")
 
 
 def _validate_snapshot_against_fixture(
@@ -451,10 +457,14 @@ def compare_provider_runs(
         "deciding_metric": deciding_metric,
         "tied_providers": tied,
         "canonical_mutation": False,
+        "production_adoption_eligible": False,
+        "remote_inventory_verified": False,
         "note": (
-            "Selection applies only to this benchmark fixture, exact indexed "
-            "projection corpus and recorded provider profiles. It does not "
-            "make the provider canonical."
+            "Selection is an offline comparison over caller-attested index snapshots. "
+            "It applies only to this benchmark fixture and recorded provider profiles, "
+            "does not make the provider canonical, and MUST NOT be used as production "
+            "adoption evidence until each provider's complete remote inventory is "
+            "independently enumerated and matched."
         ),
     }
 

@@ -1,0 +1,59 @@
+@prefix aec: <https://example.org/aec#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# SHACL shapes for the CAIR Turtle export written by aec_intelligence.ontology.
+
+aec:ProjectShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:cairSnapshot ;
+    sh:property [
+        sh:path aec:projectId ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path aec:cairSnapshot ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:schemaVersion ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] .
+
+aec:CAIRObjectShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf aec:classificationConfidence ;
+    sh:property [
+        sh:path aec:projectId ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path aec:sourceFile ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:classificationConfidence ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:minInclusive 0 ;
+        sh:maxInclusive 1 ;
+    ] ;
+    sh:property [
+        sh:path aec:classificationState ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( "AUTO_ACCEPT" "ACCEPT_WITH_WARNING" "REQUIRE_VALIDATION" "REQUIRES_REVIEW" ) ;
+    ] ;
+    sh:property [
+        sh:path aec:hasGeometry ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+    ] .

@@ -177,14 +177,27 @@ class SourceMappingTests(unittest.TestCase):
         self.assertEqual(handoff["source_sha256"], src.sha256)
         self.assertEqual(handoff["file_sha256"], src.sha256)
         self.assertEqual(handoff["resolved_sha256"], src.sha256)
+        self.assertEqual(handoff["resolver_id"], "drive-cache-resolver/1")
         self.assertEqual(handoff["resolver_issuer"], "sion-source-resolver")
         self.assertEqual(handoff["trust_domain"], "khs0927/aec-source-cache")
         self.assertEqual(handoff["signature_key_id"], "resolver-key-2026-10")
+        self.assertTrue(handoff["receipt_signature_verified"])
+        self.assertTrue(handoff["immutable_cache"])
         self.assertEqual(handoff["object_locator"]["handle"], "2F3")
         self.assertEqual(len(handoff["handoff_digest"]), 64)
         self.assertFalse(handoff["execution_authorized"])
         self.assertFalse(handoff["may_execute_mutation"])
         self.assertTrue(handoff["requires_executor_authorization"])
+
+    def test_executor_handoff_digest_covers_resolver_trust_attestation(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+        changed = dict(report)
+        changed["resolver"] = dict(report["resolver"])
+        changed["resolver"]["signature_key_id"] = "resolver-key-rotated"
+        changed_handoff = build_executor_handoff(changed)
+        self.assertNotEqual(handoff["handoff_digest"], changed_handoff["handoff_digest"])
 
     def test_executor_handoff_hashes_are_part_of_handoff_digest(self):
         src = source()

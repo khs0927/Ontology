@@ -161,3 +161,16 @@ The handoff is **not** an execution token. It always carries
 `execution_authorized=false` and `may_execute_mutation=false`. A CAD executor must still
 bind the same live document, revalidate state inside its single-writer transaction, obtain
 its own approval, and emit an execution receipt that references the handoff digest.
+
+
+## SketchArch derived drawing exports
+
+`adapt_sketcharch_export_manifest()` consumes
+`sketcharch-drawing-export/1` only when the manifest declares
+`ontology_ingest_mode=DERIVED_ARTIFACT` and `canonical_mutation=false`.
+DXF/SVG/IFC/PDF artifacts must retain their source model fingerprint, source
+revision, SHA-256, view kind, units and relative export path.
+
+The resulting `drawing-context-derived-artifacts/1` bundle is evidence only:
+records carry `canonical=false` and `execution_authorized=false`. Derived
+SketchUp exports therefore cannot silently become the canonical original source.

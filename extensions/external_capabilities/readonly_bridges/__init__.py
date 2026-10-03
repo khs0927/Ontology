@@ -16,6 +16,15 @@ def _text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def _number(value):
+    if type(value) not in (float, int) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _decode(content):
     if not isinstance(content, bytes):
         raise ValueError('Require original UTF-8 JSON bytes')
@@ -65,7 +74,7 @@ def ingest_section_catalog(content, *, expected_identity, source_files):
     """
     data = _decode(content)
     identity = _identity(data, expected_identity)
-    if identity['provider_id'] != 'hs-steel-cad' or data.get('schema_version') != 1:
+    if identity['provider_id'] != 'hs-steel-cad' or type(data.get('schema_version')) is not int or data.get('schema_version') != 1:
         raise ValueError('Unsupported catalog')
     if data.get('units') != {'dimensions': 'mm', 'unit_weight': 'kg/m', 'paint_area': 'm2/m'}:
         raise ValueError('Explicit supported units required')
@@ -80,6 +89,8 @@ def ingest_section_catalog(content, *, expected_identity, source_files):
         if not isinstance(row, dict):
             raise ValueError('Invalid row')
         path, line = row.get('source_path'), row.get('line_number')
+        if not _text(path):
+            raise ValueError('Invalid source path')
         original = source_files.get(path)
         if not isinstance(original, bytes) or not original:
             raise ValueError('Missing nonempty source bytes')
@@ -92,7 +103,7 @@ def ingest_section_catalog(content, *, expected_identity, source_files):
             raise ValueError('Incomplete parsed row')
         dims = row.get('dimensions')
         numbers = dims + [row.get('unit_weight'), row.get('paint_area')] if isinstance(dims, list) else []
-        if len(numbers) != 8 or any(type(v) not in (float, int) or not math.isfinite(v) or v < 0 for v in numbers):
+        if len(numbers) != 8 or any(not _number(v) for v in numbers):
             raise ValueError('Invalid numeric fields')
         if not any(dims) or row['unit_weight'] <= 0 or type(row.get('aci_color')) is not int or not 0 <= row['aci_color'] <= 256:
             raise ValueError('Invalid dimensions, weight or color')
@@ -107,7 +118,7 @@ def ingest_readonly_probe(content, *, expected_identity):
     """Normalize an untrusted probe response; fixtures never verify a native host."""
     data = _decode(content)
     identity = _identity(data, expected_identity)
-    if identity['provider_id'] not in PROVIDERS or data.get('schema_version') != 1:
+    if identity['provider_id'] not in PROVIDERS or type(data.get('schema_version')) is not int or data.get('schema_version') != 1:
         raise ValueError('Unsupported readonly provider')
     if data.get('mutation_count') != 0 or type(data.get('mutation_count')) is not int:
         raise ValueError('Require explicit zero mutation count')

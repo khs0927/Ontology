@@ -68,6 +68,10 @@ def resolution(src: SourceRevision):
         resolved_path=r"C:\PowerCad\cache\A-201.dwg",
         resolved_sha256=src.sha256,
         resolver_id="drive-cache-resolver/1",
+        resolver_issuer="sion-source-resolver",
+        trust_domain="khs0927/aec-source-cache",
+        signature_key_id="resolver-key-2026-10",
+        receipt_signature_verified=True,
         cache_entry_id="cache-entry-A201-rev7",
         resolver_receipt_sha256="e" * 64,
         immutable_cache=True,
@@ -186,9 +190,32 @@ class SourceMappingTests(unittest.TestCase):
                 resolved_path=r"C:\\PowerCad\\cache\\A-201.dwg",
                 resolved_sha256=src.sha256,
                 resolver_id="drive-cache-resolver/1",
+                resolver_issuer="sion-source-resolver",
+                trust_domain="khs0927/aec-source-cache",
+                signature_key_id="resolver-key-2026-10",
+                receipt_signature_verified=True,
                 cache_entry_id="cache-entry-A201-rev7",
                 resolver_receipt_sha256="e" * 64,
                 immutable_cache=False,
+                resolved_at="2026-10-03T09:00:00+00:00",
+            )
+
+    def test_unsigned_resolver_receipt_is_rejected(self):
+        src = source()
+        with self.assertRaises(ValueError):
+            TrustedSourceResolution(
+                source_id=src.source_id,
+                source_byte_revision_id=source_byte_revision_id(src),
+                resolved_path=r"C:\\PowerCad\\cache\\A-201.dwg",
+                resolved_sha256=src.sha256,
+                resolver_id="drive-cache-resolver/1",
+                resolver_issuer="sion-source-resolver",
+                trust_domain="khs0927/aec-source-cache",
+                signature_key_id="resolver-key-2026-10",
+                receipt_signature_verified=False,
+                cache_entry_id="cache-entry-A201-rev7",
+                resolver_receipt_sha256="e" * 64,
+                immutable_cache=True,
                 resolved_at="2026-10-03T09:00:00+00:00",
             )
 

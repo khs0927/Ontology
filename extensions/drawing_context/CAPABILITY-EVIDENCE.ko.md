@@ -153,8 +153,9 @@ receipt hash만 존재하는 것은 신뢰 근거가 아니다. hash는 검증�
 
 A clean `SOURCE_BOUND` report with `VERIFIED_FOR_REVIEW` may be transformed into
 `aec-executor-handoff/1` by `build_executor_handoff()`. The handoff carries the live
-`document_id`, source/revision identifiers, resolver receipt hash, object locator,
-fingerprint and a deterministic `handoff_digest`.
+`document_id`, source/revision identifiers, `resolver_id`, issuer/trust-domain/key-id,
+`receipt_signature_verified=true`, `immutable_cache=true`, resolver/file hashes,
+object locator, fingerprint and a deterministic `handoff_digest`.
 
 The handoff is **not** an execution token. It always carries
 `execution_authorized=false` and `may_execute_mutation=false`. A CAD executor must still

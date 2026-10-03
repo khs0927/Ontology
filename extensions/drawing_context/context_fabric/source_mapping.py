@@ -25,6 +25,16 @@ def normalize_native_path(value: str) -> str:
     return ntpath.normcase(ntpath.normpath(value.strip()))
 
 
+def require_sha256(value: Any, name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(ch not in "0123456789abcdef" for ch in value)
+    ):
+        raise ValueError(f"{name} must be lowercase SHA-256")
+    return value
+
+
 @dataclass(frozen=True)
 class TrustedSourceResolution:
     source_id: str
@@ -59,8 +69,8 @@ class TrustedSourceResolution:
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"TrustedSourceResolution.{name} must be non-empty")
         normalize_native_path(self.resolved_path)
-        if len(self.resolver_receipt_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in self.resolver_receipt_sha256):
-            raise ValueError("resolver_receipt_sha256 must be lowercase SHA-256")
+        require_sha256(self.resolved_sha256, "resolved_sha256")
+        require_sha256(self.resolver_receipt_sha256, "resolver_receipt_sha256")
         if self.receipt_signature_verified is not True:
             raise ValueError("source resolution requires a verified resolver receipt signature")
         if self.immutable_cache is not True:
@@ -108,6 +118,8 @@ class LiveObjectObservation:
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"LiveObjectObservation.{name} must be non-empty")
         normalize_native_path(self.native_path)
+        require_sha256(self.file_sha256, "file_sha256")
+        require_sha256(self.sha256, "sha256")
 
     def guard_input(self) -> dict[str, Any]:
         return {
@@ -186,6 +198,25 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
     if not all(isinstance(value, dict) for value in (live_document, live_object, resolver)):
         raise ValueError("source binding report is missing live/resolver evidence")
 
+    if resolver.get("receipt_signature_verified") is not True:
+        raise ValueError("executor handoff requires a verified resolver receipt signature")
+    if resolver.get("immutable_cache") is not True:
+        raise ValueError("executor handoff requires an immutable resolver cache entry")
+    for name in ("resolver_issuer", "trust_domain", "signature_key_id"):
+        if not isinstance(resolver.get(name), str) or not resolver[name].strip():
+            raise ValueError(f"executor handoff requires resolver trust metadata: {name}")
+
+    source_sha = require_sha256(binding_report.get("source_sha256"), "source_sha256")
+    file_sha = require_sha256(live_document.get("file_sha256"), "file_sha256")
+    resolved_sha = require_sha256(resolver.get("resolved_sha256"), "resolved_sha256")
+    receipt_sha = require_sha256(
+        resolver.get("resolver_receipt_sha256"), "resolver_receipt_sha256"
+    )
+    if not (source_sha == file_sha == resolved_sha):
+        raise ValueError(
+            "executor handoff requires source, resolved and live file SHA-256 to match"
+        )
+
     payload = {
         "schema": "aec-executor-handoff/1",
         "binding_state": "SOURCE_BOUND",
@@ -195,15 +226,19 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
         "source_id": binding_report.get("source_id"),
         "source_byte_revision_id": binding_report.get("source_byte_revision_id"),
         "parser_revision_id": binding_report.get("parser_revision_id"),
-        "source_sha256": binding_report.get("source_sha256"),
-        "file_sha256": live_document.get("file_sha256"),
+        "source_sha256": source_sha,
+        "file_sha256": file_sha,
         "candidate_id": binding_report.get("candidate_id"),
         "native_path": live_document.get("native_path"),
         "state_digest": live_document.get("state_digest"),
         "modification_generation": live_document.get("modification_generation"),
         "units": live_document.get("units"),
-        "resolver_receipt_sha256": resolver.get("resolver_receipt_sha256"),
+        "resolver_receipt_sha256": receipt_sha,
+        "resolved_sha256": resolved_sha,
         "cache_entry_id": resolver.get("cache_entry_id"),
+        "resolver_issuer": resolver.get("resolver_issuer"),
+        "trust_domain": resolver.get("trust_domain"),
+        "signature_key_id": resolver.get("signature_key_id"),
         "object_locator": {
             "layout": live_object.get("layout"),
             "handle": live_object.get("handle"),
@@ -228,7 +263,11 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
         "modification_generation",
         "units",
         "resolver_receipt_sha256",
+        "resolved_sha256",
         "cache_entry_id",
+        "resolver_issuer",
+        "trust_domain",
+        "signature_key_id",
     )
     if any(not isinstance(payload[name], str) or not payload[name] for name in required):
         raise ValueError("source binding report is incomplete for executor handoff")

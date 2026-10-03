@@ -54,3 +54,26 @@ def test_reject_invalid_evidence():
         evidence_record(**{**sample(), 'fixture_sha256': 'bad'})
     with pytest.raises(ValueError):
         evidence_record(**{**sample(), 'run_timestamp':'2026-10-03T00:00:00'})
+
+
+def test_snapshot_hash_binds_exact_bytes_without_promoting_declarations():
+    import hashlib
+    from capability_registry import import_snapshot
+    raw = b'{"providers": [{"repo": "owner/repo", "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "score": 5}]}'
+    args = dict(source_repo='owner/registry', source_commit='c'*40, source_path='providers.json')
+    row = import_snapshot(raw, **args)[0]
+    changed = import_snapshot(raw + b'\n', **args)[0]
+    assert row['provenance']['source_file_sha256'] == hashlib.sha256(raw).hexdigest()
+    assert row['provenance'] != changed['provenance']
+    assert row['evidence'] == [] and row['execution_allowed'] is False
+    assert 'score' not in row
+
+
+@pytest.mark.parametrize('raw', [b'[]', b'{}', b'{"providers": "bad"}',
+    b'{"providers": [null]}', b'{"providers": [], "providers": []}',
+    b'{"providers": [{"repo": "a", "repo": "b"}]}', b'\xff', b'{', '{}'])
+def test_snapshot_rejects_ambiguous_or_invalid_input(raw):
+    from capability_registry import import_snapshot
+    with pytest.raises(ValueError):
+        import_snapshot(raw, source_repo='owner/registry', source_commit='c'*40,
+                        source_path='providers.json')

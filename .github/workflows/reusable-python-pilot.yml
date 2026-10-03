@@ -1,0 +1,13 @@
+name: Reusable Python pilot
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pilot:
+    uses: ./.github/workflows/python-headless.yml
+    with:
+      python-version: '3.12'
+      validation-script: scripts/ci/external_capabilities.py

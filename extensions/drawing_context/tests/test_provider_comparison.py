@@ -9,6 +9,7 @@ from context_fabric.compare import (
     compare_provider_runs,
     fixture_digest,
     profile_digest,
+    projection_content_digest,
     wrap_provider_result,
 )
 
@@ -18,7 +19,7 @@ def fixture(provider="neutral"):
         "schema": "drawing-context-rag-benchmark/1",
         "provider": provider,
         "canonical_mutation": False,
-        "projection": [{"external_id": "ctx-1"}],
+        "projection": [{"external_id": "ctx-1", "content": "door"}],
         "cases": [{"case_id": "q1", "query": "door"}],
     }
 
@@ -153,6 +154,8 @@ def test_security_failed_provider_is_never_selected_even_with_better_quality():
     assert report["selected_provider"] == "ragflow"
     light_row = next(row for row in report["providers"] if row["provider"] == "lightrag")
     assert light_row["promotion_status"] == "BLOCKED"
+    assert report["all_promotion_gates_pass"] is False
+    assert report["production_evidence_ready"] is False
 
 
 def test_recall_then_mrr_then_latency_are_used_without_weighted_score():
@@ -256,6 +259,66 @@ def test_comparison_never_claims_canonical_mutation():
         run("lightrag", metrics(p95=120)),
     ])
     assert report["canonical_mutation"] is False
+    assert report["all_promotion_gates_pass"] is True
+    assert report["production_evidence_ready"] is False
     assert report["production_adoption_eligible"] is False
+    assert report["operator_approval_required"] is True
     assert report["remote_inventory_verified"] is False
-    assert "MUST NOT be used as production adoption evidence" in report["note"]
+    assert "execution-provenance layer" in report["note"]
+
+
+def test_remote_corpus_proof_without_deployment_identity_is_not_evidence_ready():
+    ragflow = run("ragflow", metrics())
+    light = run("lightrag", metrics(recall=0.9, mrr=0.8, p95=120))
+    for item in (ragflow, light):
+        snapshot = item["index_snapshot"]
+        snapshot["assurance"] = "remote-readback-complete"
+        snapshot["remote_inventory_verified"] = True
+        snapshot["remote_document_count"] = 1
+        snapshot["remote_chunk_count"] = 1
+        snapshot["remote_document_ids_digest"] = "a" * 64
+        snapshot["remote_chunk_ids_digest"] = "b" * 64
+        snapshot["remote_projection_content_digest"] = projection_content_digest(fixture())
+        snapshot["canonical_freshness_verified"] = True
+        snapshot["current_source_state_digest"] = "c" * 64
+        snapshot["processing_completion_verified"] = True
+        snapshot["deployment_identity_verified"] = False
+
+    report = compare_provider_runs([ragflow, light])
+    assert report["status"] == "SELECTED"
+    assert report["selected_provider"] == "ragflow"
+    assert report["remote_inventory_verified"] is True
+    assert report["production_evidence_ready"] is False
+    assert report["deployment_identity_verified"] is False
+    assert report["production_adoption_eligible"] is False
+    assert report["operator_approval_required"] is True
+
+
+def test_remote_and_deployment_proofs_still_wait_for_execution_provenance():
+    ragflow = run("ragflow", metrics())
+    light = run("lightrag", metrics(recall=0.9, mrr=0.8, p95=120))
+    for item in (ragflow, light):
+        snapshot = item["index_snapshot"]
+        snapshot["assurance"] = "remote-readback-complete"
+        snapshot["remote_inventory_verified"] = True
+        snapshot["remote_document_count"] = 1
+        snapshot["remote_chunk_count"] = 1
+        snapshot["remote_document_ids_digest"] = "a" * 64
+        snapshot["remote_chunk_ids_digest"] = "b" * 64
+        snapshot["remote_projection_content_digest"] = projection_content_digest(fixture())
+        snapshot["canonical_freshness_verified"] = True
+        snapshot["current_source_state_digest"] = "c" * 64
+        snapshot["processing_completion_verified"] = True
+        snapshot["deployment_identity_verified"] = True
+        snapshot["deployment_attestation_digest"] = "d" * 64
+        snapshot["deployment_verification_method"] = "operator-verified-local-container"
+
+    report = compare_provider_runs([ragflow, light])
+    assert report["status"] == "SELECTED"
+    assert report["remote_inventory_verified"] is True
+    assert report["deployment_identity_verified"] is True
+    assert report["benchmark_execution_verified"] is False
+    assert report["execution_provenance_required"] is True
+    assert report["production_evidence_ready"] is False
+    assert report["production_adoption_eligible"] is False
+    assert report["operator_approval_required"] is True

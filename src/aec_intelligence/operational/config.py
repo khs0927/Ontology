@@ -32,6 +32,8 @@ class Settings:
     max_attempts: int = 3
     dwg_converter: str = "auto"
     libredwg_executable: str = ""
+    # Long SQL/AGE projection statements for large drawings need more headroom than interactive queries.
+    ingest_statement_timeout_seconds: int = 300
 
     @classmethod
     def from_env(cls):
@@ -44,6 +46,7 @@ class Settings:
             os.getenv("AEC_ODA_EXECUTABLE", ""),
             dwg_converter=os.getenv("AEC_DWG_CONVERTER", "auto"),
             libredwg_executable=os.getenv("AEC_LIBREDWG_EXECUTABLE", ""),
+            ingest_statement_timeout_seconds=int(os.getenv("AEC_INGEST_STATEMENT_TIMEOUT_SECONDS", "300")),
         )
 
     def allowed_source(self, value: str) -> Path:

@@ -26,6 +26,21 @@ ROOM_TAG_RE = re.compile(r'ROOM|RM_?NAME|NAME|실명|실이름|공간', re.IGNOR
 ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.IGNORECASE)
 AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
+AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*\)?$', re.IGNORECASE)
+STOREY_RE = re.compile(r'(?<![A-Za-z0-9])(?:(?P<b>지하|B)\s*(?P<bn>\d{1,2})\s*(?:층|F)?|(?P<n>\d{1,3})\s*(?:층|F)(?![A-Za-z])|(?P<roof>옥탑|지붕|(?:PH|ROOF)(?![A-Za-z])))',
+                       re.IGNORECASE)
+
+
+def storey_from_text(text):
+    """'1층 평면도' -> '1층', '지하2층' / 'B2F' -> 'B2', '옥탑층' -> '옥탑'; None when no storey is named."""
+    found = STOREY_RE.search(str(text or ''))
+    if not found:
+        return None
+    if found['b']:
+        return f"B{int(found['bn'])}"
+    if found['n']:
+        return f"{int(found['n'])}층"
+    return '옥탑' if found['roof'] in ('옥탑', '지붕') else found['roof'].upper()
 
 
 def _finite_bbox(bounds):
@@ -151,6 +166,7 @@ class _DXFSemantics:
         self.sheet, self.view = sheet, view
         self.is_paper = not sheet.is_modelspace
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
+        self.area_texts, self.text_spaces = [], []
         self.layout_objects = []
 
     def count_entity(self, entity):
@@ -194,7 +210,10 @@ class _DXFSemantics:
             obj['properties'].update(mark)
         finer, room = semantic_class(normalized, kind)
         if finer == 'Space':
-            self._space(obj, room, evidence, 'text')
+            space = self._space(obj, room, evidence, 'text')
+            self.text_spaces.append((space, normalized))
+        elif area := AREA_TEXT_RE.match(text):
+            self.area_texts.append((float(area.group(1).replace(',', '.')), obj, normalized))
         for i, section in enumerate(steel_sections(text)):
             self._section(obj, section, evidence, i, normalized)
         detail = detail_title(text)
@@ -295,11 +314,37 @@ class _DXFSemantics:
             view['properties']['title_block'] = title['id']
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
         view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
+        storey = next(filter(None, (storey_from_text(value) for _, value in candidates)), None)
+        if storey and view['properties']['drawing_category'] == '평면도':
+            view['properties']['storey'] = storey
         category = view['properties']['drawing_category']
         for obj in self.layout_objects:
             # Elements inherit their sheet's category; detail-view candidates keep their own.
             obj['properties'].setdefault('drawing_category', category)
+            if storey and obj['type'] == 'Space':
+                obj['properties'].setdefault('storey', storey)
+        self._link_area_texts()
         self._link_sections()
+
+    def _link_area_texts(self):
+        """Give a room-name Space the area written as a separate text right next to it (nearest, mutual, within 3 heights)."""
+        def loc(normalized):
+            point = normalized.geometry.get('location') or [0.0, 0.0]
+            return float(point[0]), float(point[1])
+        rooms = [(s, n) for s, n in self.text_spaces if 'area' not in s['properties']]
+        if not rooms or not self.area_texts:
+            return
+        def nearest(point, pool, key):
+            best = min(pool, key=lambda item: math.dist(point, loc(key(item))))
+            return best, math.dist(point, loc(key(best)))
+        for space, normalized in rooms:
+            limit = 3.0 * max(float(normalized.properties.get('height') or 0.0), 1e-6)
+            (value, area_obj, area_norm), distance = nearest(loc(normalized), self.area_texts, lambda item: item[2])
+            back, _ = nearest(loc(area_norm), self.text_spaces, lambda item: item[1])
+            if distance <= limit and back[0] is space:
+                space['properties']['area'] = value
+                space['properties']['area_source'] = area_obj['id']
+                self.relate(space['id'], 'derivedFrom', area_obj['id'], method='adjacent_area_text', distance=round(distance, 3))
 
     def _link_sections(self):
         """Relate a section text to a Beam/Column only when exactly one member's bbox (plus a margin) holds it."""

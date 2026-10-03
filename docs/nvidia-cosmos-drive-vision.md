@@ -1,54 +1,47 @@
-# NVIDIA Cosmos + Google Drive visual validation
+# NVIDIA Cosmos Reason2 + Google Drive visual validation
 
-This extension adds a **read-only visual evidence lane** to Drive-backed ingestion.
+This extension adds a **read-only visual evidence lane** to Drive-backed ingestion using `nvidia/cosmos-reason2-2b`.
 
-## Configuration
+## Official Reason2 2B runtime
+
+NVIDIA's current Reason2 NIM documentation serves the 2B model from an OpenAI-compatible endpoint such as:
+
+```text
+http://127.0.0.1:8000/v1/chat/completions
+```
+
+The NIM container is pulled/launched with `NGC_API_KEY`. Local inference itself does not need a bearer token. For a remote private NIM that is protected by bearer auth, set `NVIDIA_API_KEY`.
 
 ```bash
-export NVIDIA_API_KEY="nvapi-..."
-export NVIDIA_COSMOS_ENDPOINT="https://integrate.api.nvidia.com/v1/chat/completions"
-# NVIDIA Build hosted: omit MODEL to auto-select public Reason2 8B.
-# Self-hosted Reason2 2B NIM:
+export NVIDIA_COSMOS_ENDPOINT="http://127.0.0.1:8000/v1/chat/completions"
 export NVIDIA_COSMOS_MODEL="nvidia/cosmos-reason2-2b"
+# Optional for an authenticated remote NIM:
+export NVIDIA_API_KEY="..."
 pip install -e ".[vision]"
 ```
 
-The model ID and endpoint are configurable so the same contract can target the NVIDIA hosted catalog or a self-hosted NIM.
-
-## Automatic Drive-first flow
-
-When `aec.ingest_file` runs with an injected Google Drive client, visual validation is enabled by default after authoritative parsing and before derived artifacts are synchronized back to Drive.
+## Drive-first flow
 
 ```text
-Drive source
-  -> immutable source upload
+Google Drive source
+  -> immutable source upload/materialization
   -> authoritative parser (DXF/IFC/PDF/...)
-  -> local visual representation
+  -> visual representation
        PDF: first-page raster
        SVG: rasterized
-       DXF/DWG: generated preview SVG -> PNG
-  -> NVIDIA Cosmos Reason
+       DXF/DWG: generated parser preview -> PNG
+  -> Cosmos Reason2 2B
   -> VisualObservation / CandidateObject JSON
+  -> parser/CAIR cross-check
   -> 11_VALIDATION/visual/
   -> Drive sync
 ```
 
-The visual report is **non-canonical**. It does not rewrite CAIR classifications. Its objects and relations are candidates that can later be reconciled against parser geometry, handles, provenance and CAIR relations.
+The visual report is **non-canonical**. It never rewrites CAIR classifications. Objects and relations are candidates that can be reconciled against parser geometry, handles, provenance, and CAIR relations.
 
 ## Tools
 
 - `aec.visual_inspect_artifact`: inspect one local visual artifact or an ingested CAD/PDF source.
-- `aec.visual_validate_drive_project`: materialize visual files from one Drive project and create bounded visual-observation reports.
+- `aec.visual_validate_drive_project`: materialize a bounded set of visual Drive artifacts and create advisory reports.
 
-The Drive batch defaults to a bounded number of files to control API egress/cost.
-
-## Data governance
-
-Only the rasterized page/view used for inspection is sent to the configured NVIDIA endpoint. Original DWG/DXF bytes and canonical CAIR are not sent by this visual lane. Model `<think>` traces are discarded; only final structured evidence is persisted.
-
-## Hosted vs 2B NIM
-
-When the endpoint is NVIDIA Build (`integrate.api.nvidia.com`), the adapter
-defaults to the publicly hosted `nvidia/cosmos-reason2-8b`. A self-hosted NIM
-defaults to `nvidia/cosmos-reason2-2b`. Set `NVIDIA_COSMOS_MODEL` explicitly
-to override either choice.
+The Drive batch is bounded by `limit` to control inference traffic. Original DWG/DXF bytes are not sent through the visual lane; only the rasterized review view is sent. Model `<think>` traces are discarded and only final structured evidence is persisted.

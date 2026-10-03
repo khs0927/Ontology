@@ -21,7 +21,7 @@ def test_catalog_never_inherits_authority():
     assert 'command' not in result['rows'][0]
     assert result['payload_sha256']==hashlib.sha256(json.dumps(data).encode()).hexdigest()
 
-@pytest.mark.parametrize('change', [lambda d:d.update(rows=[]), lambda d:d.update(errors=['bad row']), lambda d:d['units'].update(dimensions='inch'), lambda d:d['identity'].update(upstream_commit='b'*40), lambda d:d['rows'][0].update(source_file_sha256='0'*64), lambda d:d['rows'][0].update(parse_success=False), lambda d:d['rows'][0].update(unit_weight=0), lambda d:d['rows'][0].update(dimensions=[True,1,1,1,1,1]), lambda d:d['rows'].append(deepcopy(d['rows'][0]))])
+@pytest.mark.parametrize('change', [lambda d:d.update(schema_version=True), lambda d:d['rows'][0].update(source_path=[]), lambda d:d['rows'][0].update(unit_weight=10**1000), lambda d:d.update(rows=[]), lambda d:d.update(errors=['bad row']), lambda d:d['units'].update(dimensions='inch'), lambda d:d['identity'].update(upstream_commit='b'*40), lambda d:d['rows'][0].update(source_file_sha256='0'*64), lambda d:d['rows'][0].update(parse_success=False), lambda d:d['rows'][0].update(unit_weight=0), lambda d:d['rows'][0].update(dimensions=[True,1,1,1,1,1]), lambda d:d['rows'].append(deepcopy(d['rows'][0]))])
 def test_reject_invalid_catalog(change):
     data=catalog(); change(data)
     with pytest.raises(ValueError): ingest(data)

@@ -317,6 +317,15 @@ ROOM_NAMES: tuple[str, ...] = (
     "공부방", "아이방", "알파룸", "팬트리", "세탁실", "보일러실", "실외기실", "대피공간", "기도실", "탕비실", "휴게실",
     "강의실", "교실", "도서실", "열람실", "체력단련실", "다목적실", "옥탑", "테라스", "데크", "전실", "부속실", "통신실",
     "준비실", "락커룸", "탈의실", "수유실", "매점", "점포", "근린생활시설", "판매시설", "학원", "의원", "약국", "식품창고",
+    # hospital / clinic
+    "진료실", "처치실", "상담실", "원무과", "병실", "수술실", "회복실", "간호사실", "간호스테이션", "검사실", "주사실",
+    "접수", "대기실", "물리치료실", "방사선실", "x-ray실", "약제실", "격리실", "소독실", "린넨실", "오물실",
+    "중환자실", "분만실", "신생아실", "응급실", "원장실", "의국",
+    # factory / lab / services
+    "시험실", "실험실", "작업장", "공장", "포장실", "자재창고", "제품창고", "물탱크실", "저수조", "정화조", "쓰레기집하장",
+    "분리수거장", "주차장", "자전거보관소", "경비초소", "옥상정원", "정원", "중정", "선큰", "램프", "주출입구", "부출입구",
+    "eps", "tps", "ps", "aps", "dps", "ev", "e/v", "덤웨이터", "승강기", "비상용승강기", "피난용승강기", "계단", "특별피난계단",
+    "샤프트", "덕트샤프트",
     # English
     "living room", "living", "bedroom", "master bedroom", "kitchen", "dining", "dining room", "toilet", "restroom",
     "bathroom", "bath", "entrance", "foyer", "balcony", "utility", "dress room", "dressroom", "stair hall", "corridor",
@@ -333,19 +342,70 @@ _ROOM_RE = re.compile(
     re.IGNORECASE)
 
 
+# Korean room-name suffix rules for names not in the vocabulary ("…실", "…소", "…장", "…과", "대기…").
+_ROOM_SUFFIX_RE = re.compile(r"^(?:[가-힣]{1,8}(?:실|소|장|과|홀|로비|데크|정원)|대기[가-힣]{0,6})$")
+_NOT_ROOM_WORDS = frozenset((
+    "결과", "효과", "사과", "통과", "초과", "부과", "경과", "장소", "주소", "요소", "감소", "축소", "최소", "연소", "산소",
+    "탄소", "수소", "명소", "도장", "연장", "포장", "확장", "인장", "현장", "입장", "시장", "사장", "주장", "긴장", "막장",
+    "손실", "과실", "진실", "확실", "충실", "부실", "외장", "내장", "사업장", "공사장", "건축과", "설계과", "대기",
+))
+# Words that mark a text as a drawing/view caption or a note rather than a room label.
+_NOT_ROOM_PARTS = re.compile(r"평면|입면|단면|상세|배치|도면|계획|SCALE|축척|마감|공사|설치|참조|주기|범례|NOTE|일람|표$",
+                             re.IGNORECASE)
+_SHAFT_RE = re.compile(r"^(?:EPS|TPS|APS|DPS|PS|EV|E/V|ELEV)(?:\s*-?\s*\d{1,2})?$", re.IGNORECASE)
+
+
+def _normalize_room_label(line: str) -> str:
+    """'복 도' -> '복도'; '계단실#1' / '진료실-1' / '4인실 -1' -> name without the trailing numbering."""
+    line = re.sub(r"\s+", " ", line).strip()
+    tokens = line.split(" ")
+    if len(tokens) >= 2 and all(len(t) == 1 and "가" <= t <= "힣" for t in tokens):
+        line = "".join(tokens)
+    if not _SHAFT_RE.match(line):
+        line = re.sub(r"\s*(?:#\s*\d{1,3}|-\s*\d{1,3}|\(\s*\d{1,3}\s*\))$", "", line)
+    return line.strip()
+
+
+def _room_name_rule(name: str) -> bool:
+    """Room by shaft / suffix / compound rule when the vocabulary misses. Narrow on purpose: short Hangul words only."""
+    if _NOT_ROOM_PARTS.search(name) or len(name) > 24:
+        return False
+    if _SHAFT_RE.match(name):
+        return True
+    parts = [p for p in re.split(r"\s*(?:/|,|·|&|\s및\s)\s*", name) if p]
+    if not parts or len(parts) > 3:
+        return False
+    for part in parts:
+        words = part.split(" ")
+        if len(words) > 2 or not all(re.fullmatch(r"\d?[가-힣]{1,10}", w) for w in words):
+            return False
+    last = re.sub(r"^\d", "", parts[-1].split(" ")[-1])
+    if len(last) < 2 or last in _NOT_ROOM_WORDS:
+        return False
+    return bool(_ROOM_RE.match(last) or _ROOM_SUFFIX_RE.match(last))
+
+
 def room_from_text(text: str) -> dict[str, Any] | None:
-    """Parse '거실', '101호 회의실', '침실1 12.5㎡', 'LIVING ROOM (24.3 m2)' into room properties."""
+    """Parse '거실', '101호 회의실', '침실1 12.5㎡', 'LIVING ROOM (24.3 m2)', '복 도', '계단실#1',
+    '급수/소방 물탱크실', '기계실 및 관리실' into room properties."""
     lines = [line.strip() for line in re.split(r"[\r\n]+|\\P", str(text)) if line.strip()]
     if not lines or len(lines) > 3 or len(lines[0]) > 40:
         return None
-    found = _ROOM_RE.match(lines[0])
-    if not found:
-        return None
-    result: dict[str, Any] = {"roomName": re.sub(r"\s+", " ", found["name"]).strip()}
-    number = found["num1"] or found["num2"]
+    first = _normalize_room_label(lines[0])
+    found = _ROOM_RE.match(first)
+    area = None
+    if found:
+        result: dict[str, Any] = {"roomName": re.sub(r"\s+", " ", found["name"]).strip()}
+        number = found["num1"] or found["num2"]
+        area = found["area"]
+    else:
+        prefix = re.match(r"^(?P<num>[A-Z]?\d{1,4}[A-Z]?)(?:호|호실)?\s*[-.:)]?\s+(?P<rest>.+)$", first)
+        name, number = (prefix["rest"], prefix["num"]) if prefix else (first, None)
+        if not _room_name_rule(name):
+            return None
+        result = {"roomName": re.sub(r"\s+", " ", name).strip()}
     if number:
         result["roomNumber"] = number
-    area = found["area"]
     for extra in lines[1:]:
         area_match = re.search(r"(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)", extra, re.IGNORECASE)
         number_match = re.search(r"(\d{1,4}[A-Z]?)\s*(?:호|호실)", extra)

@@ -449,7 +449,7 @@ _STOREY_RANGE = re.compile(
 )
 _STOREY_TOKEN = re.compile(
     r"(?:지하\s*(?P<bn>\d{1,2})\s*층)"
-    r"|(?:(?<![A-Z0-9])B\s*(?P<bn2>\d{1,2})\s*(?:FL|F|층)(?![A-Z0-9]))"
+    r"|(?:(?<![A-Z0-9])B\s*(?P<bn2>\d{1,2})\s*(?:FL|F|층)?(?![A-Z0-9]))"
     r"|(?P<roof>지붕|옥상|옥탑|(?<![A-Z0-9])(?:RF|ROOF)(?![A-Z0-9]))"
     r"|(?:(?<![A-Z0-9~\-])(?P<fn>\d{1,3})\s*(?:층|(?:FL|F)(?![A-Z0-9])))",
     re.IGNORECASE,

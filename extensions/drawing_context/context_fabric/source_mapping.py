@@ -162,6 +162,84 @@ def candidate_binding(record: dict[str, Any], source: SourceRevision) -> dict[st
     }
 
 
+def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
+    """Create a bounded, non-authorizing handoff for the native CAD executor.
+
+    Only a clean SOURCE_BOUND report that is VERIFIED_FOR_REVIEW can cross this
+    boundary. The handoff is provenance, not an execution token: Power CAD must
+    still bind the live document, re-read target fingerprints inside its write
+    transaction, obtain approval and emit its own receipt.
+    """
+    if binding_report.get("schema") != "aec-source-live-binding/1":
+        raise ValueError("unsupported source binding report schema")
+    if binding_report.get("binding_state") != "SOURCE_BOUND":
+        raise ValueError("executor handoff requires SOURCE_BOUND")
+    review = binding_report.get("review_guard")
+    if not isinstance(review, dict) or review.get("status") != "VERIFIED_FOR_REVIEW":
+        raise ValueError("executor handoff requires VERIFIED_FOR_REVIEW")
+    if binding_report.get("execution_authorized") is not False:
+        raise ValueError("source binding report must not authorize execution")
+
+    live_document = binding_report.get("live_document")
+    live_object = binding_report.get("live_object")
+    resolver = binding_report.get("resolver")
+    if not all(isinstance(value, dict) for value in (live_document, live_object, resolver)):
+        raise ValueError("source binding report is missing live/resolver evidence")
+
+    payload = {
+        "schema": "aec-executor-handoff/1",
+        "binding_state": "SOURCE_BOUND",
+        "review_status": "VERIFIED_FOR_REVIEW",
+        "document_id": live_document.get("document_id"),
+        "session_id": live_document.get("session_id"),
+        "source_id": binding_report.get("source_id"),
+        "source_byte_revision_id": binding_report.get("source_byte_revision_id"),
+        "parser_revision_id": binding_report.get("parser_revision_id"),
+        "candidate_id": binding_report.get("candidate_id"),
+        "native_path": live_document.get("native_path"),
+        "state_digest": live_document.get("state_digest"),
+        "modification_generation": live_document.get("modification_generation"),
+        "units": live_document.get("units"),
+        "resolver_receipt_sha256": resolver.get("resolver_receipt_sha256"),
+        "cache_entry_id": resolver.get("cache_entry_id"),
+        "object_locator": {
+            "layout": live_object.get("layout"),
+            "handle": live_object.get("handle"),
+            "instance_path": live_object.get("instance_path"),
+            "fingerprint": live_object.get("fingerprint"),
+        },
+        "execution_authorized": False,
+        "may_execute_mutation": False,
+        "requires_executor_authorization": True,
+    }
+    required = (
+        "document_id",
+        "session_id",
+        "source_id",
+        "source_byte_revision_id",
+        "parser_revision_id",
+        "candidate_id",
+        "native_path",
+        "state_digest",
+        "modification_generation",
+        "units",
+        "resolver_receipt_sha256",
+        "cache_entry_id",
+    )
+    if any(not isinstance(payload[name], str) or not payload[name] for name in required):
+        raise ValueError("source binding report is incomplete for executor handoff")
+    locator = payload["object_locator"]
+    if not isinstance(locator["layout"], str) or not locator["layout"]:
+        raise ValueError("executor handoff requires a layout")
+    if not isinstance(locator["handle"], str) or not locator["handle"]:
+        raise ValueError("executor handoff requires a handle")
+    if not isinstance(locator["fingerprint"], str) or not locator["fingerprint"]:
+        raise ValueError("executor handoff requires a live fingerprint")
+
+    payload["handoff_digest"] = digest(payload)
+    return payload
+
+
 def verify_source_binding(
     record: dict[str, Any],
     source: SourceRevision,

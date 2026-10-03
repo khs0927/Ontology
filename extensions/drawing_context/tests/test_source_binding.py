@@ -43,3 +43,11 @@ def test_content_revision_independent_of_parser():
     second = SourceRevision(**{**fields, 'parser_version':'2'})
     assert first.content_revision_id == second.content_revision_id
     assert first.revision_id != second.revision_id
+
+
+@pytest.mark.parametrize("ttl", [float("nan"), float("inf"), 0, -1, 31, True])
+def test_invalid_lifetime_rejected(ttl):
+    c, live, binding = inputs()
+    with pytest.raises(ValueError):
+        verify_bound_live_candidate(c, live, binding,
+            now=datetime(2026,10,3,10,0,5,tzinfo=timezone.utc), max_age_seconds=ttl)

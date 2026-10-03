@@ -257,7 +257,7 @@ def semantic_class(entity: NormalizedCADEntity, label: str | None = None) -> tup
     (section designation), or the class of a tagged element (mark such as SD1).
     """
     label = label or classify(entity)[0]
-    if entity.entity_type not in {"TEXT", "MTEXT"}:
+    if entity.entity_type not in {"TEXT", "MTEXT", "ATTRIB"}:
         return label, {}
     text = str(entity.properties.get("text") or "").strip()
     room = room_from_text(text)

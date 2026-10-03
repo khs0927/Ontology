@@ -3,12 +3,68 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..classifier import normalize_storey, storey_tokens
 from .config import Settings
 from .db import Database, graph_name
 from .embeddings import EmbeddingService, vector_literal
+
+# Storey recognition is canonicalized in aec_intelligence.classifier (PR #19).
+# This helper only renders one already-normalized storey ID as a PostgreSQL regex,
+# including legacy rows whose o.storey is blank and floor text remains in the document/search text.
+def storey_pattern(level: str) -> str:
+    if level == "RF":
+        body = r"(옥상|옥탑|지붕|rf|roof)"
+    elif level.startswith("B") and level[1:].isdigit():
+        n = level[1:]
+        body = f"(지하 ?0*{n} ?층?|b0*{n} ?(f|fl)?)"
+    elif level.endswith("F") and level[:-1].isdigit():
+        n = level[:-1]
+        body = f"(0*{n} ?(층|fl|f))"
+    else:
+        raise ValueError(f"unsupported normalized storey: {level}")
+    return f"(^|[^0-9a-z가-힣]){body}([^0-9a-z]|$)"
+
+
+@dataclass
+class ParsedQuery:
+    terms: list[str]
+    storey: str | None = None
+    kind: str | None = None
+
+
+def parse_query(query: str) -> ParsedQuery:
+    """Split a Korean AEC question into lexical terms plus canonical storey/kind intents."""
+    storey = None
+    found_storeys = storey_tokens(query)
+    if len(found_storeys) == 1:
+        storey = next(iter(found_storeys))
+        query = re.sub(storey_pattern(storey), " ", query, flags=re.IGNORECASE)
+
+    kind = None
+    terms: list[str] = []
+    for token in query.split():
+        low = token.lower()
+        if low in _ROOM_WORDS:
+            kind = "Space"
+        elif low not in _LIST_WORDS:
+            terms.extend(_SYNONYMS.get(low, [token]))
+    return ParsedQuery(terms=terms, storey=storey, kind=kind)
+
+
+# Drafting primitives that restate what a typed object already says (the "침실1" text next to the Space
+# derived from it). On equal text match the typed object is the answer, so it gets a small bonus.
+GENERIC_KINDS = ("Annotation", "Layer", "BlockDefinition", "Dimension", "CADEntity", "View", "Page", "Document")
+GENERIC_KINDS_SQL = "(" + ", ".join(f"'{k}'" for k in GENERIC_KINDS) + ")"
+DOMAIN_KIND_BONUS = 0.05
+
+
+def like_pattern(term: str) -> str:
+    """ILIKE pattern that matches the term literally (%, _ and \\ in the query are not wildcards)."""
+    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 @dataclass
@@ -125,6 +181,10 @@ class SearchRouter:
                 f"vector stage limited to '{query_model}' vectors"
             )
 
+        parsed = parse_query(query)
+        effective_kind = kind or parsed.kind
+        storey_level = normalize_storey(storey) if storey else parsed.storey
+
         with self.db.connect() as conn:
             # 1. Base SQL filter conditions
             where_clauses = ["1=1"]
@@ -135,71 +195,94 @@ class SearchRouter:
             if discipline:
                 where_clauses.append("o.discipline = %s")
                 params.append(discipline)
-            if storey:
+            if storey and not storey_level:
                 where_clauses.append("o.storey = %s")
                 params.append(storey)
+            elif storey_level:
+                # Objects usually carry no storey; the floor is in the drawing name ("A-101_1층평면도").
+                where_clauses.append("(o.storey ~* %s OR (COALESCE(o.storey, '') = '' "
+                                     "AND (d.name || ' ' || o.search_text) ~* %s))")
+                params.extend([storey_pattern(storey_level)] * 2)
             if revision is not None:
                 where_clauses.append("o.revision = %s")
                 params.append(revision)
-            if kind:
+            if effective_kind:
                 where_clauses.append("o.kind = %s")
-                params.append(kind)
+                params.append(effective_kind)
 
             where_sql = " AND ".join(where_clauses)
 
-            # 2. Hybrid search query: combines pg_trgm similarity and pgvector distance
-            # Checks if embeddings exist; if not, falls back smoothly to lexical alone
+            # 2. Lexical score: each query term scores 1 when the text contains it literally, else its
+            # word_similarity. Plain similarity() compares the short query with the whole (long) search
+            # text, so even an exact Korean room name scored about 0.05 and lost to unrelated vector hits.
+            terms = parsed.terms
+            if terms:
+                # Fuzzy credit stays below an exact hit, and needs 3+ letters: pg_trgm drops punctuation,
+                # so "H-" or "100%" would otherwise fuzzily "match" any word starting with h or 100.
+                lexical_sql = "(" + " + ".join(
+                    "(CASE WHEN o.search_text ILIKE %s THEN 1.0 ELSE 0.8 * word_similarity(%s, o.search_text) END)"
+                    if len(re.sub(r"\W", "", t)) >= 3 else "(CASE WHEN o.search_text ILIKE %s THEN 1.0 ELSE 0.0 END)"
+                    for t in terms) + f") / {len(terms)}"
+                lexical_params: list[Any] = [p for t in terms
+                                             for p in ((like_pattern(t), t) if len(re.sub(r"\W", "", t)) >= 3
+                                                       else (like_pattern(t),))]
+                match_sql = ("(" + " OR ".join("o.search_text ILIKE %s" for _ in terms)
+                             + " OR word_similarity(%s, o.search_text) > 0.3"
+                             + " OR (e.embedding IS NOT NULL AND (e.embedding <=> %s::vector) < 0.6))")
+                match_params: list[Any] = [like_pattern(t) for t in terms] + [" ".join(terms), vec_str]
+                lexical_weight = 0.6
+            else:
+                # Only intents ("2층 방"): the storey and kind filters are the whole question.
+                lexical_sql, lexical_params = "1.0", []
+                match_sql, match_params = "TRUE", []
+                if not (storey_level or effective_kind):
+                    lexical_sql = "0.0"
+                lexical_weight = 0.6
+            vector_weight = 1.0 - lexical_weight
+
             sql_query = f"""
-                SELECT
-                    o.id,
-                    o.project_id,
-                    o.document_id,
-                    d.name as document_name,
-                    o.revision,
-                    o.kind,
-                    o.discipline,
-                    o.storey,
-                    o.label,
-                    o.search_text,
-                    o.payload,
-                    COALESCE(similarity(o.search_text, %s), 0.0) as lexical_score,
-                    COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score
-                FROM aec.objects o
-                JOIN aec.documents d ON o.document_id = d.id
-                LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s
-                WHERE {where_sql}
-                  AND (
-                    o.search_text ILIKE %s
-                    OR similarity(o.search_text, %s) > 0.1
-                    OR (e.embedding IS NOT NULL AND (e.embedding <=> %s::vector) < 0.6)
-                  )
-                ORDER BY (COALESCE(similarity(o.search_text, %s), 0.0) * 0.4 +
-                          COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) * 0.6) DESC
+                SELECT * FROM (
+                    SELECT
+                        o.id, o.project_id, o.document_id, d.name as document_name, o.revision, o.kind,
+                        o.discipline, o.storey, o.label, o.search_text, o.payload,
+                        {lexical_sql} as lexical_score,
+                        COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score,
+                        CASE WHEN o.kind IN {GENERIC_KINDS_SQL} THEN 0.0 ELSE {DOMAIN_KIND_BONUS} END as kind_prior
+                    FROM aec.objects o
+                    JOIN aec.documents d ON o.document_id = d.id
+                    LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s
+                    WHERE {where_sql} AND {match_sql}
+                ) ranked
+                ORDER BY lexical_score * {lexical_weight} + vector_score * {vector_weight} + kind_prior DESC, label
                 LIMIT %s
             """
-
-            like_pattern = f"%{query}%"
-            full_params = [
-                query, vec_str, query_model, *params,
-                like_pattern, query, vec_str,
-                query, vec_str, top_k * 2
-            ]
+            full_params = [*lexical_params, vec_str, query_model, *params, *match_params, top_k * 2]
 
             try:
-                rows = conn.execute(sql_query, full_params).fetchall()
+                with conn.transaction():
+                    rows = conn.execute(sql_query, full_params).fetchall()
             except Exception as exc:
-                # If vector extension or age is absent in light test DB, fallback to simple ILIKE
+                # If vector extension or age is absent in light test DB, fallback to simple ILIKE.
+                # The savepoint above keeps the connection usable after the failed statement.
+                if terms:
+                    fallback_match = "(" + " OR ".join("o.search_text ILIKE %s" for _ in terms) + ")"
+                    fallback_match_params = [like_pattern(term) for term in terms]
+                else:
+                    fallback_match = "TRUE"
+                    fallback_match_params = []
                 fallback_sql = f"""
                     SELECT
                         o.id, o.project_id, o.document_id, d.name as document_name,
                         o.revision, o.kind, o.discipline, o.storey, o.label, o.search_text, o.payload,
-                        1.0 as lexical_score, 0.0 as vector_score
+                        1.0 as lexical_score, 0.0 as vector_score, 0.0 as kind_prior
                     FROM aec.objects o
                     JOIN aec.documents d ON o.document_id = d.id
-                    WHERE {where_sql} AND o.search_text ILIKE %s
+                    WHERE {where_sql} AND {fallback_match}
                     LIMIT %s
                 """
-                rows = conn.execute(fallback_sql, [*params, like_pattern, top_k]).fetchall()
+                rows = conn.execute(
+                    fallback_sql, [*params, *fallback_match_params, top_k]
+                ).fetchall()
                 warnings.append(f"Semantic vector search fell back to lexical search: {exc}")
 
             hits: list[SearchHit] = []
@@ -236,7 +319,7 @@ class SearchRouter:
 
                 lex_score = float(row.get("lexical_score") or 0.0)
                 vec_score = float(row.get("vector_score") or 0.0)
-                combined_score = lex_score * 0.4 + vec_score * 0.6
+                combined_score = lex_score * lexical_weight + vec_score * vector_weight + float(row.get("kind_prior") or 0.0)
 
                 relations = []
                 if expand_graph:
@@ -268,30 +351,40 @@ class SearchRouter:
         )
 
     def _get_relations(self, conn, project_id: str, object_id: str) -> list[dict[str, Any]]:
-        """Expands relations using Apache AGE graph where possible, falling back to SQL relations table."""
-        # 1. Try Apache AGE Cypher query
+        """Expands relations using Apache AGE graph where possible, falling back to SQL relations table.
+
+        Each step runs in its own savepoint: a failed Cypher call would otherwise abort the search
+        transaction, so the SQL fallback and every later hit silently came back with no relations.
+        """
+        # 1. Apache AGE: db.cypher declares a single agtype column, so the row is returned as one map.
         g_name = graph_name(project_id)
         try:
-            query = f"MATCH (a:Entity)-[r:Rel]-(b:Entity) WHERE a.id = {json.dumps(object_id)} RETURN b.id, b.kind, r.kind LIMIT 20"
-            cypher_res = self.db.cypher(conn, g_name, query)
-            if cypher_res:
-                rels = []
-                for row in cypher_res:
-                    # Parse AGE result
-                    rels.append({"target": row[0] if len(row) > 0 else "", "type": "AGE_REL"})
+            query = (f"MATCH (a:Entity)-[r:Rel]-(b:Entity) WHERE a.id = {json.dumps(object_id, ensure_ascii=False)} "
+                     "RETURN {target: b.id, target_kind: b.kind, predicate: r.kind, "
+                     "outgoing: id(startNode(r)) = id(a)} LIMIT 20")
+            with conn.transaction():
+                cypher_res = self.db.cypher(conn, g_name, query)
+            rels = []
+            for row in cypher_res:
+                edge = json.loads(str(row["value"]))
+                subject, obj = (object_id, edge["target"]) if edge["outgoing"] else (edge["target"], object_id)
+                rels.append({"subject": subject, "predicate": edge["predicate"], "object": obj,
+                             "target_kind": edge["target_kind"], "state": "OBSERVED", "source": "AGE"})
+            if rels:
                 return rels
         except Exception:
             pass
 
-        # 2. SQL relation table fallback
+        # 2. SQL relation table fallback (also holds AI_INFERRED links that are not projected to AGE)
         try:
-            rows = conn.execute(
-                """SELECT subject, predicate, object, state, evidence
-                   FROM aec.relations
-                   WHERE project_id = %s AND (subject = %s OR object = %s)
-                   LIMIT 20""",
-                (project_id, object_id, object_id),
-            ).fetchall()
+            with conn.transaction():
+                rows = conn.execute(
+                    """SELECT subject, predicate, object, state, evidence
+                       FROM aec.relations
+                       WHERE project_id = %s AND (subject = %s OR object = %s)
+                       LIMIT 20""",
+                    (project_id, object_id, object_id),
+                ).fetchall()
             return [
                 {
                     "subject": r["subject"],
@@ -299,6 +392,7 @@ class SearchRouter:
                     "object": r["object"],
                     "state": r["state"],
                     "evidence": r["evidence"],
+                    "source": "SQL",
                 }
                 for r in rows
             ]

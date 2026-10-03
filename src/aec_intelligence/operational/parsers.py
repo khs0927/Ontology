@@ -43,6 +43,34 @@ def storey_from_text(text):
     return '옥탑' if found['roof'] in ('옥탑', '지붕') else found['roof'].upper()
 
 
+def _iter_nested_insert_texts(insert, max_depth=8):
+    """Yield WCS-transformed TEXT/MTEXT/ATTRIB entities nested below an INSERT.
+
+    Top-level INSERT attributes are handled separately by _insert_attributes.
+    This walker is for text physically stored inside block definitions, including
+    nested blocks, which is common in Korean production drawings.
+    """
+    def walk(ref, path, depth):
+        if depth > max_depth:
+            return
+        try:
+            children = list(ref.virtual_entities())
+        except Exception:
+            return
+        for index, child in enumerate(children):
+            child_path = (*path, index)
+            kind = child.dxftype()
+            if kind in ('TEXT', 'MTEXT', 'ATTRIB'):
+                yield child, child_path
+            elif kind == 'INSERT':
+                # Nested INSERT attributes are not guaranteed to be returned by
+                # virtual_entities(), so include them when ezdxf exposes them.
+                for attr_index, attrib in enumerate(list(getattr(child, 'attribs', []) or [])):
+                    yield attrib, (*child_path, 'a', attr_index)
+                yield from walk(child, child_path, depth + 1)
+
+    yield from walk(insert, (), 1)
+
 def _finite_bbox(bounds):
     """ezdxf BoundingBox -> bbox dict, or {} when empty or not finite."""
     if bounds is None or not bounds.has_data:
@@ -200,7 +228,7 @@ class _DXFSemantics:
             return
         if kind in STRUCTURAL_KINDS:
             self.members.append(obj)
-        if normalized.entity_type not in ('TEXT', 'MTEXT'):
+        if normalized.entity_type not in ('TEXT', 'MTEXT', 'ATTRIB'):
             return
         text = str(props.get('text') or '').strip()
         if not text:
@@ -254,8 +282,10 @@ class _DXFSemantics:
     def _space(self, source, room, evidence, method):
         self.metrics['spaces'] += 1
         label = ' '.join(str(room[k]) for k in ('roomNumber', 'roomName') if k in room)
+        aliases = ' '.join(str(value) for value in room.get('roomNameAliases', ()) if value)
+        search_label = ' '.join(value for value in (label, aliases) if value)
         space = observation(self.doc, f"{evidence['layout']}:{evidence['handle']}:space", 'Space',
-                            f"{self.name} {self.sheet.name} {label} {ALIASES['Space']}",
+                            f"{self.name} {self.sheet.name} {search_label} {ALIASES['Space']}",
                             {**evidence, 'derived_from': source['id'], 'method': method}, source['bbox'],
                             state='AI_INFERRED',
                             properties={**room, 'source_annotation': source['id'], 'layer': source['properties'].get('layer', ''),
@@ -296,9 +326,114 @@ class _DXFSemantics:
         self.add(view, self.view)
         self.relate(view['id'], 'derivedFrom', source['id'], method='detail_title_text')
 
+    @staticmethod
+    def _bbox_center(bbox):
+        keys = ('min_x', 'min_y', 'max_x', 'max_y')
+        if not bbox or not all(k in bbox for k in keys):
+            return None
+        return ((float(bbox['min_x']) + float(bbox['max_x'])) / 2.0,
+                (float(bbox['min_y']) + float(bbox['max_y'])) / 2.0)
+
+    def _split_modelspace_sheet_regions(self):
+        """Create per-frame sheet Views when modelspace contains multiple detected TitleBlocks.
+
+        Title-block *detection* stays elsewhere. This method only consumes already classified
+        TitleBlock observations, so stronger detectors can be added independently.
+        """
+        if self.is_paper:
+            return 0
+        frames = []
+        for title in self.title_blocks:
+            bbox = title.get('bbox') or {}
+            center = self._bbox_center(bbox)
+            if center is None:
+                continue
+            width = max(0.0, float(bbox['max_x']) - float(bbox['min_x']))
+            height = max(0.0, float(bbox['max_y']) - float(bbox['min_y']))
+            area = width * height
+            if area <= 0:
+                continue
+            frames.append((area, float(bbox['min_x']), float(bbox['min_y']), title))
+        if len(frames) < 2:
+            return 0
+
+        frames.sort(key=lambda row: (row[1], row[2], row[0], row[3]['id']))
+        regions = []
+        for index, (area, _, _, title) in enumerate(frames, 1):
+            fields = title.get('properties') or {}
+            number = str(fields.get('drawingNumber') or '').strip()
+            drawing_title = str(fields.get('drawingTitle') or '').strip()
+            category = drawing_category(('title_block', drawing_title), ('layout_name', self.sheet.name))
+            storey = storey_from_text(drawing_title)
+            props = {
+                'view_kind': 'sheet_region',
+                'layout': self.sheet.name,
+                'sheet_region_index': index,
+                'title_block': title['id'],
+                **category,
+            }
+            for key in ('drawingNumber', 'drawingTitle', 'scale', 'revisionLabel', 'date'):
+                if fields.get(key):
+                    props[key] = fields[key]
+            if storey and category['drawing_category'] == '평면도':
+                props['storey'] = storey
+            label = ' '.join(value for value in (number, drawing_title, category['drawing_category']) if value)
+            region = observation(
+                self.doc,
+                f"sheet-region:{self.sheet.name}:{title['id']}",
+                'View',
+                f"{self.name} {self.sheet.name} {label}",
+                {**self.base, 'layout': self.sheet.name, 'title_block': title['id'],
+                 'method': 'title_block_bbox_region'},
+                title['bbox'],
+                state='AI_INFERRED',
+                properties=props,
+            )
+            self.add(region, self.view)
+            self.relate(region['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED',
+                        method='title_block_bbox_region')
+            regions.append((area, title['bbox'], region, storey, category))
+
+        # An object belongs to the smallest frame containing its bbox centre. This avoids
+        # duplicate assignment when a nested border/detail frame overlaps a larger frame.
+        for obj in list(self.layout_objects):
+            if obj['type'] == 'TitleBlock':
+                continue
+            center = self._bbox_center(obj.get('bbox') or {})
+            if center is None:
+                continue
+            x, y = center
+            containing = [
+                row for row in regions
+                if float(row[1]['min_x']) <= x <= float(row[1]['max_x'])
+                and float(row[1]['min_y']) <= y <= float(row[1]['max_y'])
+            ]
+            if not containing:
+                continue
+            _, _, region, storey, category = min(containing, key=lambda row: row[0])
+            obj['properties']['sheet_region'] = region['id']
+            if region['properties'].get('drawingNumber'):
+                obj['properties']['drawingNumber'] = region['properties']['drawingNumber']
+            if region['properties'].get('drawingTitle'):
+                obj['properties']['drawingTitle'] = region['properties']['drawingTitle']
+            obj['properties']['drawing_category'] = category['drawing_category']
+            if storey and obj['type'] == 'Space':
+                obj['properties']['storey'] = storey
+                obj['properties']['storey_source'] = 'title_block_bbox_region'
+            self.relate(region['id'], 'depicts', obj['id'], 'AI_INFERRED',
+                        method='bbox_center_inside_title_block', confidence=0.9)
+
+        self.view['properties']['multi_sheet'] = True
+        self.view['properties']['sheet_region_count'] = len(regions)
+        self.metrics['sheet_regions'] += len(regions)
+        return len(regions)
+
     def end_layout(self):
         view, sheet = self.view, self.sheet
-        title = self.title_blocks[0] if self.title_blocks else None
+        sheet_regions = self._split_modelspace_sheet_regions()
+        # In a multi-sheet modelspace, the parent layout must not inherit metadata from
+        # whichever title block happened to be encountered first.
+        title = self.title_blocks[0] if self.title_blocks and not sheet_regions else None
         fields = title['properties'] if title else {}
         texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
         candidates = [('title_block', fields.get('drawingTitle', ''))]
@@ -532,6 +667,54 @@ def parse_source(source, doc, output, settings, source_name=None):
                             obj['properties'].update(title_fields)
                         add(obj,view)
                         semantics.enrich(obj, normalized, evidence)
+                        if is_insert:
+                            nested_count = 0
+                            for nested_entity, nested_path in _iter_nested_insert_texts(entity):
+                                try:
+                                    nested = _normalize_entity(nested_entity)
+                                    nested_bounds = ezbbox.extents([nested_entity], fast=False)
+                                    if nested_bounds.has_data:
+                                        nested.bbox = dict(zip(
+                                            ('min_x','min_y','min_z','max_x','max_y','max_z'),
+                                            [*nested_bounds.extmin,*nested_bounds.extmax],
+                                        ))
+                                    nested_kind, nested_classification = classify(nested)
+                                    if nested_kind == 'CADEntity':
+                                        nested_kind = 'Annotation'
+                                    nested_text = str(nested.properties.get('text') or '').strip()
+                                    if not nested_text:
+                                        continue
+                                    nested_handle = f"{handle}:nested:{'.'.join(map(str, nested_path))}"
+                                    nested_evidence = {
+                                        **base,
+                                        'layout': sheet.name,
+                                        'handle': nested_handle,
+                                        'source_handle': handle,
+                                        'coordinate_system': 'CAD_WCS',
+                                        'geometry_path': _safe_relative(output/f'geometry-{index}.jsonl', settings.data_root),
+                                        'nested_path': list(nested_path),
+                                        'method': 'recursive_insert_virtual_entities',
+                                    }
+                                    nested_obj = observation(
+                                        doc,
+                                        f'{sheet.name}:{nested_handle}',
+                                        nested_kind,
+                                        f'{name} {sheet.name} {nested.layer} {nested_text} {ALIASES.get(nested_kind,nested_kind)}',
+                                        nested_evidence,
+                                        nested.bbox,
+                                        state='OBSERVED' if nested_kind in ('Annotation','Dimension','CADEntity') else 'AI_INFERRED',
+                                        properties={**nested.properties,'classification':nested_classification.to_dict()},
+                                    )
+                                    add(nested_obj, view)
+                                    semantics.enrich(nested_obj, nested, nested_evidence)
+                                    semantics.relate(
+                                        nested_obj['id'], 'derivedFrom', obj['id'], 'OBSERVED',
+                                        method='nested_block_text', source_handle=handle,
+                                    )
+                                    nested_count += 1
+                                except Exception as exc:
+                                    warnings.append(f'{sheet.name}/{handle}/nested:{nested_path}: {exc}')
+                            semantics.metrics['nested_text_entities'] += nested_count
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
             semantics.end_layout()

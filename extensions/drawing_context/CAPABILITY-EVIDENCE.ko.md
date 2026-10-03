@@ -147,3 +147,16 @@ receipt의 detached signature를 검증하고 다음 attestation을 전달해야
 
 receipt hash만 존재하는 것은 신뢰 근거가 아니다. hash는 검증된 receipt의 불변 식별자로
 사용하고, 실제 issuer/key 신뢰 정책은 resolver 운영 경계에서 관리한다.
+
+
+## Executor handoff contract
+
+A clean `SOURCE_BOUND` report with `VERIFIED_FOR_REVIEW` may be transformed into
+`aec-executor-handoff/1` by `build_executor_handoff()`. The handoff carries the live
+`document_id`, source/revision identifiers, resolver receipt hash, object locator,
+fingerprint and a deterministic `handoff_digest`.
+
+The handoff is **not** an execution token. It always carries
+`execution_authorized=false` and `may_execute_mutation=false`. A CAD executor must still
+bind the same live document, revalidate state inside its single-writer transaction, obtain
+its own approval, and emit an execution receipt that references the handoff digest.

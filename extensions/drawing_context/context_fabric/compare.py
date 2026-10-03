@@ -82,6 +82,18 @@ def projection_digest(fixture: dict[str, Any]) -> str:
     return _stable_digest(fixture["projection"])
 
 
+def projection_content_digest(fixture: dict[str, Any]) -> str:
+    """Digest exact benchmark content keyed by stable external_id."""
+    _validate_fixture(fixture)
+    rows: list[dict[str, str]] = []
+    for row in fixture["projection"]:
+        content = row.get("content")
+        if not isinstance(content, str):
+            raise ValueError("benchmark projection rows require string content")
+        rows.append({"external_id": row["external_id"], "content": content})
+    return _stable_digest(sorted(rows, key=lambda row: row["external_id"]))
+
+
 def _fixture_external_ids(fixture: dict[str, Any]) -> tuple[str, ...]:
     _validate_fixture(fixture)
     return tuple(sorted(row["external_id"] for row in fixture["projection"]))
@@ -170,10 +182,52 @@ def _validate_index_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("provider index record_count must be a non-negative integer")
     _validate_hex_digest(snapshot.get("projection_digest"), "projection_digest")
     _validate_hex_digest(snapshot.get("external_ids_digest"), "external_ids_digest")
-    if snapshot.get("assurance") != "caller-attested-local-view":
-        raise ValueError("provider index snapshot assurance must be caller-attested-local-view")
-    if snapshot.get("remote_inventory_verified") is not False:
-        raise ValueError("offline comparison snapshot cannot claim remote inventory verification")
+    assurance = snapshot.get("assurance")
+    remote_verified = snapshot.get("remote_inventory_verified")
+    if assurance == "caller-attested-local-view":
+        if remote_verified is not False:
+            raise ValueError("caller-attested snapshot cannot claim remote inventory verification")
+    elif assurance == "remote-readback-complete":
+        if remote_verified is not True:
+            raise ValueError("remote-readback-complete snapshot must declare verification")
+        if snapshot.get("canonical_freshness_verified") is not True:
+            raise ValueError(
+                "remote-readback-complete snapshot requires canonical freshness proof"
+            )
+        if snapshot.get("processing_completion_verified") is not True:
+            raise ValueError(
+                "remote-readback-complete snapshot requires completed provider indexing"
+            )
+        if type(snapshot.get("deployment_identity_verified")) is not bool:
+            raise ValueError(
+                "remote-readback-complete snapshot requires deployment identity state"
+            )
+        if snapshot.get("deployment_identity_verified") is True:
+            _validate_hex_digest(
+                snapshot.get("deployment_attestation_digest"),
+                "deployment_attestation_digest",
+            )
+            method = snapshot.get("deployment_verification_method")
+            if not isinstance(method, str) or not method.strip():
+                raise ValueError(
+                    "verified deployment identity requires verification method"
+                )
+        for name in (
+            "remote_document_count",
+            "remote_chunk_count",
+            "remote_document_ids_digest",
+            "remote_chunk_ids_digest",
+            "remote_projection_content_digest",
+            "current_source_state_digest",
+        ):
+            if name.endswith("_count"):
+                value = snapshot.get(name)
+                if type(value) is not int or value < 0:
+                    raise ValueError(f"{name} must be a non-negative integer")
+            else:
+                _validate_hex_digest(snapshot.get(name), name)
+    else:
+        raise ValueError("unsupported provider index snapshot assurance")
 
 
 def _validate_snapshot_against_fixture(
@@ -188,6 +242,11 @@ def _validate_snapshot_against_fixture(
         raise ValueError("provider index projection digest does not match fixture")
     if snapshot["external_ids_digest"] != external_ids_digest(expected_ids):
         raise ValueError("provider index external ID digest does not match fixture")
+    if (
+        snapshot.get("assurance") == "remote-readback-complete"
+        and snapshot["remote_projection_content_digest"] != projection_content_digest(fixture)
+    ):
+        raise ValueError("provider remote content digest does not match fixture projection")
 
 
 def wrap_provider_result(
@@ -353,6 +412,8 @@ def compare_provider_runs(
             snapshot["record_count"],
             snapshot["projection_digest"],
             snapshot["external_ids_digest"],
+            snapshot.get("remote_projection_content_digest"),
+            snapshot.get("current_source_state_digest"),
         )
         for _, _, _, _, snapshot, _ in parsed
     }
@@ -440,6 +501,25 @@ def compare_provider_runs(
                     tied = sorted(provider for provider, _ in finalists)
 
     index_identity = next(iter(index_identities))
+    all_promotion_gates_pass = all(
+        row["promotion_status"] == "PASS" for row in report_rows
+    )
+    all_remote_verified = all(
+        snapshot.get("remote_inventory_verified") is True
+        for _, _, _, _, snapshot, _ in parsed
+    )
+    all_deployment_verified = all(
+        snapshot.get("deployment_identity_verified") is True
+        for _, _, _, _, snapshot, _ in parsed
+    )
+    benchmark_execution_verified = False
+    production_evidence_ready = (
+        status == "SELECTED"
+        and all_promotion_gates_pass
+        and all_remote_verified
+        and all_deployment_verified
+        and benchmark_execution_verified
+    )
     return {
         "schema": _COMPARISON_SCHEMA,
         "fixture_digest": next(iter(fixture_hashes)),
@@ -447,6 +527,8 @@ def compare_provider_runs(
             "record_count": index_identity[0],
             "projection_digest": index_identity[1],
             "external_ids_digest": index_identity[2],
+            "remote_projection_content_digest": index_identity[3],
+            "current_source_state_digest": index_identity[4],
         },
         "k": next(iter(ks)),
         "case_ids": list(next(iter(case_sets))),
@@ -457,14 +539,21 @@ def compare_provider_runs(
         "deciding_metric": deciding_metric,
         "tied_providers": tied,
         "canonical_mutation": False,
+        "production_evidence_ready": production_evidence_ready,
         "production_adoption_eligible": False,
-        "remote_inventory_verified": False,
+        "operator_approval_required": True,
+        "all_promotion_gates_pass": all_promotion_gates_pass,
+        "remote_inventory_verified": all_remote_verified,
+        "deployment_identity_verified": all_deployment_verified,
+        "benchmark_execution_verified": benchmark_execution_verified,
+        "execution_provenance_required": True,
         "note": (
-            "Selection is an offline comparison over caller-attested index snapshots. "
-            "It applies only to this benchmark fixture and recorded provider profiles, "
-            "does not make the provider canonical, and MUST NOT be used as production "
-            "adoption evidence until each provider's complete remote inventory is "
-            "independently enumerated and matched."
+            "Selection applies only to this benchmark fixture and recorded provider "
+            "profiles. This PR verifies remote corpus state only. Benchmark execution "
+            "provenance is not yet implemented, so technical production evidence remains "
+            "not ready even if corpus and deployment proofs exist. A later execution-"
+            "provenance layer and a separate explicit operator approval artifact are both "
+            "required. Canonical CAIR remains authoritative."
         ),
     }
 

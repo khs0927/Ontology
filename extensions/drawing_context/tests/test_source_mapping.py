@@ -68,6 +68,9 @@ def resolution(src: SourceRevision):
         resolved_path=r"C:\PowerCad\cache\A-201.dwg",
         resolved_sha256=src.sha256,
         resolver_id="drive-cache-resolver/1",
+        cache_entry_id="cache-entry-A201-rev7",
+        resolver_receipt_sha256="e" * 64,
+        immutable_cache=True,
         resolved_at="2026-10-03T09:00:00+00:00",
     )
 
@@ -81,6 +84,7 @@ def live(src: SourceRevision, **kwargs):
         "source_byte_revision_id": source_byte_revision_id(src),
         "file_sha256": src.sha256,
         "state_digest": "state-123",
+        "modification_generation": "generation-42",
         "revision": src.revision,
         "sha256": src.sha256,
         "layout": "Model",
@@ -161,12 +165,32 @@ class SourceMappingTests(unittest.TestCase):
             record(src),
             src,
             resolution(src),
-            live(src, document_dirty=True, state_digest="state-dirty-124"),
+            live(
+                src,
+                document_dirty=True,
+                state_digest="state-dirty-124",
+                modification_generation="generation-43",
+            ),
         )
         self.assertEqual(report["binding_state"], "SOURCE_BOUND")
         self.assertEqual(report["review_guard"]["status"], "REQUIRES_REVIEW")
         self.assertIn("dirty_or_unknown_document", report["review_guard"]["reasons"])
         self.assertFalse(report["execution_authorized"])
+
+    def test_resolver_requires_immutable_receipt_evidence(self):
+        src = source()
+        with self.assertRaises(ValueError):
+            TrustedSourceResolution(
+                source_id=src.source_id,
+                source_byte_revision_id=source_byte_revision_id(src),
+                resolved_path=r"C:\\PowerCad\\cache\\A-201.dwg",
+                resolved_sha256=src.sha256,
+                resolver_id="drive-cache-resolver/1",
+                cache_entry_id="cache-entry-A201-rev7",
+                resolver_receipt_sha256="e" * 64,
+                immutable_cache=False,
+                resolved_at="2026-10-03T09:00:00+00:00",
+            )
 
     def test_missing_native_mapping_never_becomes_source_bound(self):
         src = source()

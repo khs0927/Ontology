@@ -9,7 +9,8 @@ from xml.etree import ElementTree
 
 from ..cair import Classification
 from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text, semantic_class,
-                          steel_sections, title_block_fields)
+                          steel_sections, title_block_fields, title_block_label)
+from ..spatial_relations import parse_storey
 from ..dxf import (_normalize_entity, INSUNITS, NormalizedCADEntity, block_effective_name, decode_dxf_text,
                    effective_block_name, read_dxf)
 
@@ -27,8 +28,79 @@ ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.I
 AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
 AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*\)?$', re.IGNORECASE)
-STOREY_RE = re.compile(r'(?<![A-Za-z0-9])(?:(?P<b>지하|B)\s*(?P<bn>\d{1,2})\s*(?:층|F)?|(?P<n>\d{1,3})\s*(?:층|F)(?![A-Za-z])|(?P<roof>옥탑|지붕|(?:PH|ROOF)(?![A-Za-z])))',
+STOREY_RE = re.compile(r'(?<![A-Za-z0-9])(?:(?P<b>지하|B)\s*(?P<bn>\d{1,2})\s*(?:층|F)?|(?P<n>\d{1,3})\s*(?:층|F)(?![A-Za-z])|(?P<roof>옥탑|지붕|옥상|(?<![A-Za-z])(?:PH|RF|ROOF)(?![A-Za-z])))',
                        re.IGNORECASE)
+
+SHEET_FIELDS = ('drawingNumber', 'drawingTitle', 'scale', 'revisionLabel', 'date')
+# Block expansion and sheet-splitting guards.
+MAX_EXPAND_ENTITIES = 20000   # virtual entities visited per top-level INSERT
+MAX_EXPAND_DEPTH = 8          # nested INSERT levels
+MAX_VIRTUAL_TEXTS = 50000     # texts taken from blocks per layout
+MAX_RECTS = 20000             # closed rectangles remembered per layout as border candidates
+DRAWING_NUMBER_RE = re.compile(r'(?<![A-Za-z0-9])([A-Z]{1,3}-?\d{2,3}(?:-\d{1,3})?)(?![A-Za-z0-9])')
+SCALE_RE = re.compile(r'SCALE|S\s*=|축\s*척|\b1\s*[:/]\s*\d{1,4}\b', re.IGNORECASE)
+# Caption words that follow a view title ('기계실 상세도', '1층 평면도', 'SCALE 1/50').
+CAPTION_RE = re.compile(r'^\s*(?:평면도|상세도|단면도|입면도|배치도|확대\s*평면도|부분\s*상세도|상세|SCALE|S\s*=|축\s*척)',
+                        re.IGNORECASE)
+
+
+def _area(b):
+    return (b['max_x'] - b['min_x']) * (b['max_y'] - b['min_y'])
+
+
+def _center(b):
+    return ((b['min_x'] + b['max_x']) / 2.0, (b['min_y'] + b['max_y']) / 2.0)
+
+
+def _contains(outer, inner):
+    """``inner`` (a bbox dict or an (x, y) point) lies within ``outer``."""
+    if isinstance(inner, dict):
+        return (outer['min_x'] <= inner['min_x'] and inner['max_x'] <= outer['max_x']
+                and outer['min_y'] <= inner['min_y'] and inner['max_y'] <= outer['max_y'])
+    x, y = inner[0], inner[1]
+    return outer['min_x'] <= x <= outer['max_x'] and outer['min_y'] <= y <= outer['max_y']
+
+
+def _has_disjoint_pair(boxes):
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            if a['max_x'] <= b['min_x'] or b['max_x'] <= a['min_x'] or a['max_y'] <= b['min_y'] or b['max_y'] <= a['min_y']:
+                return True
+    return False
+
+
+def _object_point(obj, normalized):
+    location = normalized.geometry.get('location')
+    if location:
+        return float(location[0]), float(location[1])
+    b = obj.get('bbox') or normalized.bbox or {}
+    if all(k in b for k in ('min_x', 'min_y', 'max_x', 'max_y')):
+        return _center(b)
+    return (math.nan, math.nan)
+
+
+def _title_like(text):
+    """Could be a drawing title: has letters, is not a scale/date/number/label value."""
+    value = str(text or '').strip()
+    if len(value) < 2 or len(value) > 60 or not re.search(r'[A-Za-z가-힣]', value):
+        return False
+    if SCALE_RE.search(value) or DRAWING_NUMBER_RE.fullmatch(value) or re.search(r'\d{2,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}', value):
+        return False
+    return True
+
+
+def filename_sheet_fields(name):
+    """(drawing number, title) from a file name as last resort: 'NN_' prefixes dropped, never a layout suffix."""
+    stem = re.sub(r'\.(dwg|dxf|pdf)$', '', Path(str(name)).name, flags=re.IGNORECASE)
+    stem = re.sub(r'^\d{1,3}[_\s.\-]+', '', stem).strip()
+    found = DRAWING_NUMBER_RE.search(stem.upper())
+    number = found.group(1) if found else None
+    title = stem
+    if found:
+        title = (stem[:found.start()] + ' ' + stem[found.end():])
+    title = re.sub(r'(?i)_?cp949$', '', title)
+    title = re.sub(r'[_\s\-]+', ' ', title).strip(' -_[]')
+    return number, title or None
 
 
 def storey_from_text(text):
@@ -40,7 +112,7 @@ def storey_from_text(text):
         return f"B{int(found['bn'])}"
     if found['n']:
         return f"{int(found['n'])}층"
-    return '옥탑' if found['roof'] in ('옥탑', '지붕') else found['roof'].upper()
+    return '옥탑' if found['roof'] in ('옥탑', '지붕', '옥상') else found['roof'].upper()
 
 
 def _finite_bbox(bounds):
@@ -169,6 +241,9 @@ class _DXFSemantics:
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
         self.area_texts, self.text_spaces = [], []
         self.layout_objects = []
+        # Positioned texts (direct and from expanded blocks), closed rectangles, INSERTs and deferred room labels.
+        self.texts, self.rects, self.inserts, self.pending_spaces = [], [], [], []
+        self.virtual_texts = 0
         # (observation, normalized entity) pairs in source order, for the geometric relation pass.
         self.layout_pairs = []
         self._normalized = None
@@ -200,6 +275,7 @@ class _DXFSemantics:
             if kind == 'TitleBlock':
                 self.metrics['title_blocks'] += 1
                 self.title_blocks.append(obj)
+            self.inserts.append((obj, normalized))
             self._insert_attributes(obj, props.get('attributes') or {}, evidence)
             if kind in STRUCTURAL_KINDS:
                 self.members.append(obj)
@@ -211,13 +287,13 @@ class _DXFSemantics:
         text = str(props.get('text') or '').strip()
         if not text:
             return
+        self._record_text(text, normalized, obj)
         mark = element_mark(text)
         if mark:
             obj['properties'].update(mark)
         finer, room = semantic_class(normalized, kind)
         if finer == 'Space':
-            space = self._space(obj, room, evidence, 'text')
-            self.text_spaces.append((space, normalized))
+            self.pending_spaces.append((obj, room, evidence, 'text', normalized))
         elif area := AREA_TEXT_RE.match(text):
             self.area_texts.append((float(area.group(1).replace(',', '.')), obj, normalized))
         for i, section in enumerate(steel_sections(text)):
@@ -255,7 +331,7 @@ class _DXFSemantics:
                 room['roomNumber'] = number
             if area and area > 0 and 'area' not in room:
                 room['area'] = area
-            self._space(obj, room, evidence, 'block_attribute')
+            self.pending_spaces.append((obj, room, evidence, 'block_attribute', self._normalized))
 
     def _space(self, source, room, evidence, method):
         self.metrics['spaces'] += 1
@@ -306,12 +382,322 @@ class _DXFSemantics:
         self.add(view, self.view)
         self.relate(view['id'], 'derivedFrom', source['id'], method='detail_title_text')
 
+    # ----------------------------------------------------------------- block expansion
+    def _record_text(self, text, normalized, obj, origin=None):
+        point = normalized.geometry.get('location') or [0.0, 0.0]
+        entry = {'text': text, 'x': float(point[0]), 'y': float(point[1]),
+                 'h': float(normalized.properties.get('height') or 0.0), 'obj': obj, 'origin': origin,
+                 'label': title_block_label(text)}
+        self.texts.append(entry)
+        return entry
+
+    def note_geometry(self, normalized):
+        """Remember closed axis-aligned rectangles: candidate drawing borders (도곽) for sheet splitting."""
+        geometry = normalized.geometry
+        if geometry.get('kind') != 'polyline' or len(self.rects) >= MAX_RECTS:
+            return
+        points = [(round(p[0], 6), round(p[1], 6)) for p in geometry.get('points') or ()]
+        if len(points) == 5 and points[0] == points[-1]:
+            points = points[:4]
+        elif not geometry.get('closed'):
+            return
+        if len(points) != 4:
+            return
+        xs, ys = sorted({p[0] for p in points}), sorted({p[1] for p in points})
+        if len(xs) != 2 or len(ys) != 2 or xs[1] - xs[0] <= 0 or ys[1] - ys[0] <= 0:
+            return
+        self.rects.append({'min_x': xs[0], 'min_y': ys[0], 'max_x': xs[1], 'max_y': ys[1]})
+
+    def expand_insert(self, entity, handle, evidence):
+        """TEXT/MTEXT/ATTRIB inside the block an INSERT references (nested, with the INSERT transform applied).
+
+        Room labels found there become Annotation + Space observations; all texts feed title-block and storey
+        detection. Bounded by MAX_EXPAND_ENTITIES per top-level INSERT, MAX_EXPAND_DEPTH and a cycle guard."""
+        if self.virtual_texts >= MAX_VIRTUAL_TEXTS:
+            return
+        budget = [MAX_EXPAND_ENTITIES]
+        counter = [0]
+
+        def emit(child):
+            if self.virtual_texts >= MAX_VIRTUAL_TEXTS:
+                return
+            try:
+                normalized = _normalize_entity(child)
+            except Exception:
+                return
+            text = str(normalized.properties.get('text') or '').strip()
+            if not text:
+                return
+            counter[0] += 1
+            self.virtual_texts += 1
+            self.metrics['virtual_texts'] += 1
+            vhandle = f'{handle}/v{counter[0]}'
+            normalized.handle = vhandle
+            if normalized.entity_type == 'ATTRIB':
+                normalized.entity_type = 'TEXT'
+            self._record_text(text, normalized, None, origin=handle)
+            if len(text) <= 40 and drawing_category(('text', text))['drawing_category'] != '기타':
+                self.title_texts.append((float(normalized.properties.get('height') or 0.0), text))
+            finer, room = semantic_class(normalized, 'Annotation')
+            if finer != 'Space':
+                return
+            vevidence = {**evidence, 'handle': vhandle, 'virtual_of': handle, 'method': 'block_expansion'}
+            obj = observation(self.doc, f'{self.sheet.name}:{vhandle}', 'Annotation',
+                              f'{self.name} {self.sheet.name} {normalized.layer} {text} {ALIASES["Annotation"]}',
+                              vevidence, normalized.bbox, state='OBSERVED',
+                              properties={**normalized.properties, 'layer': normalized.layer, 'virtual': True,
+                                          'classification': {'label': 'Annotation', 'confidence': 0.9,
+                                                             'method': 'block_expansion', 'evidence': [],
+                                                             'state': 'ACCEPT_WITH_WARNING'}})
+            self.add(obj, self.view)
+            self.layout_objects.append(obj)
+            self.pending_spaces.append((obj, room, vevidence, 'text', normalized))
+
+        def walk(insert, depth, stack):
+            name = str(insert.dxf.get('name', ''))
+            block = self.blocks.get(name)
+            if depth > MAX_EXPAND_DEPTH or name in stack or (block is not None and block['properties'].get('is_xref')):
+                return
+            try:
+                for child in insert.virtual_entities():
+                    budget[0] -= 1
+                    if budget[0] < 0:
+                        self.metrics['virtual_expansion_truncated'] += 1
+                        return
+                    kind = child.dxftype()
+                    if kind == 'INSERT':
+                        for attrib in getattr(child, 'attribs', ()):
+                            emit(attrib)
+                        walk(child, depth + 1, stack | {name})
+                    elif kind in ('TEXT', 'MTEXT'):
+                        emit(child)
+            except Exception as exc:  # non-uniform scaling, broken references ...
+                self.warnings.append(f'{self.sheet.name}/{handle}: block expansion stopped: {exc}')
+
+        walk(entity, 1, frozenset())
+
+    # ----------------------------------------------------------------- rooms
+    def _resolve_spaces(self):
+        """Create Space observations for room labels, minus view captions and duplicates of the same room."""
+        captions = [t for t in self.texts if CAPTION_RE.search(t['text'])]
+        kept = []
+        for item in self.pending_spaces:
+            obj, room, evidence, method, normalized = item
+            point = normalized.geometry.get('location') or [0.0, 0.0]
+            x, y = float(point[0]), float(point[1])
+            h = float(normalized.properties.get('height') or 0.0)
+            length = len(str(normalized.properties.get('text') or ''))
+            if method == 'text' and self._is_caption(x, y, h, length, captions):
+                self.metrics['room_captions_rejected'] += 1
+                continue
+            name = re.sub(r'\s+', '', room['roomName']).lower()
+            duplicate = None
+            for index, (_, ox, oy, oh, oname) in enumerate(kept):
+                if oname == name and math.dist((x, y), (ox, oy)) <= 5.0 * max(h, oh, 1e-6):
+                    duplicate = index
+                    break
+            if duplicate is None:
+                kept.append((item, x, y, h, name))
+                continue
+            self.metrics['room_duplicates_merged'] += 1
+            other = kept[duplicate][0]
+            primary, secondary = (item, other) if other[3] == 'text' and method == 'block_attribute' else (other, item)
+            for key in ('roomNumber', 'area'):
+                if key in secondary[1] and key not in primary[1]:
+                    primary[1][key] = secondary[1][key]
+            kept[duplicate] = (primary, *kept[duplicate][1:])
+        for (obj, room, evidence, method, normalized), *_ in kept:
+            self._normalized = normalized
+            space = self._space(obj, room, evidence, method)
+            if method == 'text':
+                self.text_spaces.append((space, normalized))
+        self.pending_spaces = []
+
+    @staticmethod
+    def _is_caption(x, y, h, length, captions):
+        """A room-like text followed on its line by 평면도/상세도/SCALE ..., or with a SCALE line right under it."""
+        h = max(h, 1e-6)
+        for c in captions:
+            ch = max(c['h'], h)
+            reach = (length + 3) * ch * 1.2
+            if abs(c['y'] - y) <= 0.8 * ch and 0 < c['x'] - x <= reach:
+                return True
+            if SCALE_RE.search(c['text']) and 0 < y - c['y'] <= 3.0 * ch and abs(c['x'] - x) <= reach:
+                return True
+        return False
+
+    # ----------------------------------------------------------------- sheets
+    def _sheet_frames(self):
+        """Drawing borders in this layout: title-block INSERTs (their enclosing rectangle when the block is just
+        the title strip) and closed rectangles of paper proportions holding title-block labels. Reading order."""
+        rects = sorted(self.rects, key=_area)
+        frames = []
+        for tb in self.title_blocks:
+            b = tb['bbox']
+            if not b or not all(k in b for k in ('min_x', 'min_y', 'max_x', 'max_y')) or _area(b) <= 0:
+                continue
+            enclosing = [r for r in rects if _contains(r, b) and 1.5 * _area(b) <= _area(r) <= 400 * _area(b)]
+            frame = enclosing[0] if enclosing else b
+            if any(_contains(f['bbox'], _center(frame)) for f in frames):
+                continue  # a second title-block insert on the same border
+            frames.append({'bbox': frame, 'title_block': tb, 'tb_bbox': b})
+        labels = [t for t in self.texts if t['label']]
+        candidates = []
+        for r in rects:
+            w, h = r['max_x'] - r['min_x'], r['max_y'] - r['min_y']
+            if not 1.15 <= max(w, h) / min(w, h) <= 1.9:
+                continue
+            if sum(1 for t in labels if _contains(r, (t['x'], t['y']))) >= 2:
+                candidates.append(r)
+        # A rectangle around two side-by-side candidates is a group outline, not a border.
+        candidates = [c for c in candidates
+                      if not _has_disjoint_pair([o for o in candidates if o is not c and _contains(c, o)])]
+        outer = [c for c in candidates if not any(o is not c and _contains(o, c) for o in candidates)]
+        for r in outer:
+            if not any(_contains(f['bbox'], _center(r)) or _contains(r, _center(f['bbox'])) for f in frames):
+                frames.append({'bbox': r, 'title_block': None, 'tb_bbox': None})
+        frames.sort(key=lambda f: (-f['bbox']['max_y'], f['bbox']['min_x']))
+        return frames
+
+    def _sheet_metadata(self, frame, texts, inserts, single):
+        """drawingNumber / drawingTitle / scale ... and storey of one sheet, with the source of the values."""
+        tb = frame['title_block'] if frame else None
+        fields = dict(tb['properties']) if tb else {}
+        meta = {k: str(fields[k]) for k in SHEET_FIELDS if fields.get(k)}
+        source = 'title_block' if meta.get('drawingTitle') or meta.get('drawingNumber') else None
+        labels = [t for t in texts if t['label']]
+        area = None
+        if labels:
+            pad = 25.0 * max(max(t['h'] for t in labels), 1e-6)
+            if frame:
+                b = frame['bbox']
+                pad = min(pad, 0.25 * max(b['max_x'] - b['min_x'], b['max_y'] - b['min_y']))
+            area = {'min_x': min(t['x'] for t in labels) - pad, 'min_y': min(t['y'] for t in labels) - pad,
+                    'max_x': max(t['x'] for t in labels) + pad, 'max_y': max(t['y'] for t in labels) + pad}
+        tb_handle = tb['evidence'].get('handle') if tb else None
+        tb_bbox = frame.get('tb_bbox') if frame else None
+        small_tb = tb_bbox if tb_bbox and tb_bbox is not frame['bbox'] else None
+        title_area = [t for t in texts if (tb_handle and t['origin'] == tb_handle)
+                      or (small_tb and _contains(small_tb, (t['x'], t['y'])))
+                      or (area and _contains(area, (t['x'], t['y'])))]
+        for label in labels:
+            field, value = label['label']
+            if field not in SHEET_FIELDS or meta.get(field):
+                continue
+            value = value or self._label_value(label, title_area)
+            if field == 'drawingNumber' and value:
+                found = DRAWING_NUMBER_RE.search(value)
+                value = found.group(1) if found else value
+            if value:
+                meta[field] = value
+                source = source or 'title_block_label'
+        if not meta.get('drawingNumber'):
+            pool = [t for t in title_area if not t['label'] and not SCALE_RE.search(t['text'])]
+            full = [t for t in pool if DRAWING_NUMBER_RE.fullmatch(t['text'].strip())]
+            partial = [t for t in pool if DRAWING_NUMBER_RE.search(t['text'])]
+            best = max(full or partial, key=lambda t: t['h'], default=None)
+            if best:
+                meta['drawingNumber'] = DRAWING_NUMBER_RE.search(best['text']).group(1)
+                source = source or 'title_block_text'
+        if not meta.get('drawingTitle'):
+            used = {meta.get('drawingNumber'), meta.get('scale'), meta.get('date')}
+            pool = [t for t in title_area if not t['label'] and _title_like(t['text']) and t['text'].strip() not in used]
+            categorised = [t for t in pool if drawing_category(('t', t['text']))['drawing_category'] != '기타']
+            best = max(categorised or pool, key=lambda t: t['h'], default=None)
+            if best:
+                meta['drawingTitle'] = best['text'].strip()
+                source = source or 'title_block_text'
+        if not meta.get('drawingTitle'):
+            sheet_titles = [t for t in texts if len(t['text']) <= 40 and _title_like(t['text'])
+                            and drawing_category(('t', t['text']))['drawing_category'] != '기타']
+            best = max(sheet_titles, key=lambda t: t['h'], default=None)
+            if best:
+                meta['drawingTitle'] = best['text'].strip()
+                source = source or 'drawing_title_text'
+        if single:
+            number, title = filename_sheet_fields(self.name)
+            if not meta.get('drawingNumber') and number:
+                meta['drawingNumber'] = number
+            if not meta.get('drawingTitle') and title:
+                meta['drawingTitle'] = title
+                source = source or 'file_name'
+        meta['source'] = source or 'none'
+        # Storey: plan title, else one unambiguous plan caption / plan block name (room numbers: spatial pass).
+        storey = None
+        title = meta.get('drawingTitle', '')
+        if title and drawing_category(('t', title))['drawing_category'] == '평면도':
+            found = parse_storey(title)
+            if found:
+                storey = {'name': found[0], 'level': found[1], 'evidence': f'sheet title: {title}', 'text': title}
+        if storey is None:
+            title_ids = {id(t) for t in title_area}
+            pools = (([t['text'] for t in texts if id(t) not in title_ids], 'plan caption'),
+                     ([str(n.properties.get('effective_name') or n.properties.get('block_name') or '')
+                       for _, n in inserts], 'plan block name'))
+            for pool, method in pools:
+                found = {}
+                for text in pool:
+                    if len(text) <= 60 and drawing_category(('t', text))['drawing_category'] == '평면도':
+                        parsed = parse_storey(text)
+                        if parsed:
+                            found.setdefault(parsed, text)
+                if len(found) == 1:
+                    (name, level), text = next(iter(found.items()))
+                    storey = {'name': name, 'level': level, 'evidence': f'{method}: {text}', 'text': text}
+                    break
+        meta['storey'] = storey
+        return meta
+
+    @staticmethod
+    def _label_value(label, pool):
+        """Text printed right of (same row) or under a bare title-block label."""
+        h = max(label['h'], 1e-6)
+        best = None
+        for t in pool:
+            if t is label or t['label']:
+                continue
+            th = max(t['h'], h)
+            dx, dy = t['x'] - label['x'], t['y'] - label['y']
+            if abs(dy) <= 1.2 * th and 0 < dx <= 40 * h:
+                score = dx
+            elif -6 * th <= dy < 0 and abs(dx) <= 15 * h:
+                score = 40 * h + abs(dy)
+            else:
+                continue
+            if best is None or score < best[0]:
+                best = (score, t)
+        return best[1]['text'].strip() if best else ''
+
     def end_layout(self):
+        self._resolve_spaces()
+        frames = self._sheet_frames()
+        single = len(frames) <= 1
+        if single:
+            groups = [(frames[0] if frames else None, self.layout_pairs, self.texts, self.inserts)]
+        else:
+            self.metrics['sheet_frames'] += len(frames)
+            buckets = [([], [], []) for _ in frames]
+            rest = ([], [], [])
+
+            def bucket(point):
+                inside = [i for i, f in enumerate(frames) if _contains(f['bbox'], point)]
+                return buckets[min(inside, key=lambda i: _area(frames[i]['bbox']))] if inside else rest
+            for obj, normalized in self.layout_pairs:
+                bucket(_object_point(obj, normalized))[0].append((obj, normalized))
+            for t in self.texts:
+                bucket((t['x'], t['y']))[1].append(t)
+            for obj, normalized in self.inserts:
+                bucket(_object_point(obj, normalized))[2].append((obj, normalized))
+            groups = [(frames[i], *buckets[i]) for i in range(len(frames))] + [(None, *rest)]
+        metas = [None if frame is None and not single else self._sheet_metadata(frame, texts, inserts, single)
+                 for frame, _, texts, inserts in groups]
+        first = metas[0] if single else {}
         view, sheet = self.view, self.sheet
         title = self.title_blocks[0] if self.title_blocks else None
         fields = title['properties'] if title else {}
         texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
-        candidates = [('title_block', fields.get('drawingTitle', ''))]
+        sheet_title = first.get('drawingTitle', '') if first.get('source', '').startswith('title_block') else ''
+        candidates = [('title_block', fields.get('drawingTitle', '') or sheet_title)]
         if self.is_paper:
             candidates += [('drawing_title_text', texts[0] if texts else ''), ('layout_name', sheet.name), ('file_name', self.name)]
         else:
@@ -319,12 +705,18 @@ class _DXFSemantics:
         view['properties'].update(drawing_category(*candidates))
         view['properties']['layout_kind'] = 'paper' if self.is_paper else 'model'
         if title:
-            view['properties'].update({k: fields[k] for k in ('drawingNumber', 'drawingTitle', 'scale', 'revisionLabel', 'date')
-                                       if k in fields})
+            view['properties'].update({k: fields[k] for k in SHEET_FIELDS if k in fields})
             view['properties']['title_block'] = title['id']
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
-        view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
-        storey = next(filter(None, (storey_from_text(value) for _, value in candidates)), None)
+        if single:
+            for key in SHEET_FIELDS:
+                if first.get(key):
+                    view['properties'].setdefault(key, first[key])
+        else:
+            view['properties']['sheet_count'] = len(frames)
+        view['search_text'] = (f"{view['search_text']} {view['properties']['drawing_category']} "
+                               f"{view['properties'].get('drawingTitle', '')} {view['properties'].get('drawingNumber', '')}")
+        storey = next(filter(None, (storey_from_text(value) for _, value in candidates)), None) if single else None
         if storey and view['properties']['drawing_category'] == '평면도':
             view['properties']['storey'] = storey
         category = view['properties']['drawing_category']
@@ -335,15 +727,22 @@ class _DXFSemantics:
                 obj['properties'].setdefault('storey', storey)
         self._link_area_texts()
         self._link_sections()
-        self._spatial(fields, texts)
+        for index, ((frame, pairs, _, _), meta) in enumerate(zip(groups, metas)):
+            if meta and meta.get('storey'):
+                label = storey_from_text(meta['storey']['text']) or meta['storey']['name']
+                for obj, _ in pairs:
+                    if obj['type'] == 'Space':
+                        obj['properties'].setdefault('storey', label)
+            key = f'sheet:{self.sheet.name}' if single else f'sheet:{self.sheet.name}:{index + 1}'
+            self._spatial(pairs, meta, texts, key, single)
 
-    def _spatial(self, fields, texts):
+    def _spatial(self, pairs, meta, texts, sheet_key, single=True):
         """Run the shared geometric pass (spatial_relations) over this layout and map its output back.
 
         Same objects and predicates as the CAIR pipeline: hostedBy, containsElement, hasSpace/onStorey,
         depicts, plus the Sheet and Storey objects. Edges are AI_INFERRED with the measured confidence.
         """
-        if not self.layout_pairs:
+        if not pairs:
             return
         from ..cair import CAIRObject, SourceRef
         from ..classifier import refine_with_context
@@ -351,7 +750,7 @@ class _DXFSemantics:
 
         project = 'operational'
         adapters, entities, by_id = [], [], {}
-        for obj, normalized in self.layout_pairs:
+        for obj, normalized in pairs:
             c = obj['properties'].get('classification') or {}
             classification = None
             if c.get('label'):
@@ -365,13 +764,19 @@ class _DXFSemantics:
             by_id[obj['id']] = obj
         refine_with_context(adapters, entities)
         view = self.view
-        title = (fields.get('drawingTitle') or view['properties'].get('drawing_category_evidence')
-                 or (texts[0] if texts else '') or self.name)
-        sheet = {'number': fields.get('drawingNumber') or f"{self.name}:{self.sheet.name}", 'title': title,
-                 'scale': fields.get('scale'), 'revision': fields.get('revisionLabel'),
-                 'category': view['properties'].get('drawing_category_group'),
-                 'drawing_category': view['properties'].get('drawing_category'),
-                 'source': 'title_block' if fields.get('drawingTitle') else view['properties'].get('drawing_category_source')}
+        sheet = None
+        if meta is not None:
+            # Per-sheet metadata; a file name is only the last-resort title, never a ':Model' drawing number.
+            title = meta.get('drawingTitle') or (view['properties'].get('drawing_category_evidence') if single else '')                 or ((texts[0] if texts else '') if single else '')
+            category = view['properties'] if single else drawing_category(('sheet_title', title))
+            source = meta.get('source', '')
+            sheet = {'number': meta.get('drawingNumber'), 'title': title,
+                     'scale': meta.get('scale'), 'revision': meta.get('revisionLabel'),
+                     'category': category.get('drawing_category_group'),
+                     'drawing_category': category.get('drawing_category'),
+                     'source': 'title_block' if source.startswith('title_block') and meta.get('drawingTitle')
+                     else source or view['properties'].get('drawing_category_source'),
+                     'storey': meta.get('storey')}
         derived, relations = build_spatial_relations(adapters, entities, project, sheet,
                                                      self.result.get('units'), require_title_block=False)
         for adapter in adapters:
@@ -400,7 +805,7 @@ class _DXFSemantics:
                     self.add(obj)
                     self.metrics['storeys'] += 1
             else:
-                obj = observation(self.doc, f'sheet:{self.sheet.name}', item.type,
+                obj = observation(self.doc, sheet_key, item.type,
                                   f"{self.name} {self.sheet.name} {item.properties.get('drawingTitle', '')} {item.properties.get('drawingNumber', '')}",
                                   {**self.base, 'layout': self.sheet.name, 'method': 'sheet_metadata'},
                                   state='AI_INFERRED', properties={**item.properties,
@@ -410,7 +815,7 @@ class _DXFSemantics:
                 self.metrics['sheets'] += 1
             mapped[item.id] = obj['id']
         for rel in relations:
-            if rel.subject == f'aec://project/{project}' or rel.predicate == 'hasTitleBlock':
+            if rel.subject == f'aec://project/{project}' or (rel.predicate == 'hasTitleBlock' and single):
                 continue  # the Document 'contains' them, and the View already has its title block
             subject, target = mapped.get(rel.subject, rel.subject), mapped.get(rel.object, rel.object)
             self.relate(subject, rel.predicate, target, 'AI_INFERRED', confidence=rel.confidence,
@@ -608,6 +1013,8 @@ def parse_source(source, doc, output, settings, source_name=None):
                             classification = Classification('TitleBlock', 0.9, 'attribute_rules',
                                 ('attribute tags indicate title block: ' + ', '.join(sorted(title_fields)),
                                  f'block={normalized.properties.get("block_name")}'), 'ACCEPT_WITH_WARNING')
+                        if normalized.entity_type in ('LWPOLYLINE', 'POLYLINE'):
+                            semantics.note_geometry(normalized)
                         if kind == 'CADEntity' and not is_insert:
                             continue
                         props = normalized.properties
@@ -629,6 +1036,10 @@ def parse_source(source, doc, output, settings, source_name=None):
                         semantics.enrich(obj, normalized, evidence)
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
+                    if entity.dxftype() == 'INSERT':
+                        # Texts that exist only inside the referenced block (even when the INSERT itself failed).
+                        semantics.expand_insert(entity, handle, {**base, 'layout': sheet.name, 'handle': handle,
+                                                                 'coordinate_system': 'CAD_WCS'})
             semantics.end_layout()
         semantics.finish()
         warnings.append('Layer-based building classes are candidates, not confirmed physical elements.')

@@ -40,7 +40,9 @@ class NvidiaCosmosVision:
 
     @classmethod
     def from_env(cls) -> "NvidiaCosmosVision":
-        endpoint = os.getenv("NVIDIA_COSMOS_ENDPOINT", DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+        endpoint_value = os.getenv("NVIDIA_COSMOS_ENDPOINT", "").strip()
+        endpoint_configured = bool(endpoint_value)
+        endpoint = endpoint_value or DEFAULT_ENDPOINT
         configured_model = os.getenv("NVIDIA_COSMOS_MODEL", "").strip()
         if configured_model:
             model = configured_model

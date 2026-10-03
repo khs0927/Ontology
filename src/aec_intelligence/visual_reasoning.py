@@ -29,12 +29,14 @@ class NvidiaCosmosVision:
         model: str = DEFAULT_MODEL,
         max_tokens: int = 1400,
         timeout: float = 90.0,
+        enabled: bool | None = None,
     ):
         self.endpoint = endpoint
         self.api_key = (api_key or "").strip()
         self.model = model
         self.max_tokens = max(128, min(int(max_tokens), 4096))
         self.timeout = timeout
+        self._enabled = enabled
 
     @classmethod
     def from_env(cls) -> "NvidiaCosmosVision":
@@ -51,10 +53,12 @@ class NvidiaCosmosVision:
             max_tokens = int(os.getenv("NVIDIA_COSMOS_MAX_TOKENS", "1400"))
         except ValueError:
             max_tokens = 1400
-        return cls(endpoint=endpoint, api_key=api_key, model=model, max_tokens=max_tokens)
+        return cls(endpoint=endpoint, api_key=api_key, model=model, max_tokens=max_tokens, enabled=endpoint_configured)
 
     @property
     def enabled(self) -> bool:
+        if self._enabled is not None:
+            return self._enabled
         return bool(self.api_key) or self.endpoint.startswith("http://127.0.0.1") or self.endpoint.startswith("http://localhost")
 
     def analyze_image(self, image: bytes, mime_type: str, prompt: str) -> dict[str, Any]:
@@ -63,7 +67,7 @@ class NvidiaCosmosVision:
                 "status": "REQUIRES_CONFIGURATION",
                 "provider": "nvidia",
                 "model": self.model,
-                "error": "Start the Cosmos Reason2 NIM locally, or configure NVIDIA_COSMOS_ENDPOINT for a remote NIM. NVIDIA_API_KEY is only bearer auth for remote endpoints.",
+                "error": "Set NVIDIA_COSMOS_ENDPOINT explicitly after starting the Cosmos Reason2 NIM. NVIDIA_API_KEY is only bearer auth for remote endpoints.",
             }
 
         data_uri = f"data:{mime_type};base64,{base64.b64encode(image).decode('ascii')}"

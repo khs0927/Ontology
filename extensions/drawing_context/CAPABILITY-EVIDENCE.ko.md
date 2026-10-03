@@ -174,3 +174,17 @@ revision, SHA-256, view kind, units and relative export path.
 The resulting `drawing-context-derived-artifacts/1` bundle is evidence only:
 records carry `canonical=false` and `execution_authorized=false`. Derived
 SketchUp exports therefore cannot silently become the canonical original source.
+
+
+## ArchOntos legal subject handoff
+
+`adapt_archontos_subject_ref()` consumes
+`archontos-aec-subject-ref/1` as `drawing-context-legal-subject/1` evidence.
+The adapter accepts stable project/object identity and, when present, the complete
+source/revision triple. Partial revision identity is rejected.
+
+Live CAD/session state such as `document_id`, `session_id`,
+`state_digest`, modification generation or execution flags is forbidden in
+the legal locator. The resulting record is
+`legal_evidence_only=true`, `canonical=false` and
+`execution_authorized=false`.

@@ -7,6 +7,7 @@ from context_fabric.contracts import SourceRevision
 from context_fabric.source_mapping import (
     LiveObjectObservation,
     TrustedSourceResolution,
+    build_executor_handoff,
     candidate_binding,
     source_byte_revision_id,
     verify_source_binding,
@@ -161,6 +162,34 @@ class SourceMappingTests(unittest.TestCase):
         )
         self.assertEqual(report["binding_state"], "CANDIDATE")
         self.assertIn("live_instance_path_mismatch", report["reasons"])
+
+    def test_verified_source_binding_builds_non_authorizing_executor_handoff(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+
+        self.assertEqual(handoff["schema"], "aec-executor-handoff/1")
+        self.assertEqual(handoff["binding_state"], "SOURCE_BOUND")
+        self.assertEqual(handoff["review_status"], "VERIFIED_FOR_REVIEW")
+        self.assertEqual(handoff["document_id"], "open-db-1")
+        self.assertEqual(handoff["source_id"], src.source_id)
+        self.assertEqual(handoff["object_locator"]["handle"], "2F3")
+        self.assertEqual(len(handoff["handoff_digest"]), 64)
+        self.assertFalse(handoff["execution_authorized"])
+        self.assertFalse(handoff["may_execute_mutation"])
+        self.assertTrue(handoff["requires_executor_authorization"])
+
+    def test_dirty_source_binding_cannot_cross_executor_handoff_gate(self):
+        src = source()
+        report = verify_source_binding(
+            record(src),
+            src,
+            resolution(src),
+            live(src, document_dirty=True),
+        )
+        self.assertEqual(report["binding_state"], "SOURCE_BOUND")
+        with self.assertRaisesRegex(ValueError, "VERIFIED_FOR_REVIEW"):
+            build_executor_handoff(report)
 
     def test_dirty_document_can_be_source_bound_but_not_review_ready(self):
         src = source()

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from ..classifier import normalize_storey
 from . import catalog
+from .auth import BearerTokenMiddleware, api_token_from_env
 from .config import Settings
 from .db import Database
 from .ingest_jobs import ingest_job
@@ -83,6 +84,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Source-grounded architectural drawing ontology and GraphRAG operational service",
         version="0.2.0",
     )
+
+    # Added before CORS so CORS stays the outermost layer and can still answer preflights and
+    # decorate 401 responses for allowed origins.
+    token = api_token_from_env()
+    if token:
+        app.add_middleware(BearerTokenMiddleware, token=token)
 
     origins = cors_origins_from_env()
     if origins:

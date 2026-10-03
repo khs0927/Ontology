@@ -43,6 +43,7 @@ def app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(api_module, "Database", make_db)
     monkeypatch.delenv("AEC_CORS_ORIGINS", raising=False)
+    monkeypatch.delenv("AEC_API_TOKEN", raising=False)
     imports = tmp_path / "imports"
     imports.mkdir()
     settings = Settings(dsn="dummy", data_root=tmp_path / "data", import_roots=(imports.resolve(),))

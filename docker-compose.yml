@@ -43,6 +43,9 @@ services:
       AEC_DATA_ROOT: /data
       # POST /v1/ingestions only accepts paths under these roots (container paths).
       AEC_IMPORT_ROOTS: ${AEC_CONTAINER_IMPORT_ROOTS:-/data}
+      # Optional: require "Authorization: Bearer <token>" on /v1 (power-cad-mcp: POWERCAD_ONTOLOGY_TOKEN).
+      AEC_API_TOKEN: ${AEC_API_TOKEN:-}
+      AEC_CORS_ORIGINS: ${AEC_CORS_ORIGINS:-}
       # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
       AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
       AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}

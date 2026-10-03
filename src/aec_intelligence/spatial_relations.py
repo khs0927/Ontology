@@ -35,11 +35,42 @@ _ROOM_BOUNDARY_LAYER = re.compile(r"area|room|space|실경계|실영역", re.IGN
 _AREA_TEXT = re.compile(r"^\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*$", re.IGNORECASE)
 _STOREY_RE = (
     (re.compile(r"지하\s*(\d{1,2})\s*층"), lambda m: (f"B{m.group(1)}", -int(m.group(1)))),
-    (re.compile(r"\bB(\d{1,2})F?\b", re.IGNORECASE), lambda m: (f"B{m.group(1)}", -int(m.group(1)))),
-    (re.compile(r"(\d{1,3})\s*층"), lambda m: (f"{m.group(1)}F", int(m.group(1)))),
-    (re.compile(r"\b(\d{1,3})F\b", re.IGNORECASE), lambda m: (f"{m.group(1)}F", int(m.group(1)))),
-    (re.compile(r"지붕\s*층|옥탑|\bRF\b|ROOF", re.IGNORECASE), lambda m: ("RF", None)),
+    (re.compile(r"(?<![A-Za-z0-9])B(\d{1,2})F?(?![A-Za-z0-9])", re.IGNORECASE), lambda m: (f"B{m.group(1)}", -int(m.group(1)))),
+    (re.compile(r"(?:지상\s*)?(\d{1,3})\s*층"), lambda m: (f"{int(m.group(1))}F", int(m.group(1)))),
+    (re.compile(r"(?<![A-Za-z0-9])(\d{1,3})F(?![A-Za-z0-9])", re.IGNORECASE), lambda m: (f"{int(m.group(1))}F", int(m.group(1)))),
+    (re.compile(r"옥탑|(?<![A-Za-z])PH(?![A-Za-z])", re.IGNORECASE), lambda m: ("PH", None)),
+    (re.compile(r"지붕\s*층?|옥상|(?<![A-Za-z])(?:RF|ROOF)(?![A-Za-z])", re.IGNORECASE), lambda m: ("RF", None)),
 )
+
+
+def parse_storey(text: str) -> tuple[str, int | None] | None:
+    """'지하2층'/'B2F' -> ('B2', -2); '지상2층'/'2층'/'2F' -> ('2F', 2); 옥탑/PH -> PH; 지붕층/옥상/RF -> RF.
+
+    Works inside bracketed or hyphenated titles such as 'M-503 - [ 지상2층가스배관평면도 ]'."""
+    title = re.sub(r"[\[\]{}()<>]", " ", str(text or ""))
+    title = re.sub(r"(?<![A-Za-z0-9])[A-Z]{1,3}-?\d{2,3}(?:-\d{1,3})?(?![A-Za-z0-9])", " ", title)  # drawing numbers
+    for pattern, build in _STOREY_RE:
+        found = pattern.search(title)
+        if found:
+            return build(found)
+    return None
+
+
+def storey_from_room_numbers(numbers: Sequence[str]) -> dict[str, Any] | None:
+    """'301', '302호', '305' -> 3F when a clear majority (>= 60 %) of 3-4 digit room numbers agree."""
+    floors = []
+    for value in numbers:
+        found = re.fullmatch(r"\s*(B?)(\d{3,4})\s*(?:호|호실)?\s*", str(value or ""), re.IGNORECASE)
+        if found and int(found.group(2)) // 100 > 0:
+            level = int(found.group(2)) // 100
+            floors.append((f"B{level}", -level) if found.group(1) else (f"{level}F", level))
+    if not floors:
+        return None
+    from collections import Counter
+    (name, level), count = Counter(floors).most_common(1)[0]
+    if count / len(floors) < 0.6:
+        return None
+    return {"name": name, "level": level, "evidence": f"room numbers: {count}/{len(floors)} on {name}"}
 
 
 # --------------------------------------------------------------------------- geometry
@@ -119,15 +150,19 @@ def _bbox_distance(p: Point, bbox: dict[str, float]) -> float:
 # --------------------------------------------------------------------------- sheet metadata
 
 def storey_from_sheet(sheet: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Storey of a plan sheet from its title ('1층 평면도' -> 1F, '지하1층' -> B1). Only plans carry a storey."""
-    if not sheet or sheet.get("category") not in {"plan", "structural"}:
+    """Storey of a plan sheet from its title ('1층 평면도' -> 1F, '지하1층' -> B1). Only plans carry a storey.
+
+    A caller that already resolved the storey (caption, plan block name, room numbers) passes ``sheet['storey']``."""
+    if not sheet:
+        return None
+    if isinstance(sheet.get("storey"), dict) and sheet["storey"].get("name"):
+        return sheet["storey"]
+    if sheet.get("category") not in {"plan", "structural"}:
         return None
     title = str(sheet.get("title") or "")
-    for pattern, build in _STOREY_RE:
-        found = pattern.search(title)
-        if found:
-            name, level = build(found)
-            return {"name": name, "level": level, "evidence": f"sheet title: {title}"}
+    found = parse_storey(title)
+    if found:
+        return {"name": found[0], "level": found[1], "evidence": f"sheet title: {title}"}
     return None
 
 
@@ -311,6 +346,8 @@ def build_spatial_relations(objects: list[CAIRObject], entities: Sequence[Any], 
         for space, _ in spaces:
             relations.append(_rel(sheet_obj.id, "depicts", space.id, 0.9, "space_label_on_sheet"))
         storey = storey_from_sheet(sheet)
+        if not storey and spaces:
+            storey = storey_from_room_numbers([space.properties.get("roomNumber") for space, _ in spaces])
         if storey:
             storey_obj = _derived_object(
                 project_id, "Storey", f"storey:{storey['name']}", template, 0.8, (storey["evidence"],),

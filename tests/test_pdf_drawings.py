@@ -66,6 +66,8 @@ def test_pdf_title_block_fields_match_dxf_schema(tmp_path, settings):
     assert page["properties"]["title_block"] == blocks[0]["id"]
     assert page["properties"]["drawing_category"] != "기타"
     assert any(r["predicate"] == "hasTitleBlock" and r["subject"] == page["id"] for r in result["relations"])
+    assert page["storey"] == "1F" and page["properties"]["storey_source"] == "title_block"
+    assert {o["storey"] for o in result["objects"] if o["type"] in {"Wall", "Annotation"}} == {"1F"}
 
 
 def test_pdf_vector_candidates(tmp_path, settings):
@@ -111,3 +113,20 @@ def test_textless_page_warns_instead_of_failing(tmp_path, settings, monkeypatch)
     assert result["metrics"]["pdf_textless_pages"] == 1
     assert any(w.startswith("OCR_REQUIRED") for w in result["warnings"])
     assert any(o["type"] == "TitleBlock" for o in result["objects"])
+
+
+def test_scanned_page_takes_its_storey_from_ocr_text(tmp_path, settings, monkeypatch):
+    from aec_intelligence.operational import parsers
+
+    def fake_ocr(source, doc, key, evidence):
+        return [parsers.observation(doc, f"{key}:ocr:0:0", "Annotation", "지하1층 평면도", evidence)]
+
+    monkeypatch.setattr(parsers, "ocr", fake_ocr)
+    path = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    doc.new_page(width=842, height=595).draw_line((10, 10), (500, 400))
+    doc.save(path)
+    result = parse_source(path, "doc_scan", tmp_path / "data" / "out", settings, "scan-0001.pdf")
+    page = next(o for o in result["objects"] if o["type"] == "Page")
+    assert page["storey"] == "B1" and page["properties"]["storey_source"] == "ocr_text"
+    assert {o["storey"] for o in result["objects"] if o["type"] == "Annotation"} == {"B1"}

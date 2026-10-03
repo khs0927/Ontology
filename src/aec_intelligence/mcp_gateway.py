@@ -843,12 +843,14 @@ class MCPGateway:
         from .operational.config import Settings
         from .operational.db import Database
         from .operational.search import SearchRouter
+        from .classifier import normalize_storey
         settings = Settings.from_env()
         router = SearchRouter(Database(settings.dsn), settings)
         return router.search(
             query=str(arguments["query"]),
             project_id=arguments.get("project_id"),
             kind=arguments.get("kind"),
+            storey=normalize_storey(arguments.get("storey")),
             top_k=int(arguments.get("top_k", 10)),
         ).to_dict()
 
@@ -915,7 +917,7 @@ class MCPGateway:
         return self._catalog_call("element_catalog", **self._pick(arguments, "project_id"))
 
     def _find_elements(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        return self._catalog_call("find_elements", **self._pick(arguments, "kind", "project_id", "document_id", "drawing_category", "layer", "block_name", "text", "bbox", "state", "include_properties", "limit", "cursor"))
+        return self._catalog_call("find_elements", **self._pick(arguments, "kind", "project_id", "document_id", "drawing_category", "layer", "block_name", "text", "bbox", "state", "storey", "include_properties", "limit", "cursor"))
 
     def _block_catalog(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return self._catalog_call("block_catalog", **self._pick(arguments, "project_id", "name_like", "limit", "cursor"))
@@ -979,11 +981,11 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.rebuild_project_from_drive", "Rebuild a project from Drive through an injected client", {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.rebuild_global_memory_from_drive", "Rebuild global memory from Drive through an injected client", {"type": "object", "properties": {}, "additionalProperties": False}),
     MCPToolDefinition("aec.refresh_derived_exports", "Backfill derived CAIR tables and graph interchange without rewriting canonical CAIR", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}}, "additionalProperties": False}),
-    MCPToolDefinition("aec.operational_search", "Execute multi-stage hybrid search across PostgreSQL and Apache AGE", {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "project_id": {"type": ["string", "null"]}, "kind": {"type": ["string", "null"]}, "top_k": {"type": "integer"}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.operational_search", "Execute multi-stage hybrid search across PostgreSQL and Apache AGE", {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "project_id": {"type": ["string", "null"]}, "kind": {"type": ["string", "null"]}, "storey": {"type": ["string", "null"], "description": "Storey such as 2F, 2층, B1, 지하1층, RF"}, "top_k": {"type": "integer"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.operational_ingest", "Enqueue CAD, PDF, or IFC sources into the operational database worker queue", {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "project_id": {"type": ["string", "null"]}, "discipline": {"type": ["string", "null"]}, "queue": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.operational_get_object", "Retrieve an architectural object and its relations from PostgreSQL and Apache AGE", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.element_catalog", "Read first: table of contents of parsed drawings in the operational database - element counts by kind (with Korean aliases), drawing category, layer, block, relation predicate and project", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}}, "additionalProperties": False}),
-    MCPToolDefinition("aec.find_elements", "List parsed elements with CAD handles, layer, block name, attributes, bbox and source evidence; filter by kind (Door/문/창호...), drawing_category (평면도/상세도...), layer, block_name, text, bbox; paginate with cursor", {"type": "object", "properties": {"kind": {"type": ["string", "array", "null"], "items": {"type": "string"}}, "project_id": {"type": ["string", "null"]}, "document_id": {"type": ["string", "null"]}, "drawing_category": {"type": ["string", "null"]}, "layer": {"type": ["string", "null"]}, "block_name": {"type": ["string", "null"]}, "text": {"type": ["string", "null"]}, "bbox": {"type": ["array", "string", "null"], "items": {"type": "number"}}, "state": {"type": ["string", "null"]}, "include_properties": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.find_elements", "List parsed elements with CAD handles, layer, block name, attributes, bbox and source evidence; filter by kind (Door/문/창호...), drawing_category (평면도/상세도...), storey (2F/2층/B1/지하1층/RF), layer, block_name, text, bbox; paginate with cursor", {"type": "object", "properties": {"kind": {"type": ["string", "array", "null"], "items": {"type": "string"}}, "project_id": {"type": ["string", "null"]}, "document_id": {"type": ["string", "null"]}, "drawing_category": {"type": ["string", "null"]}, "layer": {"type": ["string", "null"]}, "block_name": {"type": ["string", "null"]}, "text": {"type": ["string", "null"]}, "bbox": {"type": ["array", "string", "null"], "items": {"type": "number"}}, "state": {"type": ["string", "null"]}, "storey": {"type": ["string", "null"], "description": "Storey such as 2F, 2층, B1, 지하1층, RF"}, "include_properties": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.block_catalog", "CAD block library aggregated by name across drawings: definitions, instance counts, attribute tags, layers, xref/anonymous flags and what the instances were classified as", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "name_like": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.drawing_index", "Sheet index: documents and layouts with drawing category, title-block number/title/scale and per-sheet element counts", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "category": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.element_context", "Neighbourhood of one element through relations in both directions (contains, instanceOf, hasTitleBlock, hasSection ...), 1-2 hops, confirmed against the AGE graph", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}, "hops": {"type": "integer", "minimum": 1, "maximum": 2}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}}, "additionalProperties": False}),

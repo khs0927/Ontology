@@ -129,3 +129,15 @@ def test_mcp_gateway_dwg_converter_honors_env_and_arguments(monkeypatch):
     # explicit tool argument overrides env
     converter = gateway_module._dwg_converter({"dwg_converter": "oda", "oda_executable": "fake-oda.exe"})
     assert isinstance(converter, ODAConverter)
+
+
+def test_mcp_gateway_forwards_storey_filters(tmp_path: Path, monkeypatch):
+    from aec_intelligence.mcp_gateway import TOOL_DEFINITIONS
+    schemas = {tool.name: tool.input_schema for tool in TOOL_DEFINITIONS}
+    assert "storey" in schemas["aec.find_elements"]["properties"]
+    assert "storey" in schemas["aec.operational_search"]["properties"]
+    gateway = MCPGateway(tmp_path)
+    seen = {}
+    monkeypatch.setattr(gateway, "_catalog_call", lambda name, **kwargs: seen.update(kwargs) or {"status": "SUCCESS"})
+    assert gateway.call_tool("aec.find_elements", {"storey": "지하1층", "kind": "Door"})["status"] == "SUCCESS"
+    assert seen == {"storey": "지하1층", "kind": "Door"}

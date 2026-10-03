@@ -179,6 +179,7 @@ def _synthetic_snapshot(project, doc):
                  props={"block_name": "DOOR_SD", "layer": "A-DOOR", "attributes": {"DOOR_NO": "SD1", "FIRE": "갑종"}})
     door2 = _obs(doc, "A-101:D2", "Door", "SD2", layout="A-101", handle="D2", bbox=dict(min_x=50, min_y=50, max_x=51, max_y=51),
                  props={"block_name": "DOOR_SD", "dxf_attributes": {"layer": "A-DOOR"}, "attributes": {"DOOR_NO": "SD2"}})
+    door1["storey"] = "1F"
     window = _obs(doc, "A-501:W1", "Window", "W1", layout="A-501", handle="W1",
                   props={"block_name": "*U12", "effective_name": "WIN_SLIDE", "layer": "A-WIND", "attributes": {"WIN_NO": "W1"}})
     wall = _obs(doc, "A-101:L1", "Wall", "벽체", layout="A-101", handle="L1", props={"layer": "A-WALL"},
@@ -294,6 +295,10 @@ def test_find_elements_filters_and_paginates(seeded):
     window = next(i for i in by_effective if i["kind"] == "Window")
     assert window["attributes"] == {"WIN_NO": "W1"} and window["block_name"] == "WIN_SLIDE"
     assert [i["label"] for i in catalog.find_elements(db, project_id=project, text="갑종")["items"]] == ["SD1"]
+    for storey in ("1층", "1F", "1f", "1"):
+        on_first = catalog.find_elements(db, project_id=project, document_id=seeded["doc"], storey=storey)
+        assert [i["label"] for i in on_first["items"]] == ["SD1"] and on_first["filters"]["storey"] == "1F"
+    assert catalog.find_elements(db, project_id=project, document_id=seeded["doc"], storey="지하1층")["items"] == []
     near_origin = catalog.find_elements(db, document_id=seeded["doc"], kind="Door", bbox=[-1, -1, 2, 2])["items"]
     assert [i["label"] for i in near_origin] == ["SD1"]
     assert catalog.find_elements(db, project_id=project, kind="Door", include_properties=True)["items"][0]["properties"]
@@ -368,6 +373,7 @@ def test_rest_catalog_endpoints(seeded):
     assert elements["count"] == 2 and elements["next_cursor"]
     rest = client.get("/v1/elements", params={"project_id": project, "document_id": seeded["doc"], "kind": "Door,창호", "cursor": elements["next_cursor"]}).json()
     assert rest["count"] == 1
+    assert client.get("/v1/elements", params={"project_id": project, "document_id": seeded["doc"], "storey": "1층"}).json()["count"] == 1
     assert client.get("/v1/elements", params={"cursor": "%%%"}).status_code == 400
     assert client.get("/v1/elements", params={"bbox": "1,2"}).status_code == 400
     assert client.get("/v1/elements", params={"project_id": project, "document_id": seeded["doc"], "bbox": "-1,-1,2,2", "kind": "Door"}).json()["count"] == 1
@@ -396,6 +402,8 @@ def test_mcp_catalog_tools_with_database(seeded, tmp_path, monkeypatch):
     assert ctx["status"] == "SUCCESS" and ctx["nodes"]
     assert gateway.call_tool("aec.element_context", {"object_id": "obs_missing"})["status"] == "NOT_FOUND"
     assert gateway.call_tool("aec.find_elements", {"cursor": "%%%"})["status"] == "FAILED"
+    on_floor = gateway.call_tool("aec.find_elements", {"project_id": project, "document_id": seeded["doc"], "storey": "1층"})
+    assert on_floor["status"] == "SUCCESS" and [i["label"] for i in on_floor["items"]] == ["SD1"]
 
 
 # --------------------------------------------------------------------------- embeddings in Postgres

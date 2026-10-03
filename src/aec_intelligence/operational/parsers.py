@@ -9,7 +9,7 @@ from xml.etree import ElementTree
 
 from ..cair import Classification
 from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text, semantic_class,
-                          steel_sections, title_block_fields)
+                          steel_sections, storey_from, title_block_fields)
 from ..dxf import (_normalize_entity, INSUNITS, NormalizedCADEntity, block_effective_name, decode_dxf_text,
                    effective_block_name, read_dxf)
 
@@ -275,6 +275,7 @@ class _DXFSemantics:
                                        'region': 'title_text_bbox', 'layout': self.sheet.name,
                                        'layer': source['properties'].get('layer', '')})
         self.add(view, self.view)
+        self.layout_objects.append(view)
         self.relate(view['id'], 'derivedFrom', source['id'], method='detail_title_text')
 
     def end_layout(self):
@@ -296,9 +297,15 @@ class _DXFSemantics:
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
         view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
         category = view['properties']['drawing_category']
+        storey = storey_from(*candidates)
+        if storey:
+            view['properties'].update(storey)
+            view['storey'] = storey['storey']
         for obj in self.layout_objects:
             # Elements inherit their sheet's category; detail-view candidates keep their own.
             obj['properties'].setdefault('drawing_category', category)
+            if storey and not obj.get('storey'):
+                obj['storey'] = storey['storey']
         self._link_sections()
 
     def _link_sections(self):
@@ -397,6 +404,7 @@ def parse_source(source, doc, output, settings, source_name=None):
     base = {'source_hash':source.parent.name,'source_path':_safe_relative(source, settings.data_root),
             'source_name':name,'parser_version':PIPELINE_VERSION}
     root = observation(doc,'document','Document',name,base)
+    root['storey'] = storey_from(('file_name', name)).get('storey', '')
     objects, relations, warnings = [root], [], []
     result = {'objects':objects,'relations':relations,'warnings':warnings,'units':'unknown',
               'parser_version':PIPELINE_VERSION,'metrics':{'raw_entities':0,'pages':0,'views':0}}
@@ -521,6 +529,7 @@ def parse_source(source, doc, output, settings, source_name=None):
                     {**base,'page':i+1,'coordinate_system':'PDF_POINTS','page_size':[page.rect.width,page.rect.height],
                      'rotation':page.rotation})
                 add(page_obj)
+                page_start = len(objects)
                 result['metrics']['pages'] += 1
                 blocks = page.get_text('blocks')
                 for j,block in enumerate(blocks):
@@ -558,6 +567,7 @@ def parse_source(source, doc, output, settings, source_name=None):
                     page_obj['search_text'] += f" {fields.get('drawingNumber','')} {fields.get('drawingTitle','')}"
                     relations.append(relation(page_obj['id'],'hasTitleBlock',title['id'],'AI_INFERRED',
                                               source_hash=base['source_hash'],method='pdf_label_value'))
+                ocr_items = []
                 if not any(str(b[4]).strip() for b in blocks):
                     result['metrics']['pdf_textless_pages'] += 1
                     image = output/f'page-{i+1}.png'
@@ -571,6 +581,15 @@ def parse_source(source, doc, output, settings, source_name=None):
                                         '(run the ocr-worker profile with PaddleOCR for text).')
                         ocr_items = []
                     for obj in ocr_items: add(obj,page_obj)
+                # A scanned page has no title-block fields, so its OCR text is the last resort.
+                ocr_text = ' '.join(str(o.get('label', '')) for o in ocr_items)
+                storey = storey_from(('title_block', fields.get('drawingTitle', '')), ('file_name', name),
+                                     ('ocr_text', ocr_text))
+                if storey:
+                    page_obj['properties'].update(storey)
+                    for obj in [page_obj, *objects[page_start:]]:
+                        if not obj.get('storey'):
+                            obj['storey'] = storey['storey']
         # Docling augments text/table content; coordinate-bearing blocks above remain the primary citations.
         try:
             from docling.document_converter import DocumentConverter

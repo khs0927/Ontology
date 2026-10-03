@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..classifier import normalize_storey
 from . import catalog
 from .config import Settings
 from .db import Database
@@ -159,7 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             query=req.query,
             project_id=req.project_id,
             discipline=req.discipline,
-            storey=req.storey,
+            storey=normalize_storey(req.storey),
             revision=req.revision,
             kind=req.kind,
             top_k=req.top_k,
@@ -227,13 +228,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         text: str | None = Query(default=None, description="Substring of label, search text or attribute values"),
         bbox: str | None = Query(default=None, description="min_x,min_y,max_x,max_y in drawing coordinates"),
         state: str | None = None,
+        storey: str | None = Query(default=None, description="Storey such as 2F, 2층, B1, 지하1층, RF (normalised server-side)"),
         include_properties: bool = False,
         limit: int = Query(default=catalog.DEFAULT_LIMIT, ge=1, le=catalog.MAX_LIMIT),
         cursor: str | None = None,
     ) -> dict[str, Any]:
         return _catalog_call(catalog.find_elements, kind=kind, project_id=project_id, document_id=document_id,
                              drawing_category=drawing_category, layer=layer, block_name=block_name, text=text,
-                             bbox=bbox, state=state, include_properties=include_properties, limit=limit, cursor=cursor)
+                             bbox=bbox, state=state, include_properties=include_properties, limit=limit, cursor=cursor,
+                             storey=storey)
 
     @app.get("/v1/blocks")
     def list_blocks(

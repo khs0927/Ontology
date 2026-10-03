@@ -190,6 +190,19 @@ def test_sheets_get_categories_and_title_blocks(parsed):
     assert [(r["subject"], r["object"]) for r in _rels(parsed, "hasTitleBlock")] == [(views["A-501"]["id"], title["id"])]
 
 
+def test_sheets_and_their_elements_get_a_storey_from_title_or_file_name(parsed):
+    views = {o["evidence"]["layout"]: o for o in _by_type(parsed, "View") if o["properties"].get("view_kind") != "detail"}
+    model = views["Model"]
+    assert model["storey"] == "1F"
+    assert model["properties"]["storey_source"] == "file_name"
+    assert _one(parsed, "Document")["storey"] == "1F"
+    walls = _by_type(parsed, "Wall")
+    assert walls and all(w["storey"] == "1F" for w in walls)
+    assert {s["storey"] for s in _by_type(parsed, "Space")} == {"1F"}
+    details = [o for o in _by_type(parsed, "View") if o["properties"].get("view_kind") == "detail"]
+    assert details and all(d["storey"] == "1F" for d in details)
+
+
 def test_detail_titles_create_detail_view_candidates(parsed):
     details = {o["properties"]["detail_title"]: o for o in _by_type(parsed, "View") if o["properties"].get("view_kind") == "detail"}
     assert set(details) == {"계단 상세도", "SECTION A-A"}

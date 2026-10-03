@@ -440,6 +440,59 @@ def drawing_category(*candidates: tuple[str, str]) -> dict[str, str]:
             "drawing_category_evidence": ""}
 
 
+# Storey tokens as Korean drawings write them: 지하1층/B1F -> B1, 3층/3F/3FL -> 3F, 지붕·옥상·옥탑 -> RF
+# (same names as spatial_relations.storey_from_sheet).
+# Ranges such as "1~3층" or "지하1 ~ 지하3층" are removed first, so a multi-storey sheet stays unassigned.
+_STOREY_RANGE = re.compile(
+    r"(?:지하|지상|(?<![A-Z0-9])B)?\s*\d{1,3}\s*(?:층|FL|F)?\s*[~\-–～]\s*(?:지하|지상|B)?\s*\d{1,3}\s*(?:층|FL|F)?",
+    re.IGNORECASE,
+)
+_STOREY_TOKEN = re.compile(
+    r"(?:지하\s*(?P<bn>\d{1,2})\s*층)"
+    r"|(?:(?<![A-Z0-9])B\s*(?P<bn2>\d{1,2})\s*(?:FL|F|층)(?![A-Z0-9]))"
+    r"|(?P<roof>지붕|옥상|옥탑|(?<![A-Z0-9])(?:RF|ROOF)(?![A-Z0-9]))"
+    r"|(?:(?<![A-Z0-9~\-])(?P<fn>\d{1,3})\s*(?:층|(?:FL|F)(?![A-Z0-9])))",
+    re.IGNORECASE,
+)
+
+
+def storey_tokens(text: str) -> set[str]:
+    """Distinct normalised storeys named in ``text`` ('B1', '3F', 'RF')."""
+    found = set()
+    for m in _STOREY_TOKEN.finditer(_STOREY_RANGE.sub(" ", str(text or ""))):
+        if m.group("bn") or m.group("bn2"):
+            found.add(f"B{int(m.group('bn') or m.group('bn2'))}")
+        elif m.group("roof"):
+            found.add("RF")
+        elif m.group("fn") and int(m.group("fn")) > 0:
+            found.add(f"{int(m.group('fn'))}F")
+    return found
+
+
+def storey_from(*candidates: tuple[str, str]) -> dict[str, str]:
+    """First candidate naming exactly one storey, in priority order; {} when none or only ambiguous ones."""
+    for source, text in candidates:
+        tokens = storey_tokens(text) if text else set()
+        if len(tokens) == 1:
+            return {"storey": tokens.pop(), "storey_source": source, "storey_evidence": str(text)[:120]}
+    return {}
+
+
+def normalize_storey(value: str | None) -> str | None:
+    """Query-side normalisation: '2층', '2f', 'B1F', '지하1층' -> '2F', 'B1'; unknown text is returned stripped."""
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip()
+    tokens = storey_tokens(text)
+    if len(tokens) == 1:
+        return tokens.pop()
+    if m := re.fullmatch(r"B\s*(\d{1,2})", text, re.IGNORECASE):
+        return f"B{int(m.group(1))}"
+    if text.isdigit() and int(text) > 0:
+        return f"{int(text)}F"
+    return text
+
+
 TITLE_BLOCK_KEYS: dict[str, tuple[str, ...]] = {
     "drawingNumber": ("DWG_NO", "DWGNO", "DRAWING_NO", "DRAWINGNO", "DRAWING_NUMBER", "DWG_NUMBER", "SHEET_NO", "SHEETNO",
                       "DNO", "도면번호", "도번", "시트번호"),

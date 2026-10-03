@@ -11,8 +11,10 @@ services:
       dockerfile: Dockerfile.db
     image: aec-postgres-age:16-1.6.0
     container_name: aec-db
+    # Published on loopback only: the default password is a placeholder and the API has no auth.
+    # Change the host side of the mapping only in a reviewed deployment with a front door.
     ports:
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     environment:
       POSTGRES_DB: aec
       POSTGRES_USER: aec
@@ -35,10 +37,15 @@ services:
     image: aec-intelligence-app:latest
     container_name: aec-api
     ports:
-      - "58000:8000"
+      - "127.0.0.1:58000:8000"
     environment:
       AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data
+      # POST /v1/ingestions only accepts paths under these roots (container paths).
+      AEC_IMPORT_ROOTS: ${AEC_CONTAINER_IMPORT_ROOTS:-/data}
+      # Optional: require "Authorization: Bearer <token>" on /v1 (power-cad-mcp: POWERCAD_ONTOLOGY_TOKEN).
+      AEC_API_TOKEN: ${AEC_API_TOKEN:-}
+      AEC_CORS_ORIGINS: ${AEC_CORS_ORIGINS:-}
       # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
       AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
       AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
@@ -99,7 +106,7 @@ services:
       MAX_CLIENT_BATCH_SIZE: "32"
       AUTO_TRUNCATE: "true"
     ports:
-      - "58080:80"
+      - "127.0.0.1:58080:80"
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}/docker/tei-cache:/data
     restart: unless-stopped

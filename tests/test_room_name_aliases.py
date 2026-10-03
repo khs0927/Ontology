@@ -23,7 +23,7 @@ def test_indexed_room_names_keep_display_name_and_add_aliases(text, display, nor
     assert room["roomName"] == display
     assert room["roomNameNormalized"] == normalized
     assert normalized in room["roomNameAliases"]
-    base, index = normalized[:-len(normalized.lstrip("침실"))] if False else ("침실", normalized[len("침실"):])
+    index = normalized[len("침실"):]
     assert f"침실 {index}" in room["roomNameAliases"]
 
 

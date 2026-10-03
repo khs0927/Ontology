@@ -32,3 +32,12 @@ not prove an unsaved in-memory document matches. Recheck inside executor transac
 Native AutoCAD acceptance, registry snapshot acquisition, evidence persistence,
 supersession resolution, HS asset exporter and runtime routing are NOT implemented
 by this milestone. Do not advertise any provider as verified from these unit tests.
+
+## Exact-byte snapshot import
+
+`import_snapshot` accepts UTF-8 JSON bytes and calculates the provenance SHA-256
+over those exact bytes. Duplicate keys, non-object roots and malformed provider
+lists are rejected. Whitespace changes therefore produce a different digest.
+This proves local byte integrity only: the caller still must authenticate the
+upstream repository and pinned revision during acquisition. No imported
+declaration becomes verification evidence or grants execution permission.

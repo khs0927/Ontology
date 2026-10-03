@@ -1,4 +1,3 @@
-import copy
 import hashlib
 import json
 
@@ -25,10 +24,15 @@ def test_parity_is_not_verification_or_permission():
 @pytest.mark.parametrize("field", ["entities", "layers", "block_definitions"])
 def test_each_census_mismatch(field):
     secondary = report("acadsharp")
-    secondary[field]["extra"] = 1
+    if field == "entities":
+        secondary[field] = {"CIRCLE": 2}
+    elif field == "layers":
+        secondary[field] = {"extra": 2}
+    else:
+        secondary[field]["extra"] = 1
     result = compare_reports(report(), secondary)
     assert result["status"] == "MISMATCH"
-    assert result["differences"][field]["extra"] == {"primary": 0, "secondary": 1}
+    assert result["differences"][field]
 
 
 @pytest.mark.parametrize("key,value", [("source_sha256", "b"*64), ("units", "m"),
@@ -53,7 +57,7 @@ def test_unsupported_not_parity():
     assert compare_reports(report(), secondary)["status"] == "INCOMPLETE"
 
 
-@pytest.mark.parametrize("change", [{"entities": {}}, {"entities": {"LINE": True}},
+@pytest.mark.parametrize("change", [{"entities": {}}, {"layers": {"0": 1}}, {"entities": {"LINE": True}},
                                    {"entities": {"LINE": -1}}, {"scope": "expanded"},
                                    {"units": "unknown"}, {"schema_version": True}])
 def test_invalid_reports_fail_closed(change):

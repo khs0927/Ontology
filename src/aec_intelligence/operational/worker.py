@@ -59,6 +59,31 @@ class IngestionWorker:
     def stop(self) -> None:
         self._stop_event.set()
 
+    def _renew_lease(self, job_id, retries: int = 3, retry_delay: float = 1.0) -> bool:
+        """Renew one job lease, retrying transient database errors without hiding lease loss."""
+        retries = max(1, int(retries))
+        for attempt in range(1, retries + 1):
+            try:
+                alive = self.db.heartbeat(job_id, self.worker_id, self.settings.lease_seconds)
+            except Exception as exc:
+                if attempt >= retries:
+                    logger.error(
+                        "Worker %s could not renew lease for job %s after %s attempts: %s",
+                        self.worker_id, job_id, retries, exc,
+                    )
+                    return False
+                logger.warning(
+                    "Worker %s heartbeat error for job %s (attempt %s/%s): %s",
+                    self.worker_id, job_id, attempt, retries, exc,
+                )
+                time.sleep(max(0.0, retry_delay))
+                continue
+            if not alive:
+                logger.error("Worker %s lost lease for job %s", self.worker_id, job_id)
+                return False
+            return True
+        return False
+
     def run_once(self) -> bool:
         """Attempts to claim and process a single queued job. Returns True if a job was processed."""
         job = self.db.claim(
@@ -75,12 +100,13 @@ class IngestionWorker:
         logger.info(f"Worker {self.worker_id} claimed job {job_id} on queue {self.queue}")
 
         heartbeat_stop = threading.Event()
+        lease_lost = threading.Event()
 
         def _heartbeat_loop():
             interval = max(self.settings.lease_seconds // 3, 5)
             while not heartbeat_stop.wait(interval):
-                alive = self.db.heartbeat(job_id, self.worker_id, self.settings.lease_seconds)
-                if not alive:
+                if not self._renew_lease(job_id):
+                    lease_lost.set()
                     break
 
         heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
@@ -90,7 +116,19 @@ class IngestionWorker:
             result = self.process_job(job)
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=2)
-            self.db.finish(job_id, self.worker_id, result=result, error=None)
+            if lease_lost.is_set():
+                logger.error(
+                    "Job %s completed processing after its lease was lost; leaving it for safe retry",
+                    job_id,
+                )
+                return True
+            finalized = self.db.finish(job_id, self.worker_id, result=result, error=None)
+            if not finalized:
+                logger.error(
+                    "Job %s completed processing but could not finalize its lease; leaving it for safe retry",
+                    job_id,
+                )
+                return True
             logger.info(f"Job {job_id} succeeded")
             return True
         except Exception as exc:
@@ -98,7 +136,9 @@ class IngestionWorker:
             heartbeat_thread.join(timeout=2)
             error_msg = f"{type(exc).__name__}: {exc}"
             logger.exception(f"Job {job_id} failed: {error_msg}")
-            self.db.finish(job_id, self.worker_id, result=None, error=error_msg)
+            marked_failed = self.db.finish(job_id, self.worker_id, result=None, error=error_msg)
+            if not marked_failed:
+                logger.error("Job %s failure could not be finalized because its lease is no longer owned", job_id)
             return True
 
     def run_forever(self, poll_interval: float = 2.0) -> None:
@@ -166,7 +206,9 @@ class IngestionWorker:
         relative_snapshot_path = str(snapshot_file.relative_to(self.settings.data_root))
 
         # Project to PostgreSQL tables & Apache AGE graph
-        with self.db.connect() as conn:
+        with self.db.connect(
+            statement_timeout_seconds=self.settings.ingest_statement_timeout_seconds
+        ) as conn:
             self.db.project(conn, snapshot, relative_snapshot_path)
             # Index pgvector embeddings
             indexed_embeddings = index_snapshot_embeddings(conn, snapshot, self.settings)

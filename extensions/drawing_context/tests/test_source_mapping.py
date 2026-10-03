@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import unittest
 
 from context_fabric.adapters import adapt_snapshot

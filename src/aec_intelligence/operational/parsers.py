@@ -43,6 +43,65 @@ def storey_from_text(text):
     return '옥탑' if found['roof'] in ('옥탑', '지붕') else found['roof'].upper()
 
 
+_DRAWING_NUMBER_RE = re.compile(
+    r'(?<![A-Za-z0-9])(?P<prefix>[A-Z]{1,4})\s*[-_.]?\s*(?P<number>\d{2,4}(?:[-_.]\d{1,3})?[A-Z]?)(?![A-Za-z0-9])',
+    re.IGNORECASE,
+)
+
+
+def normalize_drawing_number(text):
+    """Return a stable sheet number such as A-101 / S-201 from labels or filenames."""
+    found = _DRAWING_NUMBER_RE.search(str(text or ''))
+    if not found:
+        return None
+    prefix = found['prefix'].upper()
+    number = re.sub(r'[-_.]+', '-', found['number'].upper())
+    return f'{prefix}-{number}'
+
+
+def _iter_nested_semantic_entities(insert, max_depth=5, max_entities=2000):
+    """Yield WCS-transformed nested TEXT/MTEXT/INSERT entities from a block reference."""
+    emitted = 0
+    root_layer = decode_dxf_text(insert.dxf.get('layer', '0'))
+    root_name = decode_dxf_text(insert.dxf.get('name', ''))
+
+    def walk(ref, path, inherited_layer, ancestry):
+        nonlocal emitted
+        if emitted >= max_entities or len(path) >= max_depth:
+            return
+        doc = getattr(ref, 'doc', None)
+        name = decode_dxf_text(ref.dxf.get('name', ''))
+        try:
+            block = doc.blocks.get(name) if doc is not None else None
+        except Exception:
+            block = None
+        if block is None:
+            return
+        flags = int(block.block.dxf.get('flags', 0) or 0)
+        if flags & 12:
+            return
+        try:
+            children = list(ref.virtual_entities())
+        except Exception:
+            return
+        for index, child in enumerate(children):
+            if emitted >= max_entities:
+                break
+            kind = child.dxftype()
+            child_path = (*path, index)
+            raw_layer = decode_dxf_text(child.dxf.get('layer', '0'))
+            effective_layer = inherited_layer if raw_layer == '0' else raw_layer
+            if kind in ('TEXT', 'MTEXT', 'INSERT'):
+                emitted += 1
+                yield child, child_path, effective_layer
+            if kind == 'INSERT' and len(child_path) < max_depth:
+                child_name = decode_dxf_text(child.dxf.get('name', ''))
+                if child_name and child_name not in ancestry:
+                    yield from walk(child, child_path, effective_layer, ancestry | {child_name})
+
+    yield from walk(insert, (), root_layer, {root_name} if root_name else set())
+
+
 def _finite_bbox(bounds):
     """ezdxf BoundingBox -> bbox dict, or {} when empty or not finite."""
     if bounds is None or not bounds.has_data:

@@ -15,10 +15,18 @@ from psycopg.types.json import Jsonb
 MIGRATIONS_DIR = Path(__file__).with_name('migrations')
 CYPHER_TAG = '$aec_cypher$'
 GRAPH_BATCH = 500
+INSERT_BATCH = 1000
+INGEST_STATEMENT_TIMEOUT = '15min'
 # Relation states that are authoritative on their own; AI_INFERRED edges need AEC_GRAPH_MIN_CONFIDENCE.
 GRAPH_STATES = ('OBSERVED', 'USER_CONFIRMED', 'CALCULATED')
 _EDGE_LABEL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,62}$')
 _RESERVED_LABELS = {'Entity', 'Rel'}
+
+
+def ingest_statement_timeout():
+    """Per-transaction statement_timeout for ingestion (AEC_INGEST_STATEMENT_TIMEOUT, e.g. '15min', '0' = none)."""
+    value = os.environ.get('AEC_INGEST_STATEMENT_TIMEOUT', '').strip() or INGEST_STATEMENT_TIMEOUT
+    return value if re.fullmatch(r'\d+\s*(?:ms|s|min|h)?', value) else INGEST_STATEMENT_TIMEOUT
 
 
 def _batches(rows, size=GRAPH_BATCH):
@@ -229,6 +237,9 @@ class Database:
 
     def project(self, conn, snapshot, relative_path):
         doc, rev = snapshot['document_id'], snapshot['revision']
+        # Ingestion of a large drawing legitimately runs longer than the interactive 30 s limit;
+        # SET LOCAL scopes the raise to this transaction only.
+        conn.execute(sql.SQL('SET LOCAL statement_timeout = {}').format(sql.Literal(ingest_statement_timeout())))
         conn.execute("""INSERT INTO aec.documents(id,project_id,source_key,name,revision,source_hash,snapshot_path)
             VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET revision=EXCLUDED.revision,
             source_hash=EXCLUDED.source_hash,snapshot_path=EXCLUDED.snapshot_path,updated_at=now()""",
@@ -237,19 +248,26 @@ class Database:
                      (doc,rev,relative_path,snapshot['source_hash']))
         conn.execute('DELETE FROM aec.objects WHERE document_id=%s',(doc,))
         conn.execute('DELETE FROM aec.relations WHERE document_id=%s',(doc,))
+        object_rows = []
         for obj in snapshot['objects']:
             bbox = obj.get('bbox') or {}
             bounds = None
             if all(k in bbox for k in ('min_x','min_y','max_x','max_y')):
                 x,y,X,Y = (bbox[k] for k in ('min_x','min_y','max_x','max_y'))
                 bounds = f'POLYGON(({x} {y},{X} {y},{X} {Y},{x} {Y},{x} {y}))'
-            conn.execute("""INSERT INTO aec.objects(id,project_id,document_id,revision,kind,discipline,storey,
-                label,search_text,payload,bounds,units) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,0),%s)""",
-                (obj['id'],snapshot['project_id'],doc,rev,obj['type'],snapshot.get('discipline',''),
-                 obj.get('storey',''),obj['label'],obj['search_text'],Jsonb(obj),bounds,snapshot.get('units','unknown')))
-        for rel in snapshot['relations']:
-            conn.execute('INSERT INTO aec.relations VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-                (rel['id'],snapshot['project_id'],doc,rev,rel['subject'],rel['predicate'],rel['object'],rel['state'],Jsonb(rel)))
+            object_rows.append((obj['id'],snapshot['project_id'],doc,rev,obj['type'],snapshot.get('discipline',''),
+                                obj.get('storey',''),obj['label'],obj['search_text'],Jsonb(obj),bounds,
+                                snapshot.get('units','unknown')))
+        relation_rows = [(rel['id'],snapshot['project_id'],doc,rev,rel['subject'],rel['predicate'],rel['object'],
+                          rel['state'],Jsonb(rel)) for rel in snapshot['relations']]
+        # Batched: one statement per row on a 50k-object drawing hit the 30 s statement_timeout.
+        with conn.cursor() as cur:
+            for batch in _batches(object_rows, INSERT_BATCH):
+                cur.executemany("""INSERT INTO aec.objects(id,project_id,document_id,revision,kind,discipline,storey,
+                    label,search_text,payload,bounds,units) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,ST_GeomFromText(%s,0),%s)""",
+                    batch)
+            for batch in _batches(relation_rows, INSERT_BATCH):
+                cur.executemany('INSERT INTO aec.relations VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)', batch)
         conn.execute("""INSERT INTO aec.index_state(document_id,sql_revision) VALUES(%s,%s)
             ON CONFLICT(document_id) DO UPDATE SET sql_revision=EXCLUDED.sql_revision,embedding_revision=0,rag_revision=0,error=NULL""", (doc,rev))
         self.project_graph(conn,snapshot)

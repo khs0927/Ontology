@@ -32,6 +32,10 @@ class TrustedSourceResolution:
     resolved_path: str
     resolved_sha256: str
     resolver_id: str
+    resolver_issuer: str
+    trust_domain: str
+    signature_key_id: str
+    receipt_signature_verified: bool
     cache_entry_id: str
     resolver_receipt_sha256: str
     immutable_cache: bool
@@ -44,6 +48,9 @@ class TrustedSourceResolution:
             "resolved_path",
             "resolved_sha256",
             "resolver_id",
+            "resolver_issuer",
+            "trust_domain",
+            "signature_key_id",
             "cache_entry_id",
             "resolver_receipt_sha256",
             "resolved_at",
@@ -54,6 +61,8 @@ class TrustedSourceResolution:
         normalize_native_path(self.resolved_path)
         if len(self.resolver_receipt_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in self.resolver_receipt_sha256):
             raise ValueError("resolver_receipt_sha256 must be lowercase SHA-256")
+        if self.receipt_signature_verified is not True:
+            raise ValueError("source resolution requires a verified resolver receipt signature")
         if self.immutable_cache is not True:
             raise ValueError("source resolution must point to an immutable cache entry")
 
@@ -205,6 +214,10 @@ def verify_source_binding(
         "parser_revision_id": source.revision_id,
         "resolver": {
             "resolver_id": resolution.resolver_id,
+            "resolver_issuer": resolution.resolver_issuer,
+            "trust_domain": resolution.trust_domain,
+            "signature_key_id": resolution.signature_key_id,
+            "receipt_signature_verified": resolution.receipt_signature_verified,
             "cache_entry_id": resolution.cache_entry_id,
             "resolver_receipt_sha256": resolution.resolver_receipt_sha256,
             "immutable_cache": resolution.immutable_cache,

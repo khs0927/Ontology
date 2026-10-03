@@ -64,6 +64,8 @@ def validate_report(report: Any) -> None:
                 raise ValueError(key + "_name")
             if type(count) is not int or not 0 <= count <= 1_000_000_000:
                 raise ValueError(key + "_count")
+    if sum(report["layers"].values()) != sum(report["entities"].values()):
+        raise ValueError("layer_entity_total_mismatch")
     if sum(report["entities"].values()) == 0:
         raise ValueError("empty_census")
 

@@ -357,7 +357,9 @@ class _DXFSemantics:
 
     def end_layout(self):
         view, sheet = self.view, self.sheet
-        title = self.title_blocks[0] if self.title_blocks else None
+        split_titles = [t for t in self.title_blocks if t.get('bbox') and
+                        (t['properties'].get('drawingNumber') or t['properties'].get('drawingTitle'))]
+        title = split_titles[0] if len(split_titles) == 1 else (self.title_blocks[0] if len(self.title_blocks) == 1 else None)
         fields = title['properties'] if title else {}
         texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
         candidates = [('title_block', fields.get('drawingTitle', ''))]
@@ -372,6 +374,12 @@ class _DXFSemantics:
                                        if k in fields})
             view['properties']['title_block'] = title['id']
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
+        normalized_number = normalize_drawing_number(view['properties'].get('drawingNumber'))
+        if not normalized_number:
+            normalized_number = next((normalize_drawing_number(value) for _, value in candidates
+                                      if normalize_drawing_number(value)), None)
+        if normalized_number:
+            view['properties']['drawingNumber'] = normalized_number
         view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
         storey = next(filter(None, (storey_from_text(value) for _, value in candidates)), None)
         if storey and view['properties']['drawing_category'] == '평면도':
@@ -383,7 +391,74 @@ class _DXFSemantics:
             if storey and obj['type'] == 'Space':
                 obj['properties'].setdefault('storey', storey)
         self._link_area_texts()
+        self._split_title_block_views(split_titles)
         self._link_sections()
+
+    def _split_title_block_views(self, titles):
+        """Create calculated sheet Views for layouts that contain multiple attributed title blocks."""
+        if len(titles) < 2:
+            return
+        frames = []
+        for index, title in enumerate(titles, 1):
+            bbox = title.get('bbox') or {}
+            if not all(k in bbox for k in ('min_x', 'min_y', 'max_x', 'max_y')):
+                continue
+            props = title.get('properties') or {}
+            number = normalize_drawing_number(props.get('drawingNumber'))
+            drawing_title = str(props.get('drawingTitle') or '').strip()
+            if not (number or drawing_title):
+                continue
+            category = drawing_category(('title_block', drawing_title), ('drawing_number', number or ''))
+            storey = storey_from_text(drawing_title)
+            sheet_props = {
+                'view_kind': 'sheet', 'layout': self.sheet.name, 'sheet_index': index,
+                'drawingNumber': number or str(props.get('drawingNumber') or ''),
+                'drawingTitle': drawing_title, **category,
+            }
+            if storey:
+                sheet_props['storey'] = storey
+            sub = observation(
+                self.doc, f"sheet:{self.sheet.name}:{index}:{number or drawing_title}", 'View',
+                f"{self.name} {self.sheet.name} {number or ''} {drawing_title}",
+                {**self.base, 'layout': self.sheet.name, 'title_block': title['id']}, bbox,
+                state='CALCULATED', properties=sheet_props)
+            self.add(sub, self.view)
+            self.relate(sub['id'], 'hasTitleBlock', title['id'], 'CALCULATED',
+                        method='title_block_bbox', confidence=1.0)
+            frames.append((sub, bbox, storey))
+        if len(frames) < 2:
+            return
+
+        def centre(obj):
+            box = obj.get('bbox') or {}
+            if not all(k in box for k in ('min_x', 'min_y', 'max_x', 'max_y')):
+                return None
+            return ((box['min_x'] + box['max_x']) / 2.0, (box['min_y'] + box['max_y']) / 2.0)
+
+        def frame_area(box):
+            return max(0.0, box['max_x'] - box['min_x']) * max(0.0, box['max_y'] - box['min_y'])
+
+        for obj in list(self.layout_objects):
+            point = centre(obj)
+            if point is None:
+                continue
+            x, y = point
+            matches = [frame for frame in frames if frame[1]['min_x'] <= x <= frame[1]['max_x']
+                       and frame[1]['min_y'] <= y <= frame[1]['max_y']]
+            if not matches:
+                continue
+            sub, _, storey = min(matches, key=lambda frame: frame_area(frame[1]))
+            self.relate(sub['id'], 'contains', obj['id'], 'CALCULATED',
+                        method='title_block_bbox', confidence=0.95)
+            sheet_number = sub['properties'].get('drawingNumber')
+            if sheet_number:
+                obj['properties'].setdefault('sheet_number', sheet_number)
+            obj['properties'].setdefault('sheet_view', sub['id'])
+            if sub['properties'].get('drawingTitle'):
+                obj['properties'].setdefault('sheet_title', sub['properties']['drawingTitle'])
+            if storey and obj['type'] == 'Space':
+                obj['properties'].setdefault('storey', storey)
+        self.metrics['sheet_views'] += len(frames)
 
     def _link_area_texts(self):
         """Give a room-name Space the area written as a separate text right next to it (nearest, mutual, within 3 heights)."""

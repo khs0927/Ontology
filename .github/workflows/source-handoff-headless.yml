@@ -1,0 +1,20 @@
+name: Portable source handoff contracts
+on:
+  pull_request:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  headless:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s extensions/drawing_context/tests -p 'test_source*.py' -v
+        env:
+          PYTHONPATH: extensions/drawing_context

@@ -10,7 +10,7 @@ from typing import Any
 from ..classifier import normalize_storey, storey_tokens
 from .config import Settings
 from .db import Database, graph_name
-from .embeddings import EmbeddingService, vector_literal
+from .embeddings import HASH_MODEL, EmbeddingEndpointError, EmbeddingService, vector_literal
 
 # Storey recognition is canonicalized in aec_intelligence.classifier (PR #19).
 # This helper only renders one already-normalized storey ID as a PostgreSQL regex,
@@ -185,13 +185,21 @@ class SearchRouter:
         unresolved: list[dict[str, Any]] = []
 
         # Only vectors produced by the same model as the query vector are comparable.
-        query_model, query_vecs = self.embedding_service.embed_with_model([query])
-        vec_str = vector_literal(query_vecs[0])
-        if query_model != self.embedding_service.active_model():
-            warnings.append(
-                f"Embedding endpoint unavailable ({self.embedding_service.last_error}); "
-                f"vector stage limited to '{query_model}' vectors"
-            )
+        query_model: str | None = None
+        vec_str: str | None = None
+        try:
+            query_model, query_vecs = self.embedding_service.embed_with_model([query])
+        except EmbeddingEndpointError as exc:
+            warnings.append(f"Embedding endpoint unavailable ({exc}); searching without the vector stage")
+        else:
+            if query_model == HASH_MODEL:
+                warnings.append(
+                    "AEC_EMBEDDING_URL is not configured, so query vectors would come from the offline "
+                    "hash model; searching without the vector stage"
+                )
+                query_model = None
+            else:
+                vec_str = vector_literal(query_vecs[0])
 
         parsed = parse_query(query)
         effective_kind = kind or parsed.kind
@@ -238,10 +246,13 @@ class SearchRouter:
                 lexical_params: list[Any] = [p for t in terms
                                              for p in ((like_pattern(t), t) if len(re.sub(r"\W", "", t)) >= 3
                                                        else (like_pattern(t),))]
-                match_sql = ("(" + " OR ".join("o.search_text ILIKE %s" for _ in terms)
-                             + " OR word_similarity(%s, o.search_text) > 0.3"
-                             + " OR (e.embedding IS NOT NULL AND (e.embedding <=> %s::vector) < 0.6))")
-                match_params: list[Any] = [like_pattern(t) for t in terms] + [" ".join(terms), vec_str]
+                match_clauses = ["o.search_text ILIKE %s" for _ in terms]
+                match_clauses.append("word_similarity(%s, o.search_text) > 0.3")
+                match_params: list[Any] = [like_pattern(t) for t in terms] + [" ".join(terms)]
+                if vec_str is not None:
+                    match_clauses.append("(e.embedding IS NOT NULL AND (e.embedding <=> %s::vector) < 0.6)")
+                    match_params.append(vec_str)
+                match_sql = "(" + " OR ".join(match_clauses) + ")"
                 lexical_weight = 0.6
             else:
                 # Only intents ("2층 방"): the storey and kind filters are the whole question.
@@ -250,7 +261,15 @@ class SearchRouter:
                 if not (storey_level or effective_kind):
                     lexical_sql = "0.0"
                 lexical_weight = 0.6
-            vector_weight = 1.0 - lexical_weight
+            # No real query vector means no vector stage at all: hash vectors are not comparable with
+            # anything, and rank on them would look like a semantic result while being noise.
+            vector_weight = 0.0 if query_model is None else 1.0 - lexical_weight
+            if query_model is None:
+                vector_select, embedding_join, vector_params = "0.0 as vector_score", "", []
+            else:
+                vector_select = "COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score"
+                embedding_join = "LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s"
+                vector_params = [vec_str, query_model]
 
             sql_query = f"""
                 SELECT * FROM (
@@ -258,17 +277,17 @@ class SearchRouter:
                         o.id, o.project_id, o.document_id, d.name as document_name, o.revision, o.kind,
                         o.discipline, o.storey, o.label, o.search_text, o.payload,
                         {lexical_sql} as lexical_score,
-                        COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score,
+                        {vector_select},
                         CASE WHEN o.kind IN {GENERIC_KINDS_SQL} THEN 0.0 ELSE {DOMAIN_KIND_BONUS} END as kind_prior
                     FROM aec.objects o
                     JOIN aec.documents d ON o.document_id = d.id
-                    LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s
+                    {embedding_join}
                     WHERE {where_sql} AND {match_sql}
                 ) ranked
                 ORDER BY lexical_score * {lexical_weight} + vector_score * {vector_weight} + kind_prior DESC, label
                 LIMIT %s
             """
-            full_params = [*lexical_params, vec_str, query_model, *params, *match_params, top_k * 2]
+            full_params = [*lexical_params, *vector_params, *params, *match_params, top_k * 2]
 
             try:
                 with conn.transaction():

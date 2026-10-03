@@ -55,7 +55,7 @@ def test_dxf_job_lands_in_sql_graph_and_vector_index(stack):
     assert IngestionWorker(db, settings).run_once()
 
     with db.connect() as conn:
-        job = conn.execute("SELECT state, error FROM aec.jobs WHERE dedup_key=%s", (f"it:{project}",)).fetchone()
+        job = conn.execute("SELECT state, error, result FROM aec.jobs WHERE dedup_key=%s", (f"it:{project}",)).fetchone()
         assert job["state"] == "SUCCEEDED", job["error"]
         objects = conn.execute("SELECT count(*) AS n FROM aec.objects WHERE project_id=%s", (project,)).fetchone()["n"]
         embedded = conn.execute("""SELECT count(*) AS n FROM aec.embeddings e JOIN aec.objects o ON o.id=e.object_id
@@ -63,10 +63,17 @@ def test_dxf_job_lands_in_sql_graph_and_vector_index(stack):
         nodes = db.cypher(conn, graph_name(project), "MATCH (n:Entity) RETURN count(n)")
     assert objects > 0
     assert embedded > 0
+    # No AEC_EMBEDDING_URL in this stack, so the vectors are the offline hash model and the job
+    # result names the model instead of reporting a bare count.
+    from aec_intelligence.operational.embeddings import HASH_MODEL
+    assert job["result"]["embedding_model"] == HASH_MODEL
+    assert job["result"]["embeddings_degraded"] is True
     assert int(str(nodes[0]["value"])) == objects
 
     result = SearchRouter(db, settings).search("wall", project_id=project, top_k=5)
     assert result.hits
+    # Offline query vectors would be the hash model, so the vector stage is skipped loudly.
+    assert any("hash model" in warning for warning in result.warnings)
 
 
 def test_open_projection_does_not_block_another_document_of_the_same_project(stack):

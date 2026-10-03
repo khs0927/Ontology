@@ -134,15 +134,16 @@ def test_embedding_client_supports_native_tei_route(stub_server):
     assert _StubEmbeddings.calls[0][1] == {"inputs": ["x", "y"], "truncate": True}
 
 
-def test_embedding_client_falls_back_to_labelled_hash_and_opens_circuit(stub_server):
+def test_embedding_client_rejects_wrong_dimension_and_opens_circuit(stub_server):
     _StubEmbeddings.dims = 384  # wrong dimension must never be padded into vector(1024)
     service = emb.EmbeddingService(_settings(stub_server), retries=2, backoff=0.01)
-    model, vectors = service.embed_with_model(["문", "창"])
-    assert model == emb.HASH_MODEL
-    assert vectors[0] == emb._deterministic_hash_vector("문")
-    assert "384" in service.last_error
+    with pytest.raises(emb.EmbeddingEndpointError) as exc:
+        service.embed_with_model(["문", "창"])
+    assert "384" in str(exc.value)
+    assert service.last_error and "384" in service.last_error
     calls = len(_StubEmbeddings.calls)
-    assert emb.EmbeddingService(_settings(stub_server)).embed_with_model(["x"])[0] == emb.HASH_MODEL
+    with pytest.raises(emb.EmbeddingEndpointError, match="circuit open"):
+        emb.EmbeddingService(_settings(stub_server)).embed_with_model(["x"])
     assert len(_StubEmbeddings.calls) == calls  # circuit open: no further remote calls
 
 

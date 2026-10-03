@@ -2,6 +2,8 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import re
+import hashlib
+import json
 
 
 def _time(value):
@@ -39,6 +41,33 @@ def import_candidates(source, *, source_repo, source_commit, source_path, source
             'evidence': [], 'execution_allowed': False,
         })
     return result
+
+
+def import_snapshot(content, *, source_repo, source_commit, source_path):
+    """Bind declaration provenance to exact bytes; does not authenticate acquisition."""
+    if not isinstance(content, bytes):
+        raise ValueError('Snapshot must be exact bytes')
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Duplicate snapshot key: ' + key)
+            result[key] = value
+        return result
+
+    try:
+        source = json.loads(content.decode('utf-8'), object_pairs_hook=unique_object)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('Snapshot must be UTF-8 JSON') from exc
+    if not isinstance(source, dict):
+        raise ValueError('Snapshot root must be an object')
+    rows = source.get('providers', source.get('projects'))
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError('Snapshot must contain a provider or project object list')
+    return import_candidates(source, source_repo=source_repo, source_commit=source_commit,
+                             source_path=source_path,
+                             source_file_sha256=hashlib.sha256(content).hexdigest())
 
 
 def evidence_record(**fields):

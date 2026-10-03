@@ -261,6 +261,24 @@ def _normalize_entity(entity: Any) -> NormalizedCADEntity:
         if attributes:
             properties["attributes"] = attributes
         bbox = _bbox_from_points([location])
+    elif entity_type == "DIMENSION":
+        location = _point(_safe_attr(entity, "defpoint", [0, 0, 0]))
+        geometry["location"] = location
+        bbox = _bbox_from_points([location])
+        try:
+            properties["dimtype"] = int(entity.dimtype)
+            properties["measurement"] = float(entity.get_measurement())
+        except Exception:  # angular/ordinate variants may not expose one scalar measurement
+            pass
+        override = decode_dxf_text(_safe_attr(entity, "text", "") or "")
+        if override and override != "<>":
+            properties["text_override"] = override
+        if "measurement" in properties:
+            value = properties["measurement"]
+            shown = f"{value:g}" if abs(value - round(value)) > 1e-9 else str(int(round(value)))
+            properties["text"] = override.replace("<>", shown) if override and override.strip() else shown
+        elif override:
+            properties["text"] = override
     elif entity_type == "HATCH":
         properties["pattern_name"] = str(_safe_attr(entity, "pattern_name", "") or "")
         properties["solid_fill"] = bool(_safe_attr(entity, "solid_fill", 0))

@@ -25,6 +25,7 @@ STRUCTURAL_KINDS = ('Beam','Column')
 ROOM_TAG_RE = re.compile(r'ROOM|RM_?NAME|NAME|실명|실이름|공간', re.IGNORECASE)
 ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.IGNORECASE)
 AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
+AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*\)?\Z', re.IGNORECASE)
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
 
 
@@ -151,6 +152,7 @@ class _DXFSemantics:
         self.sheet, self.view = sheet, view
         self.is_paper = not sheet.is_modelspace
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
+        self.area_texts, self.text_spaces = [], []
         self.layout_objects = []
 
     def count_entity(self, entity):
@@ -194,7 +196,10 @@ class _DXFSemantics:
             obj['properties'].update(mark)
         finer, room = semantic_class(normalized, kind)
         if finer == 'Space':
-            self._space(obj, room, evidence, 'text')
+            space = self._space(obj, room, evidence, 'text')
+            self.text_spaces.append((space, normalized))
+        elif area := AREA_TEXT_RE.match(text):
+            self.area_texts.append((float(area.group(1).replace(',', '.')), obj, normalized))
         for i, section in enumerate(steel_sections(text)):
             self._section(obj, section, evidence, i, normalized)
         detail = detail_title(text)
@@ -306,7 +311,34 @@ class _DXFSemantics:
             obj['properties'].setdefault('drawing_category', category)
             if storey and not obj.get('storey'):
                 obj['storey'] = storey['storey']
+        self._link_area_texts()
         self._link_sections()
+
+    def _link_area_texts(self):
+        """Attach a nearby standalone area label to a room-name Space using mutual nearest-neighbour evidence."""
+        def loc(normalized):
+            point = normalized.geometry.get('location') or [0.0, 0.0]
+            return float(point[0]), float(point[1])
+
+        rooms = [(space, normalized) for space, normalized in self.text_spaces
+                 if 'area' not in space['properties']]
+        if not rooms or not self.area_texts:
+            return
+
+        def nearest(point, pool, key):
+            best = min(pool, key=lambda item: math.dist(point, loc(key(item))))
+            return best, math.dist(point, loc(key(best)))
+
+        for space, normalized in rooms:
+            limit = 3.0 * max(float(normalized.properties.get('height') or 0.0), 1e-6)
+            (value, area_obj, area_norm), distance = nearest(
+                loc(normalized), self.area_texts, lambda item: item[2])
+            back, _ = nearest(loc(area_norm), self.text_spaces, lambda item: item[1])
+            if distance <= limit and back[0] is space:
+                space['properties']['area'] = value
+                space['properties']['area_source'] = area_obj['id']
+                self.relate(space['id'], 'derivedFrom', area_obj['id'],
+                            method='adjacent_area_text', distance=round(distance, 3))
 
     def _link_sections(self):
         """Relate a section text to a Beam/Column only when exactly one member's bbox (plus a margin) holds it."""

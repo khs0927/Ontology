@@ -235,10 +235,13 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
         "units": live_document.get("units"),
         "resolver_receipt_sha256": receipt_sha,
         "resolved_sha256": resolved_sha,
+        "resolver_id": resolver.get("resolver_id"),
         "cache_entry_id": resolver.get("cache_entry_id"),
         "resolver_issuer": resolver.get("resolver_issuer"),
         "trust_domain": resolver.get("trust_domain"),
         "signature_key_id": resolver.get("signature_key_id"),
+        "receipt_signature_verified": resolver.get("receipt_signature_verified"),
+        "immutable_cache": resolver.get("immutable_cache"),
         "object_locator": {
             "layout": live_object.get("layout"),
             "handle": live_object.get("handle"),
@@ -264,6 +267,7 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
         "units",
         "resolver_receipt_sha256",
         "resolved_sha256",
+        "resolver_id",
         "cache_entry_id",
         "resolver_issuer",
         "trust_domain",
@@ -271,6 +275,10 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
     )
     if any(not isinstance(payload[name], str) or not payload[name] for name in required):
         raise ValueError("source binding report is incomplete for executor handoff")
+    if payload["receipt_signature_verified"] is not True:
+        raise ValueError("executor handoff must preserve verified resolver receipt attestation")
+    if payload["immutable_cache"] is not True:
+        raise ValueError("executor handoff must preserve immutable resolver cache attestation")
     locator = payload["object_locator"]
     if not isinstance(locator["layout"], str) or not locator["layout"]:
         raise ValueError("executor handoff requires a layout")

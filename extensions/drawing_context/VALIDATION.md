@@ -100,3 +100,31 @@ benchmark runner performs retrieval only and reuses the existing provenance,
 authorization, revision, Recall@5 and MRR promotion gates.
 
 No real RAGFlow instance was started by these changes.
+
+
+## LightRAG comparison contract — 2026-10-02
+
+A disabled-by-default LightRAG comparison adapter now targets the reviewed
+`v1.5.7` API profile and uses `POST /query/data` so retrieval can be
+measured without treating generated answers as benchmark evidence.
+
+The adapter requires an API key, validates credentials through
+`GET /auth/verify` before the first query, requires HTTPS for non-loopback
+servers, rejects credentials embedded in URLs, and requires a pinned SHA-256
+container image digest before enablement.
+
+Remote `chunk_id` values are never canonical. A local derived binding under
+`runtime/lightrag/` must map the chunk to an existing drawing-context
+projection and its canonical/source/revision/hash metadata. Production search
+drops unmapped, unauthorized and stale-revision chunks before returning their
+content. Diagnostic benchmark search may surface an unmapped hit only with an
+empty metadata object so the shared benchmark gate records provenance failure.
+
+The same provider-neutral hard gates used for RAGFlow apply to LightRAG:
+100% provenance metadata coverage, zero unauthorized leakage, zero stale
+revision leakage, Recall@5 >= 0.80 and MRR >= 0.60.
+
+Still **not validated**: a live LightRAG v1.5.7 instance, real credentials,
+document ingestion/index completion, automatic remote chunk binding, or
+retrieval quality on the user's Drive corpus. This is comparison preparation,
+not a production adoption claim.

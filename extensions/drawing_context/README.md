@@ -6,7 +6,7 @@ C++ ObjectARX hot paths when justified, COM fallback only**.
 이 확장은 기존 Ontology 파서·CAIR·원본 연결 구조를 수정하지 않습니다.
 기존 결과를 읽어서 재생성 가능한 별도 검색 카탈로그로 투영합니다.
 전체 설계는 [FRAMEWORK.ko.md](FRAMEWORK.ko.md), Power CAD 업그레이드는
-[POWER-CAD-UPGRADE.ko.md](POWER-CAD-UPGRADE.ko.md), RAGFlow 로컬 배포 준비는 [RAGFLOW-DEPLOYMENT.ko.md](RAGFLOW-DEPLOYMENT.ko.md)를 보세요.
+[POWER-CAD-UPGRADE.ko.md](POWER-CAD-UPGRADE.ko.md), RAGFlow 로컬 배포 준비는 [RAGFLOW-DEPLOYMENT.ko.md](RAGFLOW-DEPLOYMENT.ko.md), LightRAG 비교 경계는 [LIGHTRAG-COMPARISON.ko.md](LIGHTRAG-COMPARISON.ko.md)를 보세요.
 
 ## Implemented and tested
 
@@ -18,13 +18,14 @@ C++ ObjectARX hot paths when justified, COM fallback only**.
 - RAGFlow **internal projection DTO** export, retaining external-to-canonical mapping.
 - Version-pinned RAGFlow v0.27.2 HTTP sidecar contract with local derived chunk bindings, revision replacement, ACL/revision fail-closed production search, and diagnostic-only raw benchmark retrieval.
 - Read-only RAGFlow host preflight, runtime-only atomic binding persistence, and read-only live benchmark runner.
+- LightRAG v1.5.7 comparison adapter using `/query/data`, API-key credential verification, runtime-only chunk bindings, and the same provenance/ACL/revision benchmark gate.
 - Power CAD candidate validation against caller-supplied native observations.
 - Real ezdxf integration test using the **existing** operational parser, two layouts,
   Korean text, source checksum preservation and handle-bearing search results.
 
 ## Not deployed / not claimed
 
-No Drive account scan, OAuth refresh, background service, **live** RAGFlow server/API upload,
+No Drive account scan, OAuth refresh, background service, **live** RAGFlow or LightRAG server/API upload,
 production PostgreSQL migration, embedding inference, graph inference, AutoCAD binary,
 C++ plugin, or live CAD operation is implemented by this increment.
 The planner emits jobs; it does not run a queue. The live guard verifies an adapter's

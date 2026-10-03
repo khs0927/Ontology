@@ -137,6 +137,8 @@ class CapabilityDeclaration:
         _nonempty(self.description, "CapabilityDeclaration.description")
         if self.key.upstream_commit != self.source.upstream_commit:
             raise ValueError("capability key and source provenance must use the same commit")
+        if not self.required_verification_kinds:
+            raise ValueError("required_verification_kinds must declare at least one validation lane")
         if len(set(self.required_verification_kinds)) != len(self.required_verification_kinds):
             raise ValueError("required_verification_kinds must be unique")
 

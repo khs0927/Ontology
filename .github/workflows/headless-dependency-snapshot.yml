@@ -1,0 +1,22 @@
+name: Headless dependency snapshot
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'docs/HEADLESS_PR_DEPENDENCIES.*'
+      - 'tests/test_headless_dependency_snapshot.py'
+      - '.github/workflows/headless-dependency-snapshot.yml'
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p test_headless_dependency_snapshot.py -v

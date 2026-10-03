@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..classifier import normalize_storey
 from . import catalog
 from .config import Settings
 from .db import Database
+from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
 from .search import SearchRouter
 
@@ -27,7 +27,8 @@ class IngestRequest(BaseModel):
     path: str = Field(..., description="Absolute path to file or directory")
     project_id: str = Field(default="P-DEFAULT", description="Project identifier")
     discipline: str = Field(default="ARCH", description="Discipline code (e.g. ARCH, STRUCT, MEP)")
-    queue: str = Field(default="cad", description="Target worker queue (cad or ocr)")
+    # Only these two queues have workers; any other value would leave the job QUEUED forever.
+    queue: Literal["cad", "ocr"] = Field(default="cad", description="Target worker queue (cad or ocr)")
 
 
 class SearchRequest(BaseModel):
@@ -43,9 +44,34 @@ class SearchRequest(BaseModel):
 
 class ReviewAction(BaseModel):
     object_id: str = Field(..., description="ID of the candidate object")
-    action: str = Field(..., description="CONFIRM, REJECT, or CHANGE_TYPE")
+    action: Literal["CONFIRM", "REJECT", "CHANGE_TYPE"] = Field(..., description="CONFIRM, REJECT, or CHANGE_TYPE")
     new_type: str | None = Field(default=None, description="New architectural type if action is CHANGE_TYPE")
     notes: str | None = Field(default=None, description="Review notes / explanation")
+
+    @model_validator(mode="after")
+    def _change_type_needs_type(self) -> "ReviewAction":
+        # Without this, CHANGE_TYPE with no new_type silently became a CONFIRM and still wrote a revision.
+        if self.action == "CHANGE_TYPE" and not (self.new_type or "").strip():
+            raise ValueError("new_type is required when action is CHANGE_TYPE")
+        return self
+
+
+def cors_origins_from_env(value: str | None = None) -> list[str]:
+    """Explicit cross-origin allow-list from ``AEC_CORS_ORIGINS`` (comma separated).
+
+    The bundled dashboard is served from the API's own origin and power-cad-mcp calls the API
+    server-side, so neither needs CORS. A wildcard origin would let any web page the user opens
+    drive the unauthenticated write endpoints (ingestion, job retry, review) of a local API.
+    """
+    raw = os.getenv("AEC_CORS_ORIGINS", "") if value is None else value
+    return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
+
+
+def _job_uuid(job_id: str) -> str:
+    try:
+        return str(uuid.UUID(job_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -58,13 +84,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.2.0",
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    origins = cors_origins_from_env()
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "Authorization"],
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -88,9 +116,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/ingestions", status_code=status.HTTP_202_ACCEPTED)
     def enqueue_ingestion(req: IngestRequest) -> dict[str, Any]:
-        target_path = Path(req.path).resolve()
-        if not target_path.exists():
-            raise HTTPException(status_code=400, detail=f"Target path not found: {req.path}")
+        # The API must honour AEC_IMPORT_ROOTS like the census pipeline does; otherwise any caller
+        # could make the workers read (and copy into artifacts) arbitrary files on the host.
+        try:
+            target_path = current_settings.allowed_source(req.path)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"Target path not found: {req.path}") from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail="Target path is outside the configured import roots (AEC_IMPORT_ROOTS)",
+            ) from exc
 
         files_to_enqueue: list[Path] = []
         if target_path.is_file():
@@ -99,23 +135,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             files_to_enqueue.append(target_path)
         else:
             for item in target_path.rglob("*"):
-                if item.is_file() and item.suffix.lower() in SUPPORTED:
-                    files_to_enqueue.append(item)
+                if not (item.is_file() and item.suffix.lower() in SUPPORTED):
+                    continue
+                try:  # a symlink inside an import root may still point outside of it
+                    files_to_enqueue.append(current_settings.allowed_source(str(item)))
+                except (OSError, ValueError):
+                    continue
 
         if not files_to_enqueue:
             raise HTTPException(status_code=400, detail="No supported CAD, PDF, IFC, or image files found")
 
         enqueued_jobs = []
         for file_path in files_to_enqueue:
-            mtime = file_path.stat().st_mtime
-            dedup_key = hashlib.sha256(f"{req.project_id}|{file_path}|{mtime}".encode("utf-8")).hexdigest()
-            payload = {
-                "source": str(file_path),
-                "name": file_path.name,
-                "project_id": req.project_id,
-                "discipline": req.discipline,
-                "queue": req.queue,
-            }
+            payload, dedup_key = ingest_job(
+                file_path, project_id=req.project_id, discipline=req.discipline, queue=req.queue
+            )
             job_row = db.enqueue(payload, dedup_key)
             enqueued_jobs.append(str(job_row["id"]))
 
@@ -127,8 +161,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
+        job_uuid = _job_uuid(job_id)  # a malformed id is a 404, not a database error (500)
         with db.connect() as conn:
-            job = conn.execute("SELECT * FROM aec.jobs WHERE id = %s", (job_id,)).fetchone()
+            job = conn.execute("SELECT * FROM aec.jobs WHERE id = %s", (job_uuid,)).fetchone()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         # Format datetimes
@@ -141,13 +176,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/jobs/{job_id}/retry")
     def retry_job(job_id: str) -> dict[str, Any]:
+        job_uuid = _job_uuid(job_id)
         with db.connect() as conn:
             row = conn.execute(
                 """UPDATE aec.jobs
                    SET state = 'QUEUED', attempts = 0, lease_owner = NULL, lease_until = NULL,
                        error = NULL, updated_at = now()
                    WHERE id = %s RETURNING *""",
-                (job_id,),
+                (job_uuid,),
             ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Job not found")

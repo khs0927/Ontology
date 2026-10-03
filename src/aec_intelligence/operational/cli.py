@@ -1,7 +1,6 @@
 """CLI subcommands for operational AEC PostgreSQL + AGE pipeline."""
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -10,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .config import Settings
 from .db import Database
+from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
 from .search import SearchRouter
 from .worker import IngestionWorker
@@ -40,7 +40,9 @@ def main(args=None):
 
     # serve
     serve_parser = subparsers.add_parser("serve", help="Run REST API and web dashboard")
-    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    # Loopback by default: the API has no authentication. Containers pass --host 0.0.0.0 explicitly
+    # (docker/Dockerfile.app) and docker-compose publishes the port on 127.0.0.1 only.
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: loopback only)")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port")
 
     # ingest
@@ -104,15 +106,11 @@ def main(args=None):
 
         enqueued = 0
         for f in files:
-            mtime = f.stat().st_mtime
-            dedup_key = hashlib.sha256(f"{parsed.project_id}|{f}|{mtime}".encode("utf-8")).hexdigest()
-            payload = {
-                "source": str(f),
-                "name": f.name,
-                "project_id": parsed.project_id,
-                "discipline": parsed.discipline,
-                "queue": parsed.queue,
-            }
+            # Content-addressed document_id (same as census jobs): without it the worker used
+            # doc_<stem>, so same-named files in different folders overwrote each other.
+            payload, dedup_key = ingest_job(
+                f, project_id=parsed.project_id, discipline=parsed.discipline, queue=parsed.queue
+            )
             row = db.enqueue(payload, dedup_key)
             print(f"Enqueued: {f.name} -> Job {row['id']}")
             enqueued += 1

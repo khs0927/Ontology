@@ -173,11 +173,24 @@ class SourceMappingTests(unittest.TestCase):
         self.assertEqual(handoff["review_status"], "VERIFIED_FOR_REVIEW")
         self.assertEqual(handoff["document_id"], "open-db-1")
         self.assertEqual(handoff["source_id"], src.source_id)
+        self.assertEqual(handoff["source_sha256"], src.sha256)
+        self.assertEqual(handoff["file_sha256"], src.sha256)
         self.assertEqual(handoff["object_locator"]["handle"], "2F3")
         self.assertEqual(len(handoff["handoff_digest"]), 64)
         self.assertFalse(handoff["execution_authorized"])
         self.assertFalse(handoff["may_execute_mutation"])
         self.assertTrue(handoff["requires_executor_authorization"])
+
+    def test_executor_handoff_hashes_are_part_of_handoff_digest(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+        changed = dict(report)
+        changed["source_sha256"] = "b" * 64
+        changed["live_document"] = dict(report["live_document"])
+        changed["live_document"]["file_sha256"] = "b" * 64
+        changed_handoff = build_executor_handoff(changed)
+        self.assertNotEqual(handoff["handoff_digest"], changed_handoff["handoff_digest"])
 
     def test_dirty_source_binding_cannot_cross_executor_handoff_gate(self):
         src = source()

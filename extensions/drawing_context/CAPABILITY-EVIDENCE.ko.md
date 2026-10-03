@@ -41,6 +41,10 @@ parser revision id는 달라진다.
 - trusted resolver의 source_id
 - source byte revision id
 - resolved file SHA-256
+- immutable cache entry ID
+- resolver receipt SHA-256
+- trusted issuer / trust domain / signature key ID
+- resolver 경계에서 detached signature 검증 완료
 - 실제 열린 native path
 - live file SHA-256
 - layout
@@ -48,6 +52,7 @@ parser revision id는 달라진다.
 - nested instance path
 - native mapping observation
 - live object fingerprint/state digest
+- live modification generation
 
 SOURCE_BOUND는 수정 허가가 아니다.
 
@@ -123,3 +128,22 @@ exit 0은 SOURCE_BOUND이며, --require-review-ready 사용 시 기존 live guar
 VERIFIED_FOR_REVIEW여야 한다.
 
 이 도구는 CAD를 수정하지 않는다.
+
+
+## Resolver trust boundary
+
+Ontology는 서명 알고리즘/키 관리를 새로 구현하지 않는다. 인증된 source resolver가
+receipt의 detached signature를 검증하고 다음 attestation을 전달해야 한다.
+
+- resolver_issuer
+- trust_domain
+- signature_key_id
+- receipt_signature_verified=true
+- resolver_receipt_sha256
+- immutable cache_entry_id
+
+이 중 하나라도 없거나 signature verification이 false이면 source resolution 자체를
+신뢰하지 않고 SOURCE_BOUND에 사용하지 않는다.
+
+receipt hash만 존재하는 것은 신뢰 근거가 아니다. hash는 검증된 receipt의 불변 식별자로
+사용하고, 실제 issuer/key 신뢰 정책은 resolver 운영 경계에서 관리한다.

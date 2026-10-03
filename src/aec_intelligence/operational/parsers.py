@@ -313,9 +313,114 @@ class _DXFSemantics:
         self.layout_objects.append(view)
         self.relate(view['id'], 'derivedFrom', source['id'], method='detail_title_text')
 
+    @staticmethod
+    def _bbox_center(bbox):
+        keys = ('min_x', 'min_y', 'max_x', 'max_y')
+        if not bbox or not all(k in bbox for k in keys):
+            return None
+        return ((float(bbox['min_x']) + float(bbox['max_x'])) / 2.0,
+                (float(bbox['min_y']) + float(bbox['max_y'])) / 2.0)
+
+    def _split_modelspace_sheet_regions(self):
+        """Create per-frame sheet Views when modelspace contains multiple detected TitleBlocks.
+
+        Title-block *detection* stays elsewhere. This method only consumes already classified
+        TitleBlock observations, so stronger detectors can be added independently.
+        """
+        if self.is_paper:
+            return 0
+        frames = []
+        for title in self.title_blocks:
+            bbox = title.get('bbox') or {}
+            center = self._bbox_center(bbox)
+            if center is None:
+                continue
+            width = max(0.0, float(bbox['max_x']) - float(bbox['min_x']))
+            height = max(0.0, float(bbox['max_y']) - float(bbox['min_y']))
+            area = width * height
+            if area <= 0:
+                continue
+            frames.append((area, float(bbox['min_x']), float(bbox['min_y']), title))
+        if len(frames) < 2:
+            return 0
+
+        frames.sort(key=lambda row: (row[1], row[2], row[0], row[3]['id']))
+        regions = []
+        for index, (area, _, _, title) in enumerate(frames, 1):
+            fields = title.get('properties') or {}
+            number = str(fields.get('drawingNumber') or '').strip()
+            drawing_title = str(fields.get('drawingTitle') or '').strip()
+            category = drawing_category(('title_block', drawing_title), ('layout_name', self.sheet.name))
+            storey = storey_from_text(drawing_title)
+            props = {
+                'view_kind': 'sheet_region',
+                'layout': self.sheet.name,
+                'sheet_region_index': index,
+                'title_block': title['id'],
+                **category,
+            }
+            for key in ('drawingNumber', 'drawingTitle', 'scale', 'revisionLabel', 'date'):
+                if fields.get(key):
+                    props[key] = fields[key]
+            if storey and category['drawing_category'] == '평면도':
+                props['storey'] = storey
+            label = ' '.join(value for value in (number, drawing_title, category['drawing_category']) if value)
+            region = observation(
+                self.doc,
+                f"sheet-region:{self.sheet.name}:{title['id']}",
+                'View',
+                f"{self.name} {self.sheet.name} {label}",
+                {**self.base, 'layout': self.sheet.name, 'title_block': title['id'],
+                 'method': 'title_block_bbox_region'},
+                title['bbox'],
+                state='AI_INFERRED',
+                properties=props,
+            )
+            self.add(region, self.view)
+            self.relate(region['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED',
+                        method='title_block_bbox_region')
+            regions.append((area, title['bbox'], region, storey, category))
+
+        # An object belongs to the smallest frame containing its bbox centre. This avoids
+        # duplicate assignment when a nested border/detail frame overlaps a larger frame.
+        for obj in list(self.layout_objects):
+            if obj['type'] == 'TitleBlock':
+                continue
+            center = self._bbox_center(obj.get('bbox') or {})
+            if center is None:
+                continue
+            x, y = center
+            containing = [
+                row for row in regions
+                if float(row[1]['min_x']) <= x <= float(row[1]['max_x'])
+                and float(row[1]['min_y']) <= y <= float(row[1]['max_y'])
+            ]
+            if not containing:
+                continue
+            _, _, region, storey, category = min(containing, key=lambda row: row[0])
+            obj['properties']['sheet_region'] = region['id']
+            if region['properties'].get('drawingNumber'):
+                obj['properties']['drawingNumber'] = region['properties']['drawingNumber']
+            if region['properties'].get('drawingTitle'):
+                obj['properties']['drawingTitle'] = region['properties']['drawingTitle']
+            obj['properties']['drawing_category'] = category['drawing_category']
+            if storey and obj['type'] == 'Space':
+                obj['properties']['storey'] = storey
+                obj['properties']['storey_source'] = 'title_block_bbox_region'
+            self.relate(region['id'], 'depicts', obj['id'], 'AI_INFERRED',
+                        method='bbox_center_inside_title_block', confidence=0.9)
+
+        self.view['properties']['multi_sheet'] = True
+        self.view['properties']['sheet_region_count'] = len(regions)
+        self.metrics['sheet_regions'] += len(regions)
+        return len(regions)
+
     def end_layout(self):
         view, sheet = self.view, self.sheet
-        title = self.title_blocks[0] if self.title_blocks else None
+        sheet_regions = self._split_modelspace_sheet_regions()
+        # In a multi-sheet modelspace, the parent layout must not inherit metadata from
+        # whichever title block happened to be encountered first.
+        title = self.title_blocks[0] if self.title_blocks and not sheet_regions else None
         fields = title['properties'] if title else {}
         texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
         candidates = [('title_block', fields.get('drawingTitle', ''))]

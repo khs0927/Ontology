@@ -124,6 +124,7 @@ def verify_bound_live_candidate(candidate, live, binding, *, now, max_age_second
     Executor must re-observe and recheck inside its document transaction.
     """
     from datetime import datetime
+    import math
     result = verify_live_candidate(candidate, live)
     reasons = list(result["reasons"])
     for key in ("document_id", "state_digest"):
@@ -132,7 +133,7 @@ def verify_bound_live_candidate(candidate, live, binding, *, now, max_age_second
             reasons.append(f"missing_or_changed:{key}")
     if isinstance(binding.get("state_digest"), str) and not re.fullmatch(r"[0-9a-f]{64}", binding["state_digest"]):
         reasons.append("invalid_state_digest")
-    if type(max_age_seconds) not in (int, float) or not 0 < max_age_seconds <= 30:
+    if type(max_age_seconds) not in (int, float) or not math.isfinite(max_age_seconds) or not 0 < max_age_seconds <= 30:
         raise ValueError("Observation lifetime must be positive and at most 30 seconds")
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise ValueError("An explicit timezone-aware clock is required")

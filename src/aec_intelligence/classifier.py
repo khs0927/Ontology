@@ -264,7 +264,7 @@ def semantic_class(entity: NormalizedCADEntity, label: str | None = None) -> tup
     layer = entity.layer.lower()
     if not room and re.search(r"area-?iden|room-?(?:name|iden)|실명", layer) and 0 < len(text) <= 20 \
             and re.search(r"[A-Za-z가-힣]", text):
-        room = {"roomName": text.split("\n")[0].strip()}
+        room = _room_name_fields(text.split("\n")[0].strip())
     if room:
         return "Space", room
     sections = steel_sections(text)
@@ -327,6 +327,28 @@ _ROOM_RE = re.compile(
     re.IGNORECASE)
 
 
+def _room_name_fields(name: str) -> dict[str, Any]:
+    """Preserve the displayed room name while adding stable indexed-name search aliases."""
+    display = re.sub(r"\s+", " ", str(name)).strip()
+    result: dict[str, Any] = {"roomName": display}
+    indexed = re.fullmatch(r"(?P<base>.*?\D)\s*(?P<index>\d{1,2})", display)
+    if not indexed:
+        return result
+    base = indexed["base"].strip()
+    index = indexed["index"]
+    # Only normalize numeric suffixes for a known room vocabulary item. This avoids
+    # treating arbitrary labels such as "A101" or drawing numbers as room names.
+    known = {re.sub(r"\s+", " ", value).strip().casefold() for value in ROOM_NAMES}
+    if base.casefold() not in known:
+        return result
+    compact = f"{base}{index}"
+    spaced = f"{base} {index}"
+    aliases = list(dict.fromkeys((display, compact, spaced)))
+    result["roomNameNormalized"] = compact
+    result["roomNameAliases"] = aliases
+    return result
+
+
 def room_from_text(text: str) -> dict[str, Any] | None:
     """Parse '거실', '101호 회의실', '침실1 12.5㎡', 'LIVING ROOM (24.3 m2)' into room properties."""
     lines = [line.strip() for line in re.split(r"[\r\n]+|\\P", str(text)) if line.strip()]
@@ -335,7 +357,7 @@ def room_from_text(text: str) -> dict[str, Any] | None:
     found = _ROOM_RE.match(lines[0])
     if not found:
         return None
-    result: dict[str, Any] = {"roomName": re.sub(r"\s+", " ", found["name"]).strip()}
+    result: dict[str, Any] = _room_name_fields(found["name"])
     number = found["num1"] or found["num2"]
     if number:
         result["roomNumber"] = number

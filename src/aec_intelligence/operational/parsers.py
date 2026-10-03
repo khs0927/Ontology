@@ -29,6 +29,34 @@ AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
 
 
+def _iter_nested_insert_texts(insert, max_depth=8):
+    """Yield WCS-transformed TEXT/MTEXT/ATTRIB entities nested below an INSERT.
+
+    Top-level INSERT attributes are handled separately by _insert_attributes.
+    This walker is for text physically stored inside block definitions, including
+    nested blocks, which is common in Korean production drawings.
+    """
+    def walk(ref, path, depth):
+        if depth > max_depth:
+            return
+        try:
+            children = list(ref.virtual_entities())
+        except Exception:
+            return
+        for index, child in enumerate(children):
+            child_path = (*path, index)
+            kind = child.dxftype()
+            if kind in ('TEXT', 'MTEXT', 'ATTRIB'):
+                yield child, child_path
+            elif kind == 'INSERT':
+                # Nested INSERT attributes are not guaranteed to be returned by
+                # virtual_entities(), so include them when ezdxf exposes them.
+                for attr_index, attrib in enumerate(list(getattr(child, 'attribs', []) or [])):
+                    yield attrib, (*child_path, 'a', attr_index)
+                yield from walk(child, child_path, depth + 1)
+
+    yield from walk(insert, (), 1)
+
 def _finite_bbox(bounds):
     """ezdxf BoundingBox -> bbox dict, or {} when empty or not finite."""
     if bounds is None or not bounds.has_data:
@@ -186,7 +214,7 @@ class _DXFSemantics:
             return
         if kind in STRUCTURAL_KINDS:
             self.members.append(obj)
-        if normalized.entity_type not in ('TEXT', 'MTEXT'):
+        if normalized.entity_type not in ('TEXT', 'MTEXT', 'ATTRIB'):
             return
         text = str(props.get('text') or '').strip()
         if not text:
@@ -527,6 +555,54 @@ def parse_source(source, doc, output, settings, source_name=None):
                             obj['properties'].update(title_fields)
                         add(obj,view)
                         semantics.enrich(obj, normalized, evidence)
+                        if is_insert:
+                            nested_count = 0
+                            for nested_entity, nested_path in _iter_nested_insert_texts(entity):
+                                try:
+                                    nested = _normalize_entity(nested_entity)
+                                    nested_bounds = ezbbox.extents([nested_entity], fast=False)
+                                    if nested_bounds.has_data:
+                                        nested.bbox = dict(zip(
+                                            ('min_x','min_y','min_z','max_x','max_y','max_z'),
+                                            [*nested_bounds.extmin,*nested_bounds.extmax],
+                                        ))
+                                    nested_kind, nested_classification = classify(nested)
+                                    if nested_kind == 'CADEntity':
+                                        nested_kind = 'Annotation'
+                                    nested_text = str(nested.properties.get('text') or '').strip()
+                                    if not nested_text:
+                                        continue
+                                    nested_handle = f"{handle}:nested:{'.'.join(map(str, nested_path))}"
+                                    nested_evidence = {
+                                        **base,
+                                        'layout': sheet.name,
+                                        'handle': nested_handle,
+                                        'source_handle': handle,
+                                        'coordinate_system': 'CAD_WCS',
+                                        'geometry_path': _safe_relative(output/f'geometry-{index}.jsonl', settings.data_root),
+                                        'nested_path': list(nested_path),
+                                        'method': 'recursive_insert_virtual_entities',
+                                    }
+                                    nested_obj = observation(
+                                        doc,
+                                        f'{sheet.name}:{nested_handle}',
+                                        nested_kind,
+                                        f'{name} {sheet.name} {nested.layer} {nested_text} {ALIASES.get(nested_kind,nested_kind)}',
+                                        nested_evidence,
+                                        nested.bbox,
+                                        state='OBSERVED' if nested_kind in ('Annotation','Dimension','CADEntity') else 'AI_INFERRED',
+                                        properties={**nested.properties,'classification':nested_classification.to_dict()},
+                                    )
+                                    add(nested_obj, view)
+                                    semantics.enrich(nested_obj, nested, nested_evidence)
+                                    semantics.relate(
+                                        nested_obj['id'], 'derivedFrom', obj['id'], 'OBSERVED',
+                                        method='nested_block_text', source_handle=handle,
+                                    )
+                                    nested_count += 1
+                                except Exception as exc:
+                                    warnings.append(f'{sheet.name}/{handle}/nested:{nested_path}: {exc}')
+                            semantics.metrics['nested_text_entities'] += nested_count
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
             semantics.end_layout()

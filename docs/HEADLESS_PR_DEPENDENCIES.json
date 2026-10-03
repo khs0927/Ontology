@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "repository": "khs0927/Ontology",
+  "baseline_commit": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+  "snapshot_only": true,
+  "native_validation": "NOT_RUN",
+  "original_asset_validation": "NOT_RUN",
+  "execution_allowed": false,
+  "canonical_allowed": false,
+  "entries": [
+    {
+      "pr": 36,
+      "head": "14d7dc465c8e194c8efb2e5fe098f7c812ec2aa4",
+      "base": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+      "hard_pr_dependencies": [],
+      "master_prerequisites": [],
+      "changed_paths": [
+        "extensions/external_capabilities/archontos_bridge/README.md",
+        "extensions/external_capabilities/archontos_bridge/__init__.py",
+        "extensions/external_capabilities/tests/test_archontos_bridge.py"
+      ]
+    },
+    {
+      "pr": 37,
+      "head": "940d70fde3ffca4cc708bdf090112440fc693a8f",
+      "base": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+      "hard_pr_dependencies": [],
+      "master_prerequisites": [
+        "extensions/drawing_context/context_fabric/contracts.py",
+        "extensions/drawing_context/context_fabric/source_mapping.py"
+      ],
+      "changed_paths": [
+        ".github/workflows/source-handoff-headless.yml",
+        "extensions/drawing_context/SOURCE-HANDOFF-HEADLESS.md",
+        "extensions/drawing_context/context_fabric/source_handoff.py",
+        "extensions/drawing_context/tests/test_source_handoff.py"
+      ]
+    },
+    {
+      "pr": 38,
+      "head": "f89bfb66855f14ba3c5b5fadde5aaa04b0e27a72",
+      "base": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+      "hard_pr_dependencies": [],
+      "master_prerequisites": [
+        "extensions/external_capabilities/capability_registry/__init__.py"
+      ],
+      "changed_paths": [
+        "extensions/external_capabilities/readonly_bridges/README.md",
+        "extensions/external_capabilities/readonly_bridges/__init__.py",
+        "extensions/external_capabilities/tests/test_readonly_bridges.py"
+      ]
+    },
+    {
+      "pr": 39,
+      "head": "f1ecce666a3531cc652def976eac6d8fbcfea263",
+      "base": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+      "hard_pr_dependencies": [],
+      "master_prerequisites": [],
+      "changed_paths": [
+        ".github/workflows/secondary-census.yml",
+        "docs/SECONDARY_CENSUS.md",
+        "src/aec_intelligence/secondary_census.py",
+        "tests/test_secondary_census.py"
+      ]
+    },
+    {
+      "pr": 40,
+      "head": "14686a926a5d26b9cf6497eb042a455799a82e01",
+      "base": "fd1bce4464d522c9e07f40678f3445292267c1bf",
+      "hard_pr_dependencies": [],
+      "master_prerequisites": [
+        "extensions/external_capabilities/capability_registry/__init__.py"
+      ],
+      "changed_paths": [
+        ".github/workflows/registry-evidence-history.yml",
+        "extensions/external_capabilities/README.md",
+        "extensions/external_capabilities/capability_registry/history.py",
+        "extensions/external_capabilities/tests/test_history.py"
+      ]
+    }
+  ],
+  "optional_relationships": [
+    {
+      "producer_pr": 37,
+      "consumer_pr": 38,
+      "kind": "conceptual-only",
+      "detail": "captured-byte provenance can accompany normalized catalog/probe inputs; no direct import or automatic conversion"
+    },
+    {
+      "producer_pr": 36,
+      "consumer_pr": 40,
+      "kind": "conceptual-only",
+      "detail": "law projection may inform an independently constructed evidence record; schemas are not interchangeable"
+    },
+    {
+      "producer_pr": 38,
+      "consumer_pr": 40,
+      "kind": "conceptual-only",
+      "detail": "catalog/probe projection can inform separately scoped evidence; never promote declarations to VERIFIED"
+    },
+    {
+      "producer_pr": 39,
+      "consumer_pr": 40,
+      "kind": "conceptual-only",
+      "detail": "census fixture outcome may be recorded separately; comparator does not write ledger"
+    }
+  ],
+  "excluded_prs": [
+    34,
+    35
+  ]
+}

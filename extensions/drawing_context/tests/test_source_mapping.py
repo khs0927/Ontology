@@ -7,6 +7,7 @@ from context_fabric.contracts import SourceRevision
 from context_fabric.source_mapping import (
     LiveObjectObservation,
     TrustedSourceResolution,
+    build_execution_evidence,
     build_executor_handoff,
     candidate_binding,
     source_byte_revision_id,
@@ -191,6 +192,73 @@ class SourceMappingTests(unittest.TestCase):
         changed["live_document"]["file_sha256"] = "b" * 64
         changed_handoff = build_executor_handoff(changed)
         self.assertNotEqual(handoff["handoff_digest"], changed_handoff["handoff_digest"])
+
+    def test_committed_executor_receipt_builds_noncanonical_evidence(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+        receipt = {
+            "executor": "power-cad",
+            "plan_id": "plan-001",
+            "document_id": handoff["document_id"],
+            "source_binding_handoff_digest": handoff["handoff_digest"],
+            "source_id": handoff["source_id"],
+            "source_byte_revision_id": handoff["source_byte_revision_id"],
+            "parser_revision_id": handoff["parser_revision_id"],
+            "dry_run": False,
+            "committed": True,
+            "changes": [{"handle": "2F3", "status": "updated"}],
+        }
+
+        evidence = build_execution_evidence(handoff, receipt)
+
+        self.assertEqual(evidence["schema"], "aec-execution-evidence/1")
+        self.assertEqual(evidence["evidence_state"], "EXECUTED")
+        self.assertEqual(evidence["executor"], "power-cad")
+        self.assertEqual(evidence["document_id"], "open-db-1")
+        self.assertEqual(evidence["handoff_digest"], handoff["handoff_digest"])
+        self.assertEqual(len(evidence["receipt_digest"]), 64)
+        self.assertTrue(evidence["committed"])
+        self.assertFalse(evidence["canonical_mutation"])
+        self.assertFalse(evidence["execution_authorized"])
+
+    def test_executor_receipt_must_match_original_handoff(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+        receipt = {
+            "executor": "power-cad",
+            "plan_id": "plan-001",
+            "document_id": "another-document",
+            "source_binding_handoff_digest": handoff["handoff_digest"],
+            "source_id": handoff["source_id"],
+            "source_byte_revision_id": handoff["source_byte_revision_id"],
+            "parser_revision_id": handoff["parser_revision_id"],
+            "dry_run": False,
+            "committed": True,
+        }
+
+        with self.assertRaisesRegex(ValueError, "document_id"):
+            build_execution_evidence(handoff, receipt)
+
+    def test_preview_receipt_is_not_execution_evidence(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+        handoff = build_executor_handoff(report)
+        receipt = {
+            "executor": "power-cad",
+            "plan_id": "plan-preview",
+            "document_id": handoff["document_id"],
+            "source_binding_handoff_digest": handoff["handoff_digest"],
+            "source_id": handoff["source_id"],
+            "source_byte_revision_id": handoff["source_byte_revision_id"],
+            "parser_revision_id": handoff["parser_revision_id"],
+            "dry_run": True,
+            "committed": False,
+        }
+
+        with self.assertRaisesRegex(ValueError, "committed non-dry-run"):
+            build_execution_evidence(handoff, receipt)
 
     def test_dirty_source_binding_cannot_cross_executor_handoff_gate(self):
         src = source()

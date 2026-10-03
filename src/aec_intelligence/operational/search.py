@@ -26,7 +26,7 @@ def storey_pattern(level: str) -> str:
         body = f"(0*{n} ?(층|fl|f))"
     else:
         raise ValueError(f"unsupported normalized storey: {level}")
-    return f"(^|[^0-9a-z가-힣]){body}([^0-9a-z가-힣]|$)"
+    return f"(^|[^0-9a-z가-힣]){body}(?![0-9a-z])"
 
 
 # Query intent vocabulary. Storey parsing itself stays centralized in classifier.py.

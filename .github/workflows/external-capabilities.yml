@@ -1,0 +1,20 @@
+name: External capability evidence contracts
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [codex/external-capabilities-evidence-v1]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - run: python -m pytest -q extensions/external_capabilities/tests
+        env:
+          PYTHONPATH: extensions/external_capabilities

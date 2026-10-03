@@ -43,6 +43,65 @@ def storey_from_text(text):
     return '옥탑' if found['roof'] in ('옥탑', '지붕') else found['roof'].upper()
 
 
+_DRAWING_NUMBER_RE = re.compile(
+    r'(?<![A-Za-z0-9])(?P<prefix>[A-Z]{1,4})\s*[-_.]?\s*(?P<number>\d{2,4}(?:[-_.]\d{1,3})?[A-Z]?)(?![A-Za-z0-9])',
+    re.IGNORECASE,
+)
+
+
+def normalize_drawing_number(text):
+    """Return a stable sheet number such as A-101 / S-201 from labels or filenames."""
+    found = _DRAWING_NUMBER_RE.search(str(text or ''))
+    if not found:
+        return None
+    prefix = found['prefix'].upper()
+    number = re.sub(r'[-_.]+', '-', found['number'].upper())
+    return f'{prefix}-{number}'
+
+
+def _iter_nested_semantic_entities(insert, max_depth=5, max_entities=2000):
+    """Yield WCS-transformed nested TEXT/MTEXT/INSERT entities from a block reference."""
+    emitted = 0
+    root_layer = decode_dxf_text(insert.dxf.get('layer', '0'))
+    root_name = decode_dxf_text(insert.dxf.get('name', ''))
+
+    def walk(ref, path, inherited_layer, ancestry):
+        nonlocal emitted
+        if emitted >= max_entities or len(path) >= max_depth:
+            return
+        doc = getattr(ref, 'doc', None)
+        name = decode_dxf_text(ref.dxf.get('name', ''))
+        try:
+            block = doc.blocks.get(name) if doc is not None else None
+        except Exception:
+            block = None
+        if block is None:
+            return
+        flags = int(block.block.dxf.get('flags', 0) or 0)
+        if flags & 12:
+            return
+        try:
+            children = list(ref.virtual_entities())
+        except Exception:
+            return
+        for index, child in enumerate(children):
+            if emitted >= max_entities:
+                break
+            kind = child.dxftype()
+            child_path = (*path, index)
+            raw_layer = decode_dxf_text(child.dxf.get('layer', '0'))
+            effective_layer = inherited_layer if raw_layer == '0' else raw_layer
+            if kind in ('TEXT', 'MTEXT', 'INSERT'):
+                emitted += 1
+                yield child, child_path, effective_layer
+            if kind == 'INSERT' and len(child_path) < max_depth:
+                child_name = decode_dxf_text(child.dxf.get('name', ''))
+                if child_name and child_name not in ancestry:
+                    yield from walk(child, child_path, effective_layer, ancestry | {child_name})
+
+    yield from walk(insert, (), root_layer, {root_name} if root_name else set())
+
+
 def _finite_bbox(bounds):
     """ezdxf BoundingBox -> bbox dict, or {} when empty or not finite."""
     if bounds is None or not bounds.has_data:
@@ -298,7 +357,9 @@ class _DXFSemantics:
 
     def end_layout(self):
         view, sheet = self.view, self.sheet
-        title = self.title_blocks[0] if self.title_blocks else None
+        split_titles = [t for t in self.title_blocks if t.get('bbox') and
+                        (t['properties'].get('drawingNumber') or t['properties'].get('drawingTitle'))]
+        title = split_titles[0] if len(split_titles) == 1 else (self.title_blocks[0] if len(self.title_blocks) == 1 else None)
         fields = title['properties'] if title else {}
         texts = [text for _, text in sorted(self.title_texts, key=lambda item: -item[0])]
         candidates = [('title_block', fields.get('drawingTitle', ''))]
@@ -313,6 +374,12 @@ class _DXFSemantics:
                                        if k in fields})
             view['properties']['title_block'] = title['id']
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
+        normalized_number = normalize_drawing_number(view['properties'].get('drawingNumber'))
+        if not normalized_number:
+            normalized_number = next((normalize_drawing_number(value) for _, value in candidates
+                                      if normalize_drawing_number(value)), None)
+        if normalized_number:
+            view['properties']['drawingNumber'] = normalized_number
         view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
         storey = next(filter(None, (storey_from_text(value) for _, value in candidates)), None)
         if storey and view['properties']['drawing_category'] == '평면도':
@@ -324,7 +391,74 @@ class _DXFSemantics:
             if storey and obj['type'] == 'Space':
                 obj['properties'].setdefault('storey', storey)
         self._link_area_texts()
+        self._split_title_block_views(split_titles)
         self._link_sections()
+
+    def _split_title_block_views(self, titles):
+        """Create calculated sheet Views for layouts that contain multiple attributed title blocks."""
+        if len(titles) < 2:
+            return
+        frames = []
+        for index, title in enumerate(titles, 1):
+            bbox = title.get('bbox') or {}
+            if not all(k in bbox for k in ('min_x', 'min_y', 'max_x', 'max_y')):
+                continue
+            props = title.get('properties') or {}
+            number = normalize_drawing_number(props.get('drawingNumber'))
+            drawing_title = str(props.get('drawingTitle') or '').strip()
+            if not (number or drawing_title):
+                continue
+            category = drawing_category(('title_block', drawing_title), ('drawing_number', number or ''))
+            storey = storey_from_text(drawing_title)
+            sheet_props = {
+                'view_kind': 'sheet', 'layout': self.sheet.name, 'sheet_index': index,
+                'drawingNumber': number or str(props.get('drawingNumber') or ''),
+                'drawingTitle': drawing_title, **category,
+            }
+            if storey:
+                sheet_props['storey'] = storey
+            sub = observation(
+                self.doc, f"sheet:{self.sheet.name}:{index}:{number or drawing_title}", 'View',
+                f"{self.name} {self.sheet.name} {number or ''} {drawing_title}",
+                {**self.base, 'layout': self.sheet.name, 'title_block': title['id']}, bbox,
+                state='CALCULATED', properties=sheet_props)
+            self.add(sub, self.view)
+            self.relate(sub['id'], 'hasTitleBlock', title['id'], 'CALCULATED',
+                        method='title_block_bbox', confidence=1.0)
+            frames.append((sub, bbox, storey))
+        if len(frames) < 2:
+            return
+
+        def centre(obj):
+            box = obj.get('bbox') or {}
+            if not all(k in box for k in ('min_x', 'min_y', 'max_x', 'max_y')):
+                return None
+            return ((box['min_x'] + box['max_x']) / 2.0, (box['min_y'] + box['max_y']) / 2.0)
+
+        def frame_area(box):
+            return max(0.0, box['max_x'] - box['min_x']) * max(0.0, box['max_y'] - box['min_y'])
+
+        for obj in list(self.layout_objects):
+            point = centre(obj)
+            if point is None:
+                continue
+            x, y = point
+            matches = [frame for frame in frames if frame[1]['min_x'] <= x <= frame[1]['max_x']
+                       and frame[1]['min_y'] <= y <= frame[1]['max_y']]
+            if not matches:
+                continue
+            sub, _, storey = min(matches, key=lambda frame: frame_area(frame[1]))
+            self.relate(sub['id'], 'contains', obj['id'], 'CALCULATED',
+                        method='title_block_bbox', confidence=0.95)
+            sheet_number = sub['properties'].get('drawingNumber')
+            if sheet_number:
+                obj['properties'].setdefault('sheet_number', sheet_number)
+            obj['properties'].setdefault('sheet_view', sub['id'])
+            if sub['properties'].get('drawingTitle'):
+                obj['properties'].setdefault('sheet_title', sub['properties']['drawingTitle'])
+            if storey and obj['type'] == 'Space':
+                obj['properties'].setdefault('storey', storey)
+        self.metrics['sheet_views'] += len(frames)
 
     def _link_area_texts(self):
         """Give a room-name Space the area written as a separate text right next to it (nearest, mutual, within 3 heights)."""
@@ -532,6 +666,57 @@ def parse_source(source, doc, output, settings, source_name=None):
                             obj['properties'].update(title_fields)
                         add(obj,view)
                         semantics.enrich(obj, normalized, evidence)
+
+                        if is_insert and kind != 'TitleBlock':
+                            for nested_entity, nested_path, effective_layer in _iter_nested_semantic_entities(entity):
+                                nested_handle = handle + "::v:" + ".".join(str(i) for i in nested_path)
+                                try:
+                                    nested = _normalize_entity(nested_entity)
+                                    nested.handle = nested_handle
+                                    raw_layer = nested.layer
+                                    if raw_layer == '0' and effective_layer:
+                                        nested.layer = effective_layer
+                                    nested_bounds = ezbbox.extents([nested_entity], fast=False)
+                                    if nested_bounds.has_data:
+                                        nested.bbox = dict(zip(('min_x','min_y','min_z','max_x','max_y','max_z'),
+                                                               [*nested_bounds.extmin,*nested_bounds.extmax]))
+                                    nested.properties['virtual_from_handle'] = handle
+                                    nested.properties['nested_depth'] = len(nested_path)
+                                    if raw_layer != nested.layer:
+                                        nested.properties['source_layer'] = raw_layer
+                                    nested.properties['dxf_attributes'] = {k:str(v) for k,v in nested_entity.dxf.all_existing_dxf_attribs().items()}
+                                    geometry_file.write(json.dumps(nested.to_dict(),ensure_ascii=False,default=str)+'\n')
+                                    nested_kind, nested_classification = classify(nested)
+                                    nested_is_insert = nested.entity_type == 'INSERT'
+                                    nested_title_fields = title_block_fields(nested.properties.get('attributes')) if nested_is_insert else None
+                                    if nested_title_fields:
+                                        nested_kind = 'TitleBlock'
+                                        nested_classification = Classification('TitleBlock', 0.9, 'attribute_rules',
+                                            ('attribute tags indicate title block: ' + ', '.join(sorted(nested_title_fields)),
+                                             f'block={nested.properties.get("block_name")}'), 'ACCEPT_WITH_WARNING')
+                                    if nested_kind == 'CADEntity' and not nested_is_insert:
+                                        continue
+                                    nested_props = nested.properties
+                                    if nested_is_insert:
+                                        nested_attribute_text = ' '.join(str(v) for v in (nested_props.get('attributes') or {}).values())
+                                        nested_text = f"{nested_props.get('effective_name') or nested_props.get('block_name') or ''} {nested_attribute_text}".strip()
+                                    else:
+                                        nested_text = str(nested_props.get('text') or nested_props.get('block_name') or '')
+                                    nested_evidence = {**base,'layout':sheet.name,'handle':nested_handle,'coordinate_system':'CAD_WCS',
+                                                       'virtual_from_handle':handle,'nested_depth':len(nested_path),
+                                                       'geometry_path':_safe_relative(output/f'geometry-{index}.jsonl', settings.data_root)}
+                                    nested_state = 'OBSERVED' if nested_kind in ('Annotation','Dimension','CADEntity') else 'AI_INFERRED'
+                                    nested_obj = observation(doc,f'{sheet.name}:{nested_handle}',nested_kind,
+                                        f'{name} {sheet.name} {nested.layer} {nested_text} {ALIASES.get(nested_kind,nested_kind)}',
+                                        nested_evidence,nested.bbox,state=nested_state,
+                                        properties={**nested_props,'classification':nested_classification.to_dict()})
+                                    if nested_title_fields:
+                                        nested_obj['properties'].update(nested_title_fields)
+                                    add(nested_obj,view)
+                                    semantics.enrich(nested_obj, nested, nested_evidence)
+                                    semantics.metrics['nested_semantic_entities'] += 1
+                                except Exception as nested_exc:
+                                    warnings.append(f'{sheet.name}/{nested_handle}: nested semantic extraction failed: {nested_exc}')
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
             semantics.end_layout()

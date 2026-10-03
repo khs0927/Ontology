@@ -7,6 +7,8 @@ This extension adds a **read-only visual evidence lane** to Drive-backed ingesti
 ```bash
 export NVIDIA_API_KEY="nvapi-..."
 export NVIDIA_COSMOS_ENDPOINT="https://integrate.api.nvidia.com/v1/chat/completions"
+# NVIDIA Build hosted: omit MODEL to auto-select public Reason2 8B.
+# Self-hosted Reason2 2B NIM:
 export NVIDIA_COSMOS_MODEL="nvidia/cosmos-reason2-2b"
 pip install -e ".[vision]"
 ```
@@ -43,3 +45,10 @@ The Drive batch defaults to a bounded number of files to control API egress/cost
 ## Data governance
 
 Only the rasterized page/view used for inspection is sent to the configured NVIDIA endpoint. Original DWG/DXF bytes and canonical CAIR are not sent by this visual lane. Model `<think>` traces are discarded; only final structured evidence is persisted.
+
+## Hosted vs 2B NIM
+
+When the endpoint is NVIDIA Build (`integrate.api.nvidia.com`), the adapter
+defaults to the publicly hosted `nvidia/cosmos-reason2-8b`. A self-hosted NIM
+defaults to `nvidia/cosmos-reason2-2b`. Set `NVIDIA_COSMOS_MODEL` explicitly
+to override either choice.

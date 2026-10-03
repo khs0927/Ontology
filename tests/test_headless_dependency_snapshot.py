@@ -1,7 +1,6 @@
 """Check the bounded dependency snapshot, without acquiring other PRs."""
 import json
 from pathlib import Path
-import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]

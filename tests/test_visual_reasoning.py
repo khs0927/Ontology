@@ -55,3 +55,11 @@ def test_nvidia_client_sends_bearer_and_image(monkeypatch):
     assert "data:image/png;base64," in captured["body"]
     assert result["document_type"] == "floor_plan"
     assert "discard" not in json.dumps(result)
+
+def test_from_env_selects_hosted_8b_and_local_2b(monkeypatch):
+    monkeypatch.setenv("NVIDIA_COSMOS_ENDPOINT", "https://integrate.api.nvidia.com/v1/chat/completions")
+    monkeypatch.delenv("NVIDIA_COSMOS_MODEL", raising=False)
+    assert NvidiaCosmosVision.from_env().model == "nvidia/cosmos-reason2-8b"
+
+    monkeypatch.setenv("NVIDIA_COSMOS_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
+    assert NvidiaCosmosVision.from_env().model == "nvidia/cosmos-reason2-2b"

@@ -39,7 +39,13 @@ class NvidiaCosmosVision:
     @classmethod
     def from_env(cls) -> "NvidiaCosmosVision":
         endpoint = os.getenv("NVIDIA_COSMOS_ENDPOINT", DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
-        model = os.getenv("NVIDIA_COSMOS_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        configured_model = os.getenv("NVIDIA_COSMOS_MODEL", "").strip()
+        if configured_model:
+            model = configured_model
+        elif "integrate.api.nvidia.com" in endpoint.lower():
+            model = "nvidia/cosmos-reason2-8b"
+        else:
+            model = DEFAULT_MODEL
         api_key = os.getenv("NVIDIA_API_KEY", "").strip() or None
         try:
             max_tokens = int(os.getenv("NVIDIA_COSMOS_MAX_TOKENS", "1400"))

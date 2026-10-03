@@ -63,3 +63,13 @@ def test_from_env_selects_hosted_8b_and_local_2b(monkeypatch):
 
     monkeypatch.setenv("NVIDIA_COSMOS_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
     assert NvidiaCosmosVision.from_env().model == "nvidia/cosmos-reason2-2b"
+
+
+def test_from_env_requires_explicit_endpoint(monkeypatch):
+    monkeypatch.delenv("NVIDIA_COSMOS_ENDPOINT", raising=False)
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    assert not NvidiaCosmosVision.from_env().enabled
+
+    monkeypatch.setenv("NVIDIA_COSMOS_ENDPOINT", "http://127.0.0.1:8000/v1/chat/completions")
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    assert NvidiaCosmosVision.from_env().enabled

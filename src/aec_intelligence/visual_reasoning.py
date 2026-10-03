@@ -17,7 +17,7 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 
 
-DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
+DEFAULT_ENDPOINT = "http://127.0.0.1:8000/v1/chat/completions"
 DEFAULT_MODEL = "nvidia/cosmos-reason2-2b"
 
 
@@ -63,7 +63,7 @@ class NvidiaCosmosVision:
                 "status": "REQUIRES_CONFIGURATION",
                 "provider": "nvidia",
                 "model": self.model,
-                "error": "Set NVIDIA_API_KEY for the hosted endpoint, or configure NVIDIA_COSMOS_ENDPOINT for a local NIM.",
+                "error": "Start the Cosmos Reason2 NIM locally, or configure NVIDIA_COSMOS_ENDPOINT for a remote NIM. NVIDIA_API_KEY is only bearer auth for remote endpoints.",
             }
 
         data_uri = f"data:{mime_type};base64,{base64.b64encode(image).decode('ascii')}"

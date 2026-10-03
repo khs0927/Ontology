@@ -282,7 +282,7 @@ def _cmd_restore(parsed, settings, db):
 
 
 def _cmd_reembed(parsed, settings, db):
-    from .embeddings import EmbeddingService, reindex_embeddings
+    from .embeddings import EmbeddingEndpointError, EmbeddingService, reindex_embeddings
 
     if not EmbeddingService(settings).remote_configured:
         if parsed.delete_stale:
@@ -290,8 +290,12 @@ def _cmd_reembed(parsed, settings, db):
                   "and real model vectors would be deleted.", file=sys.stderr)
             sys.exit(2)
         print("WARNING: AEC_EMBEDDING_URL is not set; the target model is the hash fallback.", file=sys.stderr)
-    result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
-                                dry_run=parsed.dry_run, delete_stale=parsed.delete_stale)
+    try:
+        result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
+                                    dry_run=parsed.dry_run, delete_stale=parsed.delete_stale)
+    except EmbeddingEndpointError as exc:
+        print(f"ERROR: embedding endpoint failed: {exc}", file=sys.stderr)
+        sys.exit(3)
     _emit(result)
     return result
 

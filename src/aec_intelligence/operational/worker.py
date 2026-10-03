@@ -13,7 +13,7 @@ from typing import Any
 
 from .config import Settings
 from .db import Database
-from .embeddings import index_snapshot_embeddings
+from .embeddings import HASH_MODEL, EmbeddingService, index_snapshot_embeddings
 from .parsers import parse_source
 from .census import _fs as long_path
 
@@ -168,8 +168,10 @@ class IngestionWorker:
         # Project to PostgreSQL tables & Apache AGE graph
         with self.db.connect() as conn:
             self.db.project(conn, snapshot, relative_snapshot_path)
-            # Index pgvector embeddings
-            indexed_embeddings = index_snapshot_embeddings(conn, snapshot, self.settings)
+            # Index pgvector embeddings. A configured endpoint that fails raises here and fails the
+            # job instead of writing placeholder vectors; the model used is reported below.
+            embedder = EmbeddingService(self.settings)
+            indexed_embeddings = index_snapshot_embeddings(conn, snapshot, self.settings, service=embedder)
 
             # Record ingestion metrics
             metrics_payload = {
@@ -179,6 +181,8 @@ class IngestionWorker:
                 "objects_count": len(snapshot["objects"]),
                 "relations_count": len(snapshot["relations"]),
                 "embeddings_count": indexed_embeddings,
+                "embedding_model": embedder.active_model(),
+                "embeddings_degraded": embedder.active_model() == HASH_MODEL,
                 "raw_metrics": parsed.get("metrics", {}),
             }
             conn.execute(
@@ -193,5 +197,7 @@ class IngestionWorker:
             "snapshot_path": relative_snapshot_path,
             "objects_count": len(snapshot["objects"]),
             "relations_count": len(snapshot["relations"]),
+            "embedding_model": embedder.active_model(),
+            "embeddings_degraded": embedder.active_model() == HASH_MODEL,
             "warnings": parsed.get("warnings", []),
         }

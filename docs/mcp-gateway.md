@@ -117,9 +117,16 @@ keyset based: pass the returned `next_cursor` back unchanged.
 text-embeddings-inference serving `BAAI/bge-m3` (1024 dimensions, matching
 `aec.embeddings vector(1024)`); api and worker default `AEC_EMBEDDING_URL` to
 `http://embeddings:80` (set it to an empty string to force the offline model).
-The client batches 32 texts per request (`AEC_EMBEDDING_BATCH_SIZE`), retries
-with backoff (`AEC_EMBEDDING_RETRIES`, `AEC_EMBEDDING_TIMEOUT`) and, when the
-service is down, stores deterministic vectors under the model name
-`hash-sha256-1024-v1`. Search only compares vectors of the active model, so hash
-and real vectors are never mixed; `operational.embeddings.reindex_embeddings()`
-backfills real vectors for rows that only have hash vectors.
+The client batches 32 texts per request (`AEC_EMBEDDING_BATCH_SIZE`) and retries
+with backoff (`AEC_EMBEDDING_RETRIES`, `AEC_EMBEDDING_TIMEOUT`).
+
+With an endpoint configured, a failure or an unusable payload (wrong dimension or
+count, non-finite component, zero vector) fails the call and the job: the batch is
+never relabelled to the hash model, because a placeholder stored as a real vector
+cannot be told apart from one a model produced. Only when `AEC_EMBEDDING_URL` is
+unset are deterministic vectors stored under `hash-sha256-1024-v1` (offline mode,
+not semantic), and the ingest result reports `embedding_model` and
+`embeddings_degraded`. Search skips the vector stage entirely when the query
+vector would be the hash model or the endpoint is down, and says so in `warnings`;
+`operational.embeddings.reindex_embeddings()` backfills real vectors for rows that
+only have hash vectors.

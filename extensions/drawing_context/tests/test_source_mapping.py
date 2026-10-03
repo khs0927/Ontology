@@ -176,6 +176,10 @@ class SourceMappingTests(unittest.TestCase):
         self.assertEqual(handoff["source_id"], src.source_id)
         self.assertEqual(handoff["source_sha256"], src.sha256)
         self.assertEqual(handoff["file_sha256"], src.sha256)
+        self.assertEqual(handoff["resolved_sha256"], src.sha256)
+        self.assertEqual(handoff["resolver_issuer"], "sion-source-resolver")
+        self.assertEqual(handoff["trust_domain"], "khs0927/aec-source-cache")
+        self.assertEqual(handoff["signature_key_id"], "resolver-key-2026-10")
         self.assertEqual(handoff["object_locator"]["handle"], "2F3")
         self.assertEqual(len(handoff["handoff_digest"]), 64)
         self.assertFalse(handoff["execution_authorized"])
@@ -190,8 +194,38 @@ class SourceMappingTests(unittest.TestCase):
         changed["source_sha256"] = "b" * 64
         changed["live_document"] = dict(report["live_document"])
         changed["live_document"]["file_sha256"] = "b" * 64
+        changed["resolver"] = dict(report["resolver"])
+        changed["resolver"]["resolved_sha256"] = "b" * 64
         changed_handoff = build_executor_handoff(changed)
         self.assertNotEqual(handoff["handoff_digest"], changed_handoff["handoff_digest"])
+
+    def test_executor_handoff_rechecks_resolver_trust_and_hash_alignment(self):
+        src = source()
+        report = verify_source_binding(record(src), src, resolution(src), live(src))
+
+        unsigned = dict(report)
+        unsigned["resolver"] = dict(report["resolver"])
+        unsigned["resolver"]["receipt_signature_verified"] = False
+        with self.assertRaisesRegex(ValueError, "verified resolver receipt"):
+            build_executor_handoff(unsigned)
+
+        mutable = dict(report)
+        mutable["resolver"] = dict(report["resolver"])
+        mutable["resolver"]["immutable_cache"] = False
+        with self.assertRaisesRegex(ValueError, "immutable resolver cache"):
+            build_executor_handoff(mutable)
+
+        mismatched = dict(report)
+        mismatched["resolver"] = dict(report["resolver"])
+        mismatched["resolver"]["resolved_sha256"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "source, resolved and live file"):
+            build_executor_handoff(mismatched)
+
+        invalid = dict(report)
+        invalid["live_document"] = dict(report["live_document"])
+        invalid["live_document"]["file_sha256"] = "NOT-A-SHA"
+        with self.assertRaisesRegex(ValueError, "file_sha256"):
+            build_executor_handoff(invalid)
 
     def test_committed_executor_receipt_builds_noncanonical_evidence(self):
         src = source()

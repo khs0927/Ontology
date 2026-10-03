@@ -244,6 +244,77 @@ def build_executor_handoff(binding_report: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def build_execution_evidence(
+    handoff: dict[str, Any],
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate a native executor receipt against the original source handoff.
+
+    The result is immutable evidence material for later persistence/projection.
+    It does not mutate canonical CAIR or grant any further execution authority.
+    """
+    if handoff.get("schema") != "aec-executor-handoff/1":
+        raise ValueError("unsupported executor handoff schema")
+    if handoff.get("binding_state") != "SOURCE_BOUND":
+        raise ValueError("execution evidence requires SOURCE_BOUND handoff")
+    if handoff.get("execution_authorized") is not False:
+        raise ValueError("executor handoff must remain non-authorizing")
+
+    if receipt.get("committed") is not True or receipt.get("dry_run") is not False:
+        raise ValueError("execution evidence requires a committed non-dry-run receipt")
+
+    required_receipt = (
+        "executor",
+        "plan_id",
+        "document_id",
+        "source_binding_handoff_digest",
+        "source_id",
+        "source_byte_revision_id",
+        "parser_revision_id",
+    )
+    if any(not isinstance(receipt.get(name), str) or not receipt.get(name) for name in required_receipt):
+        raise ValueError("executor receipt is incomplete for source-linked evidence")
+
+    comparisons = {
+        "document_id": "document_id",
+        "source_binding_handoff_digest": "handoff_digest",
+        "source_id": "source_id",
+        "source_byte_revision_id": "source_byte_revision_id",
+        "parser_revision_id": "parser_revision_id",
+    }
+    mismatches = [
+        receipt_name
+        for receipt_name, handoff_name in comparisons.items()
+        if receipt.get(receipt_name) != handoff.get(handoff_name)
+    ]
+    if mismatches:
+        raise ValueError(
+            "executor receipt does not match source handoff: " + ", ".join(sorted(mismatches))
+        )
+
+    receipt_digest = digest(receipt)
+    return {
+        "schema": "aec-execution-evidence/1",
+        "evidence_state": "EXECUTED",
+        "executor": receipt["executor"],
+        "plan_id": receipt["plan_id"],
+        "document_id": receipt["document_id"],
+        "source_id": handoff["source_id"],
+        "source_byte_revision_id": handoff["source_byte_revision_id"],
+        "parser_revision_id": handoff["parser_revision_id"],
+        "candidate_id": handoff.get("candidate_id"),
+        "handoff_digest": handoff["handoff_digest"],
+        "receipt_digest": receipt_digest,
+        "committed": True,
+        "canonical_mutation": False,
+        "execution_authorized": False,
+        "note": (
+            "Validated executor evidence only. Persisting or promoting this evidence "
+            "into canonical project state requires a separate repository/application policy."
+        ),
+    }
+
+
 def verify_source_binding(
     record: dict[str, Any],
     source: SourceRevision,

@@ -318,7 +318,23 @@ ROOM_NAMES: tuple[str, ...] = (
     "electrical room", "elec. room", "parking", "garage", "elevator hall", "ev hall", "pantry", "laundry", "study",
     "terrace", "deck", "lounge",
 )
-_ROOM_ALT = "|".join(sorted((re.escape(name) for name in ROOM_NAMES), key=len, reverse=True))
+ROOM_NAME_ALIASES: dict[str, str] = {
+    "작은 방": "작은방", "다용도 실": "다용도실", "드레스 룸": "드레스룸", "파우더 룸": "파우더룸",
+    "계단 실": "계단실", "샤워 실": "샤워실", "기계 실": "기계실", "전기 실": "전기실",
+    "발전기 실": "발전기실", "펌프 실": "펌프실", "방재 실": "방재실", "관리 실": "관리실",
+    "경비 실": "경비실", "세탁 실": "세탁실", "보일러 실": "보일러실", "실외기 실": "실외기실",
+    "대피 공간": "대피공간", "통신 실": "통신실", "준비 실": "준비실", "탈의 실": "탈의실",
+    "수유 실": "수유실", "식품 창고": "식품창고",
+}
+_ROOM_ALT = "|".join(sorted((re.escape(name) for name in (*ROOM_NAMES, *ROOM_NAME_ALIASES)), key=len, reverse=True))
+
+
+def normalize_room_name(name: str) -> str:
+    """Canonical room label for exact lookup across common Korean drafting variants."""
+    value = re.sub(r"\s+", " ", str(name or "")).strip()
+    value = ROOM_NAME_ALIASES.get(value, value)
+    value = re.sub(r"(?<=[가-힣A-Za-z])\s+(?=\d{1,2}$)", "", value)
+    return value
 _ROOM_RE = re.compile(
     rf"^\s*(?:(?P<num1>[A-Z]?\d{{1,4}}[A-Z]?)(?:호|호실)?\s*[-.:)]?\s*)?(?P<name>(?:\d\s*)?(?:{_ROOM_ALT})(?:\s*\d{{1,2}}(?![\d.,]))?)"
     rf"(?:\s*[(\[]?\s*(?P<num2>[A-Z]?\d{{1,4}}[A-Z]?)\s*(?:호|호실)\s*[)\]]?)?"
@@ -335,7 +351,7 @@ def room_from_text(text: str) -> dict[str, Any] | None:
     found = _ROOM_RE.match(lines[0])
     if not found:
         return None
-    result: dict[str, Any] = {"roomName": re.sub(r"\s+", " ", found["name"]).strip()}
+    result: dict[str, Any] = {"roomName": normalize_room_name(found["name"])}
     number = found["num1"] or found["num2"]
     if number:
         result["roomNumber"] = number

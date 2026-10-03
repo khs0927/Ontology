@@ -42,6 +42,8 @@ class Settings:
             os.getenv("AEC_EMBEDDING_URL", ""), os.getenv("AEC_RAG_URL", ""),
             os.getenv("AEC_EMBEDDING_MODEL", "BAAI/bge-m3"), os.getenv("AEC_EMBEDDING_REVISION", ""),
             os.getenv("AEC_ODA_EXECUTABLE", ""),
+            lease_seconds=max(30, int(os.getenv("AEC_LEASE_SECONDS", "300"))),
+            max_attempts=max(1, int(os.getenv("AEC_MAX_ATTEMPTS", "3"))),
             dwg_converter=os.getenv("AEC_DWG_CONVERTER", "auto"),
             libredwg_executable=os.getenv("AEC_LIBREDWG_EXECUTABLE", ""),
         )

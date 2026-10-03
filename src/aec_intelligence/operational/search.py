@@ -29,6 +29,18 @@ def storey_pattern(level: str) -> str:
     return f"(^|[^0-9a-z가-힣]){body}([^0-9a-z]|$)"
 
 
+# Query intent vocabulary. Storey parsing itself stays centralized in classifier.py.
+_ROOM_WORDS = {"방", "실", "룸", "공간", "방들", "room", "rooms", "space", "spaces"}
+_LIST_WORDS = {"목록", "리스트", "전체", "모든", "모두", "list", "all"}
+_SYNONYMS = {
+    "h형강": ["H-", "형강"],
+    "c형강": ["C-", "형강"],
+    "ㄷ형강": ["C-", "형강"],
+    "ㄱ형강": ["L-", "형강"],
+    "앵글": ["L-", "형강"],
+}
+
+
 @dataclass
 class ParsedQuery:
     terms: list[str]

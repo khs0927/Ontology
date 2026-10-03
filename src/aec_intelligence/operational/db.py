@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
+import os
 import uuid
 
 import psycopg
@@ -31,21 +32,29 @@ def graph_name(project: str) -> str:
 
 
 class Database:
-    def __init__(self, dsn):
+    def __init__(self, dsn, statement_timeout_ms=None, connect_timeout_sec=None):
         self.dsn = dsn
+        self.statement_timeout_ms = int(statement_timeout_ms if statement_timeout_ms is not None
+                                        else os.getenv("AEC_DB_STATEMENT_TIMEOUT_MS", "120000"))
+        self.connect_timeout_sec = int(connect_timeout_sec if connect_timeout_sec is not None
+                                       else os.getenv("AEC_DB_CONNECT_TIMEOUT_SEC", "10"))
+        if self.statement_timeout_ms < 1000:
+            raise ValueError("statement_timeout_ms must be at least 1000")
+        if self.connect_timeout_sec < 1:
+            raise ValueError("connect_timeout_sec must be at least 1")
 
     @contextmanager
     def connect(self):
-        with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
+        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=self.connect_timeout_sec) as conn:
             conn.execute("LOAD 'age'")
             conn.execute('SET search_path = ag_catalog, aec, public')
-            conn.execute("SET statement_timeout = '30s'")
+            conn.execute("SELECT set_config('statement_timeout', %s, false)", (f"{self.statement_timeout_ms}ms",))
             yield conn
 
     def initialize(self):
         """Apply pending numbered migrations in order; each runs once, in its own transaction."""
         applied = []
-        with psycopg.connect(self.dsn, autocommit=True) as conn:
+        with psycopg.connect(self.dsn, autocommit=True, connect_timeout=self.connect_timeout_sec) as conn:
             conn.execute('CREATE SCHEMA IF NOT EXISTS aec')
             conn.execute('''CREATE TABLE IF NOT EXISTS aec.schema_migrations (
                 version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())''')

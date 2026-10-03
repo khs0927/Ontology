@@ -45,6 +45,11 @@ class SourceRevision:
         return digest([self.account, self.corpus, self.file_id, self.project_id])
 
     @property
+    def content_revision_id(self):
+        """Original byte revision, independent of parser implementation."""
+        return digest([self.source_id, self.revision, self.sha256])
+
+    @property
     def revision_id(self):
         return digest([self.source_id, self.revision, self.sha256,
                        self.parser, self.parser_version])
@@ -109,3 +114,38 @@ def verify_live_candidate(candidate, live):
         "fingerprint": live.get("fingerprint") if not reasons else None,
         "may_execute_mutation": False,
     }
+
+
+def verify_bound_live_candidate(candidate, live, binding, *, now, max_age_seconds=30):
+    """Additional review guard over trusted native observations, never authorization.
+
+    Binding must come from an independently established source/native association.
+    Caller-supplied timestamps and digests are not proof of trusted acquisition.
+    Executor must re-observe and recheck inside its document transaction.
+    """
+    from datetime import datetime
+    result = verify_live_candidate(candidate, live)
+    reasons = list(result["reasons"])
+    for key in ("document_id", "state_digest"):
+        expected = binding.get(key)
+        if not isinstance(expected, str) or not expected.strip() or live.get(key) != expected:
+            reasons.append(f"missing_or_changed:{key}")
+    if isinstance(binding.get("state_digest"), str) and not re.fullmatch(r"[0-9a-f]{64}", binding["state_digest"]):
+        reasons.append("invalid_state_digest")
+    if type(max_age_seconds) not in (int, float) or not 0 < max_age_seconds <= 30:
+        raise ValueError("Observation lifetime must be positive and at most 30 seconds")
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise ValueError("An explicit timezone-aware clock is required")
+    try:
+        observed = datetime.fromisoformat(live["observed_at"].replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            raise ValueError("missing timezone")
+        age = (now - observed).total_seconds()
+        if age < 0 or age >= max_age_seconds:
+            reasons.append("stale_or_future_observation")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        reasons.append("missing_or_invalid_observation_time")
+    return {**result, "schema": "power-cad-bound-context-validation/1",
+            "status": "VERIFIED_FOR_REVIEW" if not reasons else "REQUIRES_REVIEW",
+            "reasons": reasons, "fingerprint": live.get("fingerprint") if not reasons else None,
+            "may_execute_mutation": False}

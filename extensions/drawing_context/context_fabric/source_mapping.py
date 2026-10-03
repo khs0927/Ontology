@@ -32,6 +32,9 @@ class TrustedSourceResolution:
     resolved_path: str
     resolved_sha256: str
     resolver_id: str
+    cache_entry_id: str
+    resolver_receipt_sha256: str
+    immutable_cache: bool
     resolved_at: str
 
     def __post_init__(self):
@@ -41,12 +44,18 @@ class TrustedSourceResolution:
             "resolved_path",
             "resolved_sha256",
             "resolver_id",
+            "cache_entry_id",
+            "resolver_receipt_sha256",
             "resolved_at",
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"TrustedSourceResolution.{name} must be non-empty")
         normalize_native_path(self.resolved_path)
+        if len(self.resolver_receipt_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in self.resolver_receipt_sha256):
+            raise ValueError("resolver_receipt_sha256 must be lowercase SHA-256")
+        if self.immutable_cache is not True:
+            raise ValueError("source resolution must point to an immutable cache entry")
 
 
 @dataclass(frozen=True)
@@ -58,6 +67,7 @@ class LiveObjectObservation:
     source_byte_revision_id: str
     file_sha256: str
     state_digest: str
+    modification_generation: str
     revision: str
     sha256: str
     layout: str
@@ -77,6 +87,7 @@ class LiveObjectObservation:
             "source_byte_revision_id",
             "file_sha256",
             "state_digest",
+            "modification_generation",
             "revision",
             "sha256",
             "layout",
@@ -194,6 +205,9 @@ def verify_source_binding(
         "parser_revision_id": source.revision_id,
         "resolver": {
             "resolver_id": resolution.resolver_id,
+            "cache_entry_id": resolution.cache_entry_id,
+            "resolver_receipt_sha256": resolution.resolver_receipt_sha256,
+            "immutable_cache": resolution.immutable_cache,
             "resolved_path": resolution.resolved_path,
             "resolved_at": resolution.resolved_at,
         },
@@ -202,6 +216,7 @@ def verify_source_binding(
             "document_id": live.document_id,
             "native_path": live.native_path,
             "state_digest": live.state_digest,
+            "modification_generation": live.modification_generation,
             "document_dirty": live.document_dirty,
             "units": live.units,
         },

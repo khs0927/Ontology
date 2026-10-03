@@ -282,8 +282,10 @@ class _DXFSemantics:
     def _space(self, source, room, evidence, method):
         self.metrics['spaces'] += 1
         label = ' '.join(str(room[k]) for k in ('roomNumber', 'roomName') if k in room)
+        aliases = ' '.join(str(value) for value in room.get('roomNameAliases', ()) if value)
+        search_label = ' '.join(value for value in (label, aliases) if value)
         space = observation(self.doc, f"{evidence['layout']}:{evidence['handle']}:space", 'Space',
-                            f"{self.name} {self.sheet.name} {label} {ALIASES['Space']}",
+                            f"{self.name} {self.sheet.name} {search_label} {ALIASES['Space']}",
                             {**evidence, 'derived_from': source['id'], 'method': method}, source['bbox'],
                             state='AI_INFERRED',
                             properties={**room, 'source_annotation': source['id'], 'layer': source['properties'].get('layer', ''),

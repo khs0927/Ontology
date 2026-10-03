@@ -47,6 +47,8 @@ AEC_DWG_CONVERTER=auto
 AEC_ODA_EXECUTABLE=C:\Program Files\ODA\ODAFileConverter 27.1.0\ODAFileConverter.exe
 # LibreDWG dwg2dxf.exe 경로(선택). 비우면 PATH 의 dwg2dxf 사용
 AEC_LIBREDWG_EXECUTABLE=
+# 대형 도면 SQL/AGE 투영의 statement timeout(초). 검색/API 일반 연결은 30초를 유지합니다.
+AEC_INGEST_STATEMENT_TIMEOUT_SECONDS=300
 # 백업 폴더(선택, 기본값은 아래와 동일)
 AEC_BACKUP_DIR=G:\내 드라이브\AEC-INTELLIGENCE\backups
 # 임베딩 서버(선택). 비우면 결정적 해시 벡터 사용(의미 검색 아님).
@@ -185,6 +187,7 @@ python -m aec_intelligence.operational.cli run-workers -n 3 --out D:\AECData\cen
   생략하면 **min(코어수-1, 물리 RAM/2GB)** (최소 1)로 자동 설정합니다.
 - 결과물: `D:\AECData\artifacts\<doc_id>\rev-0\` (변환 DXF, SVG 미리보기, geometry jsonl), `D:\AECData\snapshots\<doc_id>\rev-0.json`.
 - 중단(Ctrl+C) 후 재실행하면 실행 중이던 작업은 lease(5분) 만료 뒤 다시 처리됩니다(최대 3회).
+- 대형 도면의 SQL/AGE 투영은 `AEC_INGEST_STATEMENT_TIMEOUT_SECONDS`(기본 300초)을 사용합니다. 일반 검색/API DB 연결은 기존 30초 제한을 유지합니다.
 
 ---
 
@@ -279,6 +282,7 @@ preflight → (선택) embeddings → census(--resume) → enqueue-census → ru
 | `embeddings not healthy` | `docker logs aec-embeddings` 확인(모델 다운로드 중이면 `-EmbeddingsTimeoutSec` 늘리기) |
 | `OCR_REQUIRED` 실패 (스캔 PDF) | `ocr` 큐/OCR 워커가 필요한 파일입니다. 일반 텍스트 PDF 는 cad 큐에서 처리됩니다 |
 | 실패 작업 재시도 | 원인 해결 후 `enqueue-census <census> --requeue-failed` → `run-workers` |
+| `canceling statement due to statement timeout` | 대형 도면이면 `.env`의 `AEC_INGEST_STATEMENT_TIMEOUT_SECONDS`를 600 등으로 늘린 뒤 해당 작업을 재시도. 일반 검색 timeout은 그대로 30초 |
 | 한글이 `\uXXXX` 로 출력됨 | `$env:PYTHONUTF8='1'` 설정 (스크립트는 자동) |
 | Drive 파일이 클라우드 전용 | 해시 시 자동 다운로드됨. 디스크가 부족하면 Drive 설정에서 폴더를 "오프라인 사용" 으로 나눠 진행하거나 `--skip-placeholders` |
 

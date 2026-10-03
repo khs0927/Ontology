@@ -40,6 +40,7 @@ from .storage import GoogleDriveArtifactStore, LocalArtifactStore
 from .validation_engine import validate_project, validate_repository, write_validation_report
 from .iterations import IterationManager
 from .intelligence_bridge import export_hydradb_projection, graph_backend_plan, inspect_code_context, preview_hydradb_projection
+from .visual_reasoning import NvidiaCosmosVision, architectural_object_prompt, image_sha256, prepare_visual_input
 
 
 def _dwg_converter(arguments: dict[str, Any]):
@@ -135,6 +136,8 @@ class MCPGateway:
             "aec.block_catalog": self._block_catalog,
             "aec.drawing_index": self._drawing_index,
             "aec.element_context": self._element_context,
+            "aec.visual_inspect_artifact": self._visual_inspect_artifact,
+            "aec.visual_validate_drive_project": self._visual_validate_drive_project,
         }
 
     def list_tools(self) -> list[dict[str, Any]]:
@@ -152,6 +155,185 @@ class MCPGateway:
 
     def _audit(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return audit_repository(self.repository_root).to_dict()
+
+    def _visual_validate_path(
+        self,
+        source: Path,
+        project_id: str,
+        *,
+        preview: Path | None = None,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        """Create advisory visual evidence without changing canonical CAIR."""
+
+        client = NvidiaCosmosVision.from_env()
+        if not client.enabled:
+            return {
+                "status": "REQUIRES_CONFIGURATION",
+                "provider": "nvidia",
+                "model": client.model,
+                "canonical": False,
+                "authority": "visual_advisory",
+                "error": "NVIDIA_API_KEY is not set and no local NVIDIA_COSMOS_ENDPOINT is configured",
+            }
+
+        try:
+            image, mime_type, visual_source = prepare_visual_input(source, preview)
+            evidence = client.analyze_image(
+                image,
+                mime_type,
+                architectural_object_prompt(source.name, context),
+            )
+        except Exception as exc:
+            return {
+                "status": "FAILED",
+                "provider": "nvidia",
+                "model": client.model,
+                "canonical": False,
+                "authority": "visual_advisory",
+                "error": str(exc),
+            }
+
+        project = RepositoryLayout(self.repository_root).project(project_id).ensure()
+        report_path = project.path / "11_VALIDATION" / "visual" / f"{source.stem}-nvidia-cosmos.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "schema": "aec-visual-observation/1",
+            "status": evidence.get("status", "SUCCESS"),
+            "provider": "nvidia",
+            "model": client.model,
+            "project_id": project_id,
+            "source": str(source),
+            "visual_source": str(visual_source),
+            "image_sha256": image_sha256(image),
+            "authority": "visual_advisory",
+            "canonical": False,
+            "may_mutate_cair": False,
+            "evidence": evidence,
+        }
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        store = LocalArtifactStore(self.repository_root)
+        record = store.put(
+            report_path,
+            project_id,
+            "DERIVED/VISUAL_OBSERVATION",
+            relative_destination=report_path.relative_to(self.repository_root).as_posix(),
+            provider="nvidia",
+            model=client.model,
+            authority="visual_advisory",
+        )
+        ArtifactRegistry(RepositoryLayout(self.repository_root).runtime_registry_path).register_artifact(record)
+        return {
+            "status": report["status"],
+            "provider": "nvidia",
+            "model": client.model,
+            "authority": "visual_advisory",
+            "canonical": False,
+            "report_path": str(report_path),
+            "artifact": record.to_dict(),
+            "objects": evidence.get("objects", []),
+            "candidate_relations": evidence.get("candidate_relations", []),
+            "quality_issues": evidence.get("quality_issues", []),
+        }
+
+    def _visual_validate_ingest(
+        self,
+        source: Path,
+        project_id: str,
+        ingest_result: dict[str, Any],
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        outputs = ingest_result.get("outputs") or {}
+        preview_value = outputs.get("preview")
+        preview = Path(preview_value) if isinstance(preview_value, str) and preview_value else None
+        return self._visual_validate_path(
+            source,
+            project_id,
+            preview=preview,
+            context=context or (
+                "Drive-first ingestion validation: identify visible AEC objects, "
+                "candidate relations, and ambiguous/low-quality evidence"
+            ),
+        )
+
+    def _visual_inspect_artifact(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        source = Path(str(arguments["source"])).resolve()
+        if not source.is_file():
+            return {"status": "NOT_FOUND", "source": str(source)}
+        project_id = str(arguments["project_id"])
+        preview_value = arguments.get("preview")
+        preview = Path(str(preview_value)).resolve() if preview_value else None
+        return self._visual_validate_path(
+            source,
+            project_id,
+            preview=preview,
+            context=arguments.get("context"),
+        )
+
+    def _visual_validate_drive_project(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Inspect already-visual Drive artifacts without reparsing canonical CAD."""
+
+        store_or_status = self._drive_store_or_status()
+        if isinstance(store_or_status, dict):
+            return store_or_status
+        client = NvidiaCosmosVision.from_env()
+        if not client.enabled:
+            return {
+                "status": "REQUIRES_CONFIGURATION",
+                "provider": "nvidia",
+                "model": client.model,
+                "error": "Set NVIDIA_API_KEY before sending Drive-derived visual evidence to NVIDIA",
+            }
+
+        project_id = str(arguments["project_id"])
+        limit = max(1, min(int(arguments.get("limit", 20)), 100))
+        include_derived = bool(arguments.get("include_derived", False))
+        supported = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".svg"}
+        candidates = []
+        for item in self._remote_project_files(store_or_status, project_id):
+            relative = str(
+                item.get("relative_path")
+                or item.get("local_path")
+                or item.get("path")
+                or ""
+            ).replace("\\", "/")
+            if Path(relative).suffix.lower() not in supported:
+                continue
+            if not include_derived and "/01_RAW/" not in relative:
+                continue
+            candidates.append(item)
+        candidates = candidates[:limit]
+
+        reports = []
+        for item in candidates:
+            try:
+                record = store_or_status.materialize_remote(item)
+                local_path = self.repository_root / record.local_path
+                reports.append(
+                    self._visual_validate_path(
+                        local_path,
+                        project_id,
+                        context=str(arguments.get("context") or "Google Drive collection validation"),
+                    )
+                )
+            except Exception as exc:
+                reports.append({"status": "FAILED", "source": item.get("name"), "error": str(exc)})
+
+        synced = None
+        if bool(arguments.get("sync_reports", True)) and reports:
+            synced = self._sync_project_to_drive({"project_id": project_id})
+        return {
+            "status": (
+                "SUCCESS"
+                if all(row.get("status") != "FAILED" for row in reports)
+                else "SUCCESS_WITH_WARNINGS"
+            ),
+            "project_id": project_id,
+            "processed": len(reports),
+            "reports": reports,
+            "drive_sync": synced,
+        }
 
     def _ingest_dxf(self, arguments: dict[str, Any]) -> dict[str, Any]:
         source = Path(str(arguments["source"]))
@@ -180,8 +362,23 @@ class MCPGateway:
             if uploaded.get("status") != "SYNCED":
                 return {"status": uploaded.get("status", "FAILED"), "project_id": project_id, "source": str(source), "drive_upload": uploaded}
         result = self._ingest_file_authoritative(arguments)
-        if drive_configured and result.get("status") in {"SUCCESS", "SUCCESS_WITH_WARNINGS", "PARTIAL"}:
-            result = {**result, "drive_sync": self._sync_project_to_drive({"project_id": project_id})}
+        accepted = {"SUCCESS", "SUCCESS_WITH_WARNINGS", "PARTIAL"}
+        visual_requested = bool(arguments.get("visual_validate", drive_configured))
+        if visual_requested and result.get("status") in accepted:
+            result = {
+                **result,
+                "visual_validation": self._visual_validate_ingest(
+                    source,
+                    project_id,
+                    result,
+                    arguments.get("visual_context"),
+                ),
+            }
+        if drive_configured and result.get("status") in accepted:
+            result = {
+                **result,
+                "drive_sync": self._sync_project_to_drive({"project_id": project_id}),
+            }
         return result
 
     def _ingest_file_authoritative(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -949,7 +1146,7 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.promote_iteration", "Promote a successfully validated iteration with explicit approval metadata", {"type": "object", "required": ["project_id", "iteration_id", "approved_by"], "properties": {"project_id": {"type": "string"}, "iteration_id": {"type": "string"}, "approved_by": {"type": "string"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.build_dashboard", "Build a source-backed repository status dashboard artifact", {"type": "object", "properties": {"output_directory": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.ingest_project", "Ingest one or more project sources through the format adapters", {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}, "source": {"type": ["string", "null"]}, "sources": {"type": "array", "items": {"type": "string"}}, "name": {"type": ["string", "null"]}, "force": {"type": "boolean"}}, "additionalProperties": False}),
-    MCPToolDefinition("aec.ingest_file", "Dispatch one source file to its authoritative format ingestion pipeline", {"type": "object", "required": ["source", "project_id"], "properties": {"source": {"type": "string"}, "project_id": {"type": "string"}, "name": {"type": ["string", "null"]}, "force": {"type": "boolean"}, "oda_executable": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.ingest_file", "Dispatch one source file to its authoritative format ingestion pipeline; when Drive is configured, optional NVIDIA visual observations remain non-canonical", {"type": "object", "required": ["source", "project_id"], "properties": {"source": {"type": "string"}, "project_id": {"type": "string"}, "name": {"type": ["string", "null"]}, "force": {"type": "boolean"}, "oda_executable": {"type": ["string", "null"]}, "visual_validate": {"type": "boolean"}, "visual_context": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.parse_cad", "Parse DXF or convert DWG through the explicitly configured ODA boundary", {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}, "oda_executable": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.parse_ifc", "Parse IFC with IfcOpenShell and return normalized parser evidence", {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}, "additionalProperties": False}),
     MCPToolDefinition("aec.parse_gis", "Parse GeoJSON, GPKG, or SHP with CRS preservation", {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}, "additionalProperties": False}),
@@ -989,4 +1186,6 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.block_catalog", "CAD block library aggregated by name across drawings: definitions, instance counts, attribute tags, layers, xref/anonymous flags and what the instances were classified as", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "name_like": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.drawing_index", "Sheet index: documents and layouts with drawing category, title-block number/title/scale and per-sheet element counts", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "category": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.element_context", "Neighbourhood of one element through relations in both directions (contains, instanceOf, hasTitleBlock, hasSection ...), 1-2 hops, confirmed against the AGE graph", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}, "hops": {"type": "integer", "minimum": 1, "maximum": 2}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.visual_inspect_artifact", "Use NVIDIA Cosmos Reason to create non-canonical VisualObservation/CandidateObject evidence for one local drawing image, PDF, SVG, or CAD preview", {"type": "object", "required": ["source", "project_id"], "properties": {"source": {"type": "string"}, "project_id": {"type": "string"}, "preview": {"type": ["string", "null"]}, "context": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.visual_validate_drive_project", "Materialize a bounded set of visual Google Drive project artifacts, inspect them with NVIDIA Cosmos Reason, and sync advisory reports without changing CAIR truth", {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "include_derived": {"type": "boolean"}, "sync_reports": {"type": "boolean"}, "context": {"type": ["string", "null"]}}, "additionalProperties": False}),
 )

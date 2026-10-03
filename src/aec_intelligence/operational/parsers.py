@@ -591,6 +591,57 @@ def parse_source(source, doc, output, settings, source_name=None):
                             obj['properties'].update(title_fields)
                         add(obj,view)
                         semantics.enrich(obj, normalized, evidence)
+
+                        if is_insert and kind != 'TitleBlock':
+                            for nested_entity, nested_path, effective_layer in _iter_nested_semantic_entities(entity):
+                                nested_handle = handle + "::v:" + ".".join(str(i) for i in nested_path)
+                                try:
+                                    nested = _normalize_entity(nested_entity)
+                                    nested.handle = nested_handle
+                                    raw_layer = nested.layer
+                                    if raw_layer == '0' and effective_layer:
+                                        nested.layer = effective_layer
+                                    nested_bounds = ezbbox.extents([nested_entity], fast=False)
+                                    if nested_bounds.has_data:
+                                        nested.bbox = dict(zip(('min_x','min_y','min_z','max_x','max_y','max_z'),
+                                                               [*nested_bounds.extmin,*nested_bounds.extmax]))
+                                    nested.properties['virtual_from_handle'] = handle
+                                    nested.properties['nested_depth'] = len(nested_path)
+                                    if raw_layer != nested.layer:
+                                        nested.properties['source_layer'] = raw_layer
+                                    nested.properties['dxf_attributes'] = {k:str(v) for k,v in nested_entity.dxf.all_existing_dxf_attribs().items()}
+                                    geometry_file.write(json.dumps(nested.to_dict(),ensure_ascii=False,default=str)+'\n')
+                                    nested_kind, nested_classification = classify(nested)
+                                    nested_is_insert = nested.entity_type == 'INSERT'
+                                    nested_title_fields = title_block_fields(nested.properties.get('attributes')) if nested_is_insert else None
+                                    if nested_title_fields:
+                                        nested_kind = 'TitleBlock'
+                                        nested_classification = Classification('TitleBlock', 0.9, 'attribute_rules',
+                                            ('attribute tags indicate title block: ' + ', '.join(sorted(nested_title_fields)),
+                                             f'block={nested.properties.get("block_name")}'), 'ACCEPT_WITH_WARNING')
+                                    if nested_kind == 'CADEntity' and not nested_is_insert:
+                                        continue
+                                    nested_props = nested.properties
+                                    if nested_is_insert:
+                                        nested_attribute_text = ' '.join(str(v) for v in (nested_props.get('attributes') or {}).values())
+                                        nested_text = f"{nested_props.get('effective_name') or nested_props.get('block_name') or ''} {nested_attribute_text}".strip()
+                                    else:
+                                        nested_text = str(nested_props.get('text') or nested_props.get('block_name') or '')
+                                    nested_evidence = {**base,'layout':sheet.name,'handle':nested_handle,'coordinate_system':'CAD_WCS',
+                                                       'virtual_from_handle':handle,'nested_depth':len(nested_path),
+                                                       'geometry_path':_safe_relative(output/f'geometry-{index}.jsonl', settings.data_root)}
+                                    nested_state = 'OBSERVED' if nested_kind in ('Annotation','Dimension','CADEntity') else 'AI_INFERRED'
+                                    nested_obj = observation(doc,f'{sheet.name}:{nested_handle}',nested_kind,
+                                        f'{name} {sheet.name} {nested.layer} {nested_text} {ALIASES.get(nested_kind,nested_kind)}',
+                                        nested_evidence,nested.bbox,state=nested_state,
+                                        properties={**nested_props,'classification':nested_classification.to_dict()})
+                                    if nested_title_fields:
+                                        nested_obj['properties'].update(nested_title_fields)
+                                    add(nested_obj,view)
+                                    semantics.enrich(nested_obj, nested, nested_evidence)
+                                    semantics.metrics['nested_semantic_entities'] += 1
+                                except Exception as nested_exc:
+                                    warnings.append(f'{sheet.name}/{nested_handle}: nested semantic extraction failed: {nested_exc}')
                     except Exception as exc:
                         warnings.append(f'{sheet.name}/{handle}: {exc}')
             semantics.end_layout()

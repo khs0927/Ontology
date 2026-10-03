@@ -1,5 +1,6 @@
 """Single local SQLite evidence history; producer authentication is out of scope."""
 from copy import deepcopy
+from datetime import datetime
 import hashlib
 import json
 import sqlite3
@@ -116,6 +117,8 @@ class EvidenceHistory:
     def project(self, *, scope, now):
         """Report exact-scope active observations; never promote to VERIFIED."""
         _scope(scope)
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError('Clock requires timezone')
         events, head = self._read()
         records, inactive = self._replay(events)
         matching = [(key, project_evidence(record, scope=scope, now=now))

@@ -121,3 +121,10 @@ def test_bounded_events_and_payload(tmp_path, monkeypatch):
         history.add('two', record())
     assert len(history.project(scope=record(), now=NOW)['observations']) == 1
     history.close()
+
+
+def test_empty_history_still_requires_aware_clock(tmp_path):
+    history = EvidenceHistory(tmp_path / 'evidence.db')
+    with pytest.raises(ValueError, match='Clock'):
+        history.project(scope=record(), now=datetime(2026, 10, 4))
+    history.close()

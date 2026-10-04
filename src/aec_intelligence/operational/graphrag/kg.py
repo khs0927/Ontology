@@ -191,6 +191,7 @@ class KnowledgeGraphBuilder:
                     conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s", (key,))
                     conn.execute("DELETE FROM aec.kg_build_state WHERE project_key=%s", (key,))
                     conn.execute("DELETE FROM aec.kg_communities WHERE project_key=%s", (key,))
+                conn.commit()
             stats["removed_projects"] = len(stale)
             for key, docs in sorted(grouped.items()):
                 if project_key and key != project_key:
@@ -510,6 +511,7 @@ class KnowledgeGraphBuilder:
                    VALUES (%s,%s,%s,%s,now())
                    ON CONFLICT (project_key) DO UPDATE SET fingerprint=EXCLUDED.fingerprint, nodes=EXCLUDED.nodes,
                      edges=EXCLUDED.edges, built_at=now()""", (g.key, fp, len(g.nodes), len(g.edges)))
+        conn.commit()  # each project is visible (and kept) as soon as it is built
 
 
 def kg_stats(db) -> dict[str, Any]:

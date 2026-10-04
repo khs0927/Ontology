@@ -205,6 +205,7 @@ def refresh(db, project_key: str | None = None, *, leiden: bool = False, model: 
                 if stale:
                     conn.execute("DELETE FROM aec.kg_communities WHERE id = ANY(%s)", (stale,))
                     counts["removed"] += len(stale)
+            conn.commit()
     return dict(counts)
 
 
@@ -234,16 +235,17 @@ def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: 
                         vec_model = None
                     else:
                         vec = vector_literal(vecs[0])
-                with conn.transaction():
-                    conn.execute(
-                        """UPDATE aec.kg_communities SET summary=%s, model=%s, status='DONE', error=NULL,
-                             embedding=%s::vector, embedding_model=%s, updated_at=now() WHERE id=%s""",
-                        (text, res["model"], vec, vec_model, row["id"]))
+                conn.execute(
+                    """UPDATE aec.kg_communities SET summary=%s, model=%s, status='DONE', error=NULL,
+                         embedding=%s::vector, embedding_model=%s, updated_at=now() WHERE id=%s""",
+                    (text, res["model"], vec, vec_model, row["id"]))
+                conn.commit()  # one commit per community: an interrupted run keeps what it finished
                 done += 1
                 seconds += res["seconds"]
             except Exception as exc:  # noqa: BLE001 - recorded per community, the run continues
-                with conn.transaction():
-                    conn.execute("UPDATE aec.kg_communities SET status='FAILED', error=%s, updated_at=now() "
-                                 "WHERE id=%s", (str(exc)[:500], row["id"]))
+                conn.rollback()
+                conn.execute("UPDATE aec.kg_communities SET status='FAILED', error=%s, updated_at=now() "
+                             "WHERE id=%s", (str(exc)[:500], row["id"]))
+                conn.commit()
                 failed += 1
     return {"summarized": done, "failed": failed, "llm_seconds": round(seconds, 1)}

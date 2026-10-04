@@ -138,3 +138,19 @@ def test_ask_routes_cites_and_refuses(seeded):
     refusing = GraphRAG(db, settings=None, llm=FakeLLM(REFUSAL))
     res = refusing.ask("오늘 서울 날씨는 어때?", project=key)
     assert res["refused"] and res["citations"] == []
+
+
+def test_communities_are_cached_and_resumable(seeded):
+    from aec_intelligence.operational.graphrag import communities
+    from aec_intelligence.operational.graphrag.kg import KnowledgeGraphBuilder
+
+    db, key, _ = seeded
+    KnowledgeGraphBuilder(db).build(key, force=True)
+    first = communities.refresh(db, key)
+    assert first.get("new", 0) >= 2  # project overview + at least one storey aspect
+    llm = FakeLLM("요약입니다.")
+    assert communities.summarize(db, llm, project_key=key, limit=1)["summarized"] == 1
+    rest = communities.summarize(db, llm, project_key=key)
+    assert rest["summarized"] == first["new"] - 1  # resumes where the first run stopped
+    assert communities.refresh(db, key) == {"unchanged": first["new"]}
+    assert communities.summarize(db, llm, project_key=key)["summarized"] == 0  # cached by input_hash

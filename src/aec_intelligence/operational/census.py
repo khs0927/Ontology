@@ -725,9 +725,10 @@ def worker_process(settings, queue: str, poll: float, index: int) -> int:
     import logging
 
     from .db import Database
-    from .worker import IngestionWorker
+    from .worker import IngestionWorker, quiet_noisy_loggers
 
     logging.basicConfig(level=logging.INFO, format=f"[w{index}] %(asctime)s %(levelname)s %(message)s")
+    quiet_noisy_loggers()
     db = Database(settings.dsn)
     worker = IngestionWorker(db, settings, queue=queue, worker_id=f"census-{os.getpid()}-{index}")
     min_free = parse_min_free(os.getenv("AEC_MIN_FREE_GB"))

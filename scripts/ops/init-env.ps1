@@ -72,6 +72,14 @@ if ($created) {
     Write-Host "Created $EnvPath (generated AEC_DB_PASSWORD; review AEC_HOST_DATA_ROOT / AEC_IMPORT_ROOTS)."
 }
 
+# libpq resolves localhost to ::1 first; Docker Desktop on Windows black-holes that, so each host
+# connection waited the whole connect timeout (10 s) before trying 127.0.0.1. Pin IPv4.
+$url = Get-Value $lines 'AEC_DATABASE_URL'
+if ($url -and $url -match '^(postgres(?:ql)?://[^@]*@)localhost([:/].*)$') {
+    Set-Value $lines 'AEC_DATABASE_URL' ($Matches[1] + '127.0.0.1' + $Matches[2])
+    Write-Host "AEC_DATABASE_URL: host localhost -> 127.0.0.1 (avoids a 10 s IPv6 connect timeout per connection)."
+}
+
 $token = Get-Value $lines 'AEC_API_TOKEN'
 if (-not $token -or $RotateToken) {
     $token = New-Secret 32

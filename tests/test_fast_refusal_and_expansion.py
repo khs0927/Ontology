@@ -56,6 +56,20 @@ def test_semantic_leg_reports_timeout_and_stops_when_budget_is_gone(monkeypatch)
     assert stub.calls == [] and rag._semantic_timed_out is True
 
 
+def test_probe_timeout_is_restored_for_the_rest_of_the_transaction():
+    """SET LOCAL in a released savepoint would leak; the probe must put the old timeout back."""
+    log = []
+
+    class C:
+        def execute(self, sql, params=None):
+            log.append((sql, params))
+            return SimpleNamespace(fetchone=lambda: {"v": "30s"})
+
+    with ask._local_statement_timeout(C(), 1000):
+        pass
+    assert [p for s, p in log if "set_config" in s] == [("1000ms",), ("30s",)]
+
+
 def test_budget_env(monkeypatch):
     monkeypatch.setenv("AEC_ASK_GATE_TIMEOUT_MS", "900")
     assert ask._budget_ms("AEC_ASK_GATE_TIMEOUT_MS", 1200) == 900
@@ -77,8 +91,8 @@ def test_search_budget_exhausted_returns_empty_with_warning(monkeypatch):
             return tx()
 
         def execute(self, sql, params=None):
-            if "set_config" in sql:
-                return SimpleNamespace(fetchall=lambda: [])
+            if "set_config" in sql or "current_setting" in sql:
+                return SimpleNamespace(fetchall=lambda: [], fetchone=lambda: {"v": "30s"})
             raise RuntimeError("canceling statement due to statement timeout")
 
     class DB:

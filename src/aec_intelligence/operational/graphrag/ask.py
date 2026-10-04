@@ -14,6 +14,7 @@ import json
 import os
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -99,6 +100,21 @@ def asked_attribute(question: str):
         if m and evidence_rx is not None:
             return m.group(0), evidence_rx
     return None
+
+
+@contextmanager
+def _local_statement_timeout(conn, ms: int):
+    """statement_timeout = ``ms`` for the statements inside, then the previous value again.
+
+    SET LOCAL inside a savepoint outlives a *released* savepoint (it only reverts on rollback), so a
+    short probe timeout would otherwise cancel every later statement of the caller's transaction."""
+    prev = conn.execute("SELECT current_setting('statement_timeout') AS v").fetchone()
+    prev = prev["v"] if isinstance(prev, dict) else prev[0]
+    conn.execute("SELECT set_config('statement_timeout', %s, true)", (f"{int(ms)}ms",))
+    try:
+        yield
+    finally:
+        conn.execute("SELECT set_config('statement_timeout', %s, true)", (prev,))
 
 
 @dataclass
@@ -613,13 +629,13 @@ class GraphRAG:
     def _kg_has_evidence(self, conn, keys, evidence_rx) -> bool:
         """Cheap probe (a few thousand KG nodes, not every object): does any node text match the evidence?"""
         pf, pp = self._project_filter(keys, "n")
-        try:
-            with conn.transaction():
-                conn.execute("SELECT set_config('statement_timeout', '1000ms', true)")
-                row = conn.execute(f"SELECT 1 AS hit FROM aec.kg_nodes n WHERE n.search_text ~* %s {pf} LIMIT 1",
-                                   [evidence_rx.pattern, *pp]).fetchone()
-        except Exception:  # noqa: BLE001 - unknown: let the semantic leg decide under its normal budget
-            return True
+        with _local_statement_timeout(conn, 1000):
+            try:
+                with conn.transaction():
+                    row = conn.execute(f"SELECT 1 AS hit FROM aec.kg_nodes n WHERE n.search_text ~* %s {pf} LIMIT 1",
+                                       [evidence_rx.pattern, *pp]).fetchone()
+            except Exception:  # noqa: BLE001 - unknown: let the semantic leg decide under its normal budget
+                return True
         return row is not None
 
     def _semantic(self, conn, question, keys, budget_ms: int | None = None) -> list[ContextItem]:

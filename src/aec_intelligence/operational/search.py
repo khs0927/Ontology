@@ -338,6 +338,12 @@ class SearchRouter:
             """
             full_params = [*lexical_params, *vector_params, *params, *match_params, *candidate_params, top_k * 2]
 
+            prev_timeout = None
+            if timeout_ms:
+                # Restored below: a SET LOCAL survives the released savepoint and would cancel the
+                # relation expansion that follows.
+                row = conn.execute("SELECT current_setting('statement_timeout') AS v").fetchone()
+                prev_timeout = row["v"] if isinstance(row, dict) else row[0]
             try:
                 with conn.transaction():
                     # Transaction-local: the trigram operator uses the same 0.3 cut as word_similarity()
@@ -348,6 +354,8 @@ class SearchRouter:
                     if timeout_ms:
                         conn.execute("SELECT set_config('statement_timeout', %s, true)", (f"{int(timeout_ms)}ms",))
                     rows = conn.execute(sql_query, full_params).fetchall()
+                if prev_timeout is not None:
+                    conn.execute("SELECT set_config('statement_timeout', %s, true)", (prev_timeout,))
             except Exception as exc:
                 # If vector extension or age is absent in light test DB, fallback to simple ILIKE.
                 # The savepoint above keeps the connection usable after the failed statement.

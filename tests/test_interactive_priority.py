@@ -93,6 +93,10 @@ def test_activity_stamp_is_throttled(monkeypatch):
     assert len(writes) == 1
     stamp._last -= 0.3
     stamp.touch(force=True)
+    assert len(writes) == 1  # the first write is still in flight
+    stamp._pending = False
+    stamp._last -= 0.3
+    stamp.touch(force=True)
     assert len(writes) == 2
 
 
@@ -189,7 +193,7 @@ def test_gate_sees_api_stamp_postgres():
         conn.execute("DELETE FROM aec.interactive_activity")
         gate = InteractiveGate(window_seconds=15, max_wait_seconds=1)
         assert gate.busy(conn) is False
-        ActivityStamp(dsn)._write()
+        ActivityStamp(dsn)._write_once()
         assert gate.busy(conn) is True
         conn.execute("UPDATE aec.interactive_activity SET last_at = now() - interval '1 minute'")
         assert gate.busy(conn) is False

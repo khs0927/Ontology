@@ -178,7 +178,7 @@ def _citation_valid(conn, c: dict[str, Any]) -> tuple[bool, bool]:
     return True, (not any_bbox) or bool(c.get("bbox"))
 
 
-def run_eval(db, settings, eval_file, *, out=None, use_llm=True, limit=None, k=10) -> dict[str, Any]:
+def run_eval(db, settings, eval_file, *, out=None, use_llm=True, limit=None, k=10, on_query=None) -> dict[str, Any]:
     from .llm import LocalLLM
 
     rag = GraphRAG(db, settings, llm=LocalLLM() if use_llm else None)
@@ -187,6 +187,8 @@ def run_eval(db, settings, eval_file, *, out=None, use_llm=True, limit=None, k=1
         questions = questions[:limit]
     rows = []
     for q in questions:
+        if on_query is not None:  # e.g. ActivityStamp.touch: background writers yield as for API queries
+            on_query()
         started = time.monotonic()
         res = rag.ask(q["q"], top_k=12, generate=use_llm)
         total_ms = round((time.monotonic() - started) * 1000)

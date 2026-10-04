@@ -134,6 +134,7 @@ class ActivityStamp:
         self.source = source
         self.min_interval = min_interval
         self._last = 0.0
+        self._pending = False
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aec-activity")
         self.enabled = _env_float("AEC_INTERACTIVE_YIELD_SECONDS", DEFAULT_WINDOW_SECONDS) > 0
@@ -145,12 +146,20 @@ class ActivityStamp:
             return
         now = time.monotonic()
         with self._lock:
-            if now - self._last < (0.25 if force else self.min_interval):
-                return
+            if now - self._last < (0.25 if force else self.min_interval) or self._pending:
+                return  # at most one write in flight: an unreachable DB must not queue up stamps
             self._last = now
+            self._pending = True
         self._pool.submit(self._write)
 
     def _write(self) -> None:
+        try:
+            self._write_once()
+        finally:
+            with self._lock:
+                self._pending = False
+
+    def _write_once(self) -> None:
         try:
             import psycopg
 

@@ -45,11 +45,16 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "ms_p50": _pct(ms, 0.5), "ms_p95": _pct(ms, 0.95), "ms_max": max(ms) if ms else None}
 
 
-def search_eval(router, cases: list[dict[str, Any]], *, top_k: int = 10, warmup: bool = True) -> dict[str, Any]:
+def search_eval(router, cases: list[dict[str, Any]], *, top_k: int = 10, warmup: bool = True,
+                on_query=None) -> dict[str, Any]:
+    """``on_query`` runs before every query (the CLI stamps aec.interactive_activity so background writers
+    yield exactly as they do for API queries: the run then measures interactive latency)."""
     if warmup:
         router.search("warmup", top_k=3, expand_graph=False)
     rows = []
     for c in cases:
+        if on_query is not None:
+            on_query()
         started = time.perf_counter()
         res = router.search(c["q"], top_k=top_k, expand_graph=False)
         ms = int((time.perf_counter() - started) * 1000)

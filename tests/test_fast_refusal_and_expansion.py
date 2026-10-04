@@ -222,6 +222,8 @@ def test_cases_and_search_eval(tmp_path):
             docs = {"a": ["D1"], "b": ["X", "Y", "D2"]}.get(q, [])
             return SimpleNamespace(hits=[hit(d) for d in docs], warnings=[])
 
-    res = search_eval(Router(), cases)
+    stamps = []
+    res = search_eval(Router(), cases, on_query=lambda: stamps.append(1))
+    assert len(stamps) == 2
     assert res["sets"]["ko"]["mrr"] == 1.0 and res["sets"]["en"]["mrr"] == round(1 / 3, 3)
     assert summarize([])["n"] == 0

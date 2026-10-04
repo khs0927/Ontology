@@ -121,8 +121,10 @@ def cmd_ask(parsed, settings, db):
 def cmd_graphrag_eval(parsed, settings, db):
     from .evaluate import run_eval
 
+    from ..priority import ActivityStamp
+
     result = run_eval(db, settings, parsed.eval_file, out=parsed.out, use_llm=not parsed.no_llm,
-                      limit=parsed.limit)
+                      limit=parsed.limit, on_query=ActivityStamp(settings.dsn, "eval").touch)
     _print(result["summary"])
     return result
 

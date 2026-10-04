@@ -7,7 +7,10 @@
             'run-workers' / worker child process is left (or -TimeoutMin), then reports RUNNING jobs.
             Stopping the scheduled task directly kills only the parent: spawn children kept claiming jobs
             with the old code. (Children now also exit when their parent is gone.)
-  -Resume : remove the stop file and start the \AEC\AEC-Bulk-Workers task.
+            Also stops a running re-embed (\AEC\AEC-Reembed / reembed.ps1): it commits per chunk, so
+            killing it loses nothing, and it must not write vectors while a migration runs.
+  -Resume : remove the stop file and start the \AEC\AEC-Bulk-Workers task (and \AEC\AEC-Reembed
+            when it is registered).
   Long jobs (large DWG/PDF) can take 10+ minutes; a job killed mid-run is retried after its lease expires.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\ops\stop-workers.ps1 -Drain -TimeoutMin 30
@@ -48,6 +51,11 @@ if ($Drain) {
     New-Item -ItemType Directory -Force -Path (Split-Path $stopFile) | Out-Null
     Set-Content -LiteralPath $stopFile -Value "drain requested $(Get-Date -Format s) by $env:USERNAME" -Encoding UTF8
     Write-Host "stop file: $stopFile"
+    Stop-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed' -ErrorAction SilentlyContinue
+    $reembed = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -match 'operational\.cli reembed' })
+    foreach ($p in $reembed) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    if ($reembed.Count) { Write-Host "stopped $($reembed.Count) re-embed process(es) (resumable)" }
     $deadline = (Get-Date).AddMinutes($TimeoutMin)
     while ((Get-Date) -lt $deadline) {
         $procs = Get-WorkerProcesses
@@ -67,6 +75,10 @@ if ($Resume) {
     if (Test-Path -LiteralPath $stopFile) { Remove-Item -LiteralPath $stopFile -Force }
     Start-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
     Write-Host "resumed $TaskPath$TaskName"
+    if (Get-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed' -ErrorAction SilentlyContinue) {
+        Start-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed'
+        Write-Host "resumed $($TaskPath)AEC-Reembed"
+    }
     exit 0
 }
 Write-Host 'usage: stop-workers.ps1 -Drain [-TimeoutMin 30] | -Resume'

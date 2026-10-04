@@ -2,7 +2,9 @@
 .SYNOPSIS
   Register (or remove) the per-user scheduled tasks that keep the bulk ingest running.
   No admin rights are needed. The tasks run only while the user is logged on.
-    \AEC\AEC-Bulk-Workers  at logon; restarts every 5 min after a failure; runs bulk-run.ps1 -Role workers
+    \AEC\AEC-Bulk-Workers  at logon and every 10 min (IgnoreNew: a watchdog that restarts a loop that exited
+                           without an error); restarts every 5 min after a failure; runs bulk-run.ps1 -Role workers.
+                           While the stop file exists (stop-workers.ps1 -Drain) every start exits at once.
     \AEC\AEC-Bulk-Census   at logon (resumes an interrupted census; finished sources are skipped)
     \AEC\AEC-Bulk-Census-Refresh  daily at 03:00 with -Refresh to pick up new or changed drawings
 .EXAMPLE
@@ -34,10 +36,15 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -RestartInterval (New-TimeSpan -Minutes 5)
 $common = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" -Config `"$Config`""
 
+# Daily trigger repeating every 10 min for a day = every 10 min, forever.
+$watchdog = New-ScheduledTaskTrigger -Daily -At '00:00'
+$watchdog.Repetition = (New-ScheduledTaskTrigger -Once -At '00:00' -RepetitionInterval (New-TimeSpan -Minutes 10) `
+    -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
+
 # (PowerShell names are case-insensitive: an action variable called $workers would be the [int]$Workers parameter)
 $workersAction = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role workers -Workers $Workers"
 Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Workers' -Action $workersAction -Principal $principal `
-    -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $user) -Force | Out-Null
+    -Settings $settings -Trigger @((New-ScheduledTaskTrigger -AtLogOn -User $user), $watchdog) -Force | Out-Null
 
 $censusAction = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role census"
 $censusDaily = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role census -Refresh"

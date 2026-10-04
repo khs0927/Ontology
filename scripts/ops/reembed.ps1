@@ -8,6 +8,8 @@
   Ollama serves one request at a time per model, so the re-embed and the bulk workers share it:
   lower the bulk worker count first (D:\AECData\bulk\sources.json "workers": 1) while this runs.
   Logs: <LogDir>\reembed-yyyyMMdd.log (progress lines "[reembed] written/pending").
+  Durable: \AEC\AEC-Reembed (register-host-tasks.ps1) starts this at logon and every 30 min; a run
+  exits at once while the worker stop file exists (deploys/migrations) or another re-embed runs.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\ops\reembed.ps1
   powershell -ExecutionPolicy Bypass -File scripts\ops\reembed.ps1 -BatchSize 8 -Pause 1 -DryRun
@@ -29,6 +31,12 @@ if (-not $mutex.WaitOne(0)) { Write-Host 'AEC reembed already running'; exit 0 }
 try { (Get-Process -Id $PID).PriorityClass = $Priority } catch { }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $log = Join-Path $LogDir "reembed-$(Get-Date -Format yyyyMMdd).log"
+$stopFile = if ($env:AEC_WORKER_STOP_FILE) { $env:AEC_WORKER_STOP_FILE } else {
+    Join-Path $(if ($env:AEC_DATA_ROOT -and (Test-Path -LiteralPath $env:AEC_DATA_ROOT)) { $env:AEC_DATA_ROOT } else { 'D:\AECData' }) 'bulk\STOP-WORKERS' }
+if (Test-Path -LiteralPath $stopFile) {
+    Add-Content -LiteralPath $log -Value "$(Get-Date -Format s) stop file $stopFile present: not starting" -Encoding UTF8
+    exit 0
+}
 
 Import-AecDotEnv -Path (Join-Path $script:RepoRoot '.env')
 # The .env URL is for containers (host.docker.internal); the host talks to Ollama on loopback.

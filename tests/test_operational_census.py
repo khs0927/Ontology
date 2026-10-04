@@ -164,8 +164,13 @@ def test_census_exclude_by_name_glob_and_path_prefix(tmp_path):
     (root / "hillside_villa_export" / "model.dxf").write_text("0\nEOF\n")
     (root / "현장B" / ".git").mkdir()
     (root / "현장B" / ".git" / "packed.dwg").write_bytes(b"AC1032 in git")
-    census.run_census([root], tmp_path / "out", exclude=["HILLSIDE_VILLA*", str(root / "현장A 오피스텔" / "구조")])
-    names = {r["name"] for r in _rows(tmp_path / "out")}
+    (root / "현장B" / "tower.skp").write_bytes(b"sketchup")
+    census.run_census([root], tmp_path / "out", exclude=["HILLSIDE_VILLA*", str(root / "현장A 오피스텔" / "구조")],
+                      inventory_extensions=[".skp"])
+    rows = {r["name"]: r for r in _rows(tmp_path / "out")}
+    assert rows["tower.skp"]["status"] == "inventory" and rows["tower.skp"]["sha256"] is None
+    assert "tower.skp" not in {j["name"] for j in census.plan_jobs(tmp_path / "out")}
+    names = set(rows)
     assert "model.dxf" not in names and "packed.dwg" not in names  # name glob (case-insensitive) and SKIP_DIRS
     assert "기초 구조도.dwg" not in names  # path prefix
     assert "1층 평면도.dwg" in names

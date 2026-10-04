@@ -166,7 +166,7 @@ def _load_previous(jsonl: Path) -> dict[str, tuple[int, int]]:
             except ValueError:
                 break
             good += len(line)
-            if row.get("status") in ("ok", "skipped_temp"):  # errors/placeholders are retried
+            if row.get("status") in ("ok", "skipped_temp", "inventory"):  # errors/placeholders are retried
                 previous[row["path"]] = (row.get("size"), row.get("mtime_ns"))
     if good != jsonl.stat().st_size:
         with open(jsonl, "r+b") as handle:
@@ -182,7 +182,8 @@ class CensusResult:
 
 def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterable[str] = DEFAULT_EXTENSIONS,
                resume: bool = False, flush_every: int = 100, hash_placeholders: bool = True,
-               progress: Any = None, only_folders: Iterable[str] = (), exclude: Iterable[str] = ()) -> CensusResult:
+               progress: Any = None, only_folders: Iterable[str] = (), exclude: Iterable[str] = (),
+               inventory_extensions: Iterable[str] = ()) -> CensusResult:
     """Walk ``roots`` (or only ``root/<folder>`` for each of ``only_folders``) and record every drawing.
 
     Paths stay relative to the root so the top-level folder (= project) is the same whether a pilot
@@ -191,6 +192,10 @@ def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterabl
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     exts = {e.lower() if e.startswith(".") else "." + e.lower() for e in extensions}
+    # Inventory-only formats (e.g. .rvt/.skp) are listed with size/mtime but never read: hashing a
+    # cloud placeholder would download it for nothing.
+    inventory = {e.lower() if e.startswith(".") else "." + e.lower() for e in inventory_extensions}
+    exts |= inventory
     jsonl = out_dir / "census.jsonl"
     previous = _load_previous(jsonl) if resume else {}
     if not resume and jsonl.exists():
@@ -234,6 +239,8 @@ def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterabl
                 }
                 if temp:
                     row["status"] = "skipped_temp"
+                elif ext in inventory:
+                    row["status"] = "inventory"
                 elif row["placeholder"] and not hash_placeholders:
                     row["status"] = "placeholder"
                 else:
@@ -536,8 +543,9 @@ def enqueue_census(db, census: str | Path, queue: str = "cad", limit: int | None
 def load_bulk_config(path: str | Path) -> dict[str, Any]:
     """sources.json (kept next to the data, never in git: it names private folders)::
 
-        {"out": "D:/AECData/census-v3", "extensions": ".dwg,.dxf,.pdf,.ifc,.rvt,.skp",
-         "ingest_extensions": ".dwg,.dxf,.pdf", "exclude": ["hillside_villa*"],
+        {"out": "D:/AECData/census-v3", "extensions": ".dwg,.dxf,.pdf,.ifc",
+         "inventory_extensions": ".rvt,.skp", "ingest_extensions": ".dwg,.dxf,.pdf",
+         "exclude": ["hillside_villa*"],
          "sources": [{"name": "01-live", "roots": ["G:/drive/live"], "priority": 10,
                       "project_root": "G:/drive/live", "project_depth": 2, "prefix": "P-",
                       "exclude": ["G:/drive/live/old"]}, ...]}
@@ -572,6 +580,7 @@ def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, r
     state_path = out_root / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     exts = [e.strip() for e in str(config.get("extensions", ",".join(DEFAULT_EXTENSIONS))).split(",") if e.strip()]
+    inventory = [e.strip() for e in str(config.get("inventory_extensions", "")).split(",") if e.strip()]
     ingest = [e.strip() for e in str(config.get("ingest_extensions", ".dwg,.dxf,.pdf")).split(",") if e.strip()]
 
     def save():
@@ -623,7 +632,8 @@ def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, r
         log(f"[bulk] {name}: census {source['roots']} -> {out}")
         result = run_census(source["roots"], out, exts, resume=True, flush_every=50,
                             hash_placeholders=bool(source.get("hash_placeholders", True)), progress=progress,
-                            exclude=[*config.get("exclude", []), *source.get("exclude", [])])
+                            exclude=[*config.get("exclude", []), *source.get("exclude", [])],
+                            inventory_extensions=inventory)
         entry["census"] = {"files": result.summary.get("files"), "unique_contents": result.summary.get("unique_contents"),
                            "by_status": result.summary.get("by_status"), "run": result.summary.get("run")}
         enqueue(True)

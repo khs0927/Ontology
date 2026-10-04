@@ -7,38 +7,23 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import re
-import socket
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from ..netguard import LOCAL_HOSTNAMES, is_local_endpoint  # noqa: F401  (re-exported)
+
 DEFAULT_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3:8b"
-LOCAL_HOSTNAMES = {"localhost", "host.docker.internal", "ollama", "gateway.docker.internal"}
 
 
 class LLMError(RuntimeError):
     pass
-
-
-def is_local_endpoint(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    if host in LOCAL_HOSTNAMES:
-        return True
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        try:
-            addr = ipaddress.ip_address(socket.gethostbyname(host))
-        except (OSError, ValueError):
-            return False
-    return addr.is_loopback or addr.is_private or addr.is_link_local
 
 
 @dataclass

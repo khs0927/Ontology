@@ -34,7 +34,7 @@ class IngestRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., description="Korean or English architectural search query")
+    query: str = Field(..., min_length=1, max_length=2000, description="Korean or English architectural search query")
     project_id: str | None = Field(default=None, description="Optional project filter")
     discipline: str | None = Field(default=None, description="Optional discipline filter")
     storey: str | None = Field(default=None, description="Optional storey/floor filter")

@@ -1,0 +1,18 @@
+# Keep secrets, host virtualenvs and VCS data out of the build context (and so out of image layers).
+.env
+.env.*
+!.env.example
+*.bak
+.venv
+venv
+.git
+.github
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.cache
+*.dump
+*.sql.gz
+node_modules

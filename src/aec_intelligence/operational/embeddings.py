@@ -277,6 +277,29 @@ _STALE_SCOPE = """FROM aec.embeddings e JOIN aec.objects o ON o.id = e.object_id
                  AND EXISTS (SELECT 1 FROM aec.embeddings t WHERE t.object_id = e.object_id AND t.model = %(m)s)"""
 
 
+def _refresh_embedding_state(conn, model: str, *, document_ids: list[str] | None = None,
+                             project_id: str | None = None) -> None:
+    """Advance metadata only after every searchable object has a vector of its current revision.
+
+    Chunk commits can complete one document before another. Reconcile that complete document without
+    advertising a partly embedded document as ready; also repair metadata when a resume finds no work.
+    """
+    conn.execute(
+        """UPDATE aec.index_state s SET embedding_revision=d.revision, embedding_model=%(m)s
+           FROM aec.documents d WHERE s.document_id=d.id
+             AND (%(docs)s::text[] IS NULL OR d.id=ANY(%(docs)s))
+             AND (%(p)s::text IS NULL OR d.project_id=%(p)s)
+             AND (s.embedding_model IS DISTINCT FROM %(m)s OR s.embedding_revision <> d.revision)
+             AND EXISTS (SELECT 1 FROM aec.objects o WHERE o.document_id=d.id
+                         AND o.kind <> 'CADEntity' AND o.search_text <> '')
+             AND NOT EXISTS (SELECT 1 FROM aec.objects o WHERE o.document_id=d.id
+                 AND o.kind <> 'CADEntity' AND o.search_text <> ''
+                 AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id=o.id
+                                 AND e.model=%(m)s AND e.revision=o.revision))""",
+        {"m": model, "docs": document_ids, "p": project_id},
+    )
+
+
 def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *, batch_size: int | None = None,
                        dry_run: bool = False, delete_stale: bool = False,
                        progress: Callable[[int, int], None] | None = None, chunk_retries: int = 0,
@@ -306,9 +329,10 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     params = {"p": project_id, "m": target}
     with db.connect() as conn:
         rows = conn.execute(
-            """SELECT o.id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
+            """SELECT o.id, o.document_id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
                WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND o.kind <> 'CADEntity' AND o.search_text <> ''
-                 AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %(m)s)
+                 AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %(m)s
+                                 AND e.revision = o.revision)
                ORDER BY o.id""",
             params,
         ).fetchall()
@@ -356,10 +380,13 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 if model != HASH_MODEL:  # drop superseded offline vectors only; never discard real ones
                     cur.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
                                 ([r["id"] for r in part], HASH_MODEL))
-            conn.commit()  # each chunk is durable: an interrupted run resumes where it stopped
+            _refresh_embedding_state(conn, model, document_ids=sorted({r["document_id"] for r in part}))
+            conn.commit()  # each chunk and its completed-document metadata are durable
             written += len(part)
             if progress is not None:
                 progress(written, len(rows))
+        if not rows:
+            _refresh_embedding_state(conn, target, project_id=project_id)
         if delete_stale:
             deleted = conn.execute(
                 "DELETE FROM aec.embeddings d USING (SELECT e.object_id, e.model " + _STALE_SCOPE + ") s "

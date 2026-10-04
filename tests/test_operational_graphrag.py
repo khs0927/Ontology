@@ -227,7 +227,8 @@ def test_archontos_rules_link_by_subject_ref_and_facts_export(seeded, tmp_path):
 
     facts = project_facts(db, key)
     assert facts["schema"] == "aec-facts-export/1"
-    assert facts["facts"]["building"]["floor_count"] == 2  # 1F + 2F depicted
+    assert facts["facts"]["building"]["highest_observed_floor"] == 2  # partial drawings show 1F + 2F
+    assert "floor_count" not in facts["facts"]["building"]  # partial coverage cannot certify the total
     assert "basement_count" not in facts["facts"]["building"]  # nothing drawn -> absent -> ArchOntos REVIEW
     assert "회의실1" in facts["facts"]["space"]["uses"]
     assert facts["facts"]["steel"]["sections"] == ["H-300x150x6.5x9"]

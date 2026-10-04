@@ -19,7 +19,7 @@ from . import catalog
 from .auth import BearerTokenMiddleware, api_token_from_env
 from .config import Settings
 from .db import Database
-from .embeddings import EmbeddingService
+from .embeddings import EmbeddingService, endpoint_health
 from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
 from .priority import API_APPLICATION_NAME, ActivityStamp
@@ -133,8 +133,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    def healthz() -> dict[str, Any]:
+        # Liveness stays 200: failing here would restart a container whose only problem is a degraded
+        # semantic stage. The embedding state rides along so a probe can see that degradation.
+        return {"status": "ok", "embeddings": endpoint_health(current_settings)}
 
     @app.get("/v1/stats")
     def get_stats() -> dict[str, Any]:

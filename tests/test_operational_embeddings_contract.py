@@ -236,3 +236,31 @@ def test_ordinary_vector_survives_the_fp16_roundtrip():
     halves = emb._halfvec_roundtrip(values)
     assert halves[:4] == pytest.approx(values[:4], rel=1e-3)
     assert sum(h * h for h in halves) > 0
+
+
+def test_endpoint_health_reports_offline_degradation(tmp_path):
+    assert emb.endpoint_health(make_settings(tmp_path)) == {
+        "configured": False, "model": emb.HASH_MODEL, "circuit_open": False, "degraded": True}
+
+
+def test_endpoint_health_flags_an_open_circuit(monkeypatch, tmp_path):
+    install(monkeypatch, lambda i, body: urllib.error.URLError("down"))
+    service = emb.EmbeddingService(make_settings(tmp_path, url=ENDPOINT), retries=1)
+    with pytest.raises(emb.EmbeddingEndpointError):
+        service.embed_with_model(["a"])
+    assert emb.endpoint_health(make_settings(tmp_path, url=ENDPOINT)) == {
+        "configured": True, "model": "BAAI/bge-m3", "circuit_open": True, "degraded": True}
+
+
+def test_healthz_surfaces_the_embedding_state(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from aec_intelligence.operational import auth
+    from aec_intelligence.operational.api import create_app
+
+    monkeypatch.delenv(auth.TOKEN_ENV, raising=False)
+    client = TestClient(create_app(make_settings(tmp_path)))
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok"  # liveness is unchanged: a degraded stage must not restart the API
+    assert body["embeddings"]["degraded"] is True
+    assert body["embeddings"]["model"] == emb.HASH_MODEL

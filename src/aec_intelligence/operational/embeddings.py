@@ -190,6 +190,10 @@ class EmbeddingService:
         return self.model_name, vectors
 
     # -- remote ---------------------------------------------------------
+    def circuit_open(self) -> bool:
+        """True while this endpoint is short-circuited after recent failures (process-global)."""
+        return self._circuit_open()
+
     def _circuit_open(self) -> bool:
         with _CIRCUIT_LOCK:
             return _CIRCUIT.get(self.endpoint, 0.0) > time.monotonic()
@@ -249,6 +253,22 @@ class EmbeddingService:
 
 def _embeddable(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [obj for obj in objects if obj.get("search_text") and obj.get("type") not in ("CADEntity",)]
+
+
+def endpoint_health(settings: Settings) -> dict[str, Any]:
+    """Read-only embedding readiness for health endpoints: no network call, no database access.
+
+    A degraded semantic stage used to be invisible from outside: ``/healthz`` answered ``ok`` while
+    every query silently fell back to the lexical stage (or to offline hash vectors).
+    """
+    service = EmbeddingService(settings)
+    circuit = service.circuit_open()
+    return {
+        "configured": service.remote_configured,
+        "model": service.active_model(),
+        "circuit_open": circuit,
+        "degraded": (not service.remote_configured) or circuit,
+    }
 
 
 def text_hash(text: str) -> str:
@@ -540,15 +560,26 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
             "yielded_seconds": round(gate.waited_total, 1), "yields": gate.yields}
 
 
-def vectors_gc(db, *, batch: int = 5000, max_batches: int = 1000, min_age_seconds: float = 3600) -> dict[str, Any]:
+def vectors_gc(db, *, batch: int = 5000, max_batches: int = 1000, min_age_seconds: float = 3600,
+               dry_run: bool = False) -> dict[str, Any]:
     """Delete text vectors that no object maps to any more (re-ingested or deleted drawings, replaced
     hash-fallback vectors). Vectors younger than ``min_age_seconds`` are kept: an ingest writes its vectors
     before its mappings commit. Batched; a batch that races a concurrent ingest (foreign-key violation) is
-    rolled back and the run stops, to be repeated later."""
+    rolled back and the run stops, to be repeated later. ``dry_run`` counts the same set without deleting
+    anything, so a caller can preview the irreversible step before taking it."""
     removed, error = 0, None
     with db.connect() as conn:
         for _ in range(max_batches):
             try:
+                if dry_run:
+                    removed = len(conn.execute(
+                        """SELECT t.model, t.content_hash FROM aec.text_vectors t
+                           WHERE t.created_at < now() - make_interval(secs => %s)
+                             AND NOT EXISTS (SELECT 1 FROM aec.embeddings e
+                                             WHERE e.model = t.model AND e.content_hash = t.content_hash)
+                           LIMIT %s""",
+                        (min_age_seconds, batch)).fetchall())
+                    break
                 n = conn.execute(
                     """DELETE FROM aec.text_vectors tv USING (
                            SELECT t.model, t.content_hash FROM aec.text_vectors t

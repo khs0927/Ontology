@@ -324,6 +324,12 @@ def test_identical_texts_share_one_vector_and_gc_postgres():
         with db.connect() as conn:
             conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s)", (oids[4:],))
         assert emb.vectors_gc(db, min_age_seconds=3600)["removed"] == 0  # too young
+        preview = emb.vectors_gc(db, min_age_seconds=0, dry_run=True)
+        assert preview["removed"] >= 1 and preview["error"] is None  # counted, not deleted
+        with db.connect() as conn:
+            still_there = conn.execute("SELECT count(*) AS n FROM aec.text_vectors WHERE content_hash = ANY(%s)",
+                                       (hashes,)).fetchone()["n"]
+        assert still_there == 2  # the dry run touched nothing
         gc = emb.vectors_gc(db, min_age_seconds=0)
         assert gc["removed"] >= 1 and gc["error"] is None
         with db.connect() as conn:

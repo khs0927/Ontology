@@ -87,7 +87,9 @@ def test_correct_token_passes(tmp_path, monkeypatch):
 
 def test_health_and_dashboard_shell_stay_open(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch, TOKEN)
-    assert client.get("/healthz").json() == {"status": "ok"}
+    health = client.get("/healthz").json()
+    assert health["status"] == "ok"  # no token needed, and liveness is not hostage to the semantic stage
+    assert "degraded" in health["embeddings"]
     assert client.get("/dashboard").status_code == 200
     assert "apiFetch" in client.get("/").text
 

@@ -657,7 +657,7 @@ class GraphRAG:
         elif generate and self.llm is not None:
             prompt = "[자료]\n" + "\n".join(f"[{i.cid}] {i.text}" for i in items) + f"\n\n[질문]\n{question}"
             try:
-                res = self.llm.chat(ANSWER_SYSTEM, prompt, max_tokens=600)
+                res = self.llm.chat(ANSWER_SYSTEM, prompt, max_tokens=450)
                 answer, mode, llm_ms, model = res["text"], "llm", round(res["seconds"] * 1000), res["model"]
             except Exception as exc:  # noqa: BLE001 - answer falls back to extractive
                 warnings.append(f"LLM unavailable: {exc}")

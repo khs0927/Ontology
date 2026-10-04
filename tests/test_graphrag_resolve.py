@@ -66,6 +66,7 @@ def test_canonical_room_ignores_spacing_and_case():
     ("화장실은 어느 층에 있어?", "graph:room"),
     ("배치도 최신 버전은?", "graph:revision"),
     ("방수 상세 마감은 어떻게 되어 있나", "semantic"),
+    ("옥상층평면도 관련 도면을 찾아줘", "graph:drawings"),
 ])
 def test_router(q, route):
     assert choose_route(link_static(q)) == route
@@ -92,3 +93,9 @@ def test_llm_refuses_remote_endpoints_without_opt_in():
 
 def test_refusal_text_is_korean():
     assert "근거" in REFUSAL
+
+
+def test_josa():
+    from aec_intelligence.operational.graphrag.evaluate import josa
+
+    assert josa("데크") == "데크는" and josa("화장실") == "화장실은" and josa("문", "이가") == "문이"

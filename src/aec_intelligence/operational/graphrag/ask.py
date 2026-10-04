@@ -48,6 +48,7 @@ _COUNT_RE = re.compile(r"(몇\s*개|몇\s*장|몇\s*종|몇\s*건|개수|수량|
 _REVISION_RE = re.compile(r"(최신|최종본|개정|리비전|이전 버전|변경 이력|버전|revision)", re.IGNORECASE)
 _LOCATION_RE = re.compile(r"(어느\s*층|몇\s*층에|어디에|어디\s*있|어느\s*도면|어떤\s*도면|무슨\s*도면)")
 _LIST_RE = re.compile(r"(목록|리스트|어떤\s*\S*\s*있|무엇이 있|뭐가 있|알려줘|보여줘|나열)")
+_FIND_DRAWING_RE = re.compile(r"(관련\s*도면|도면(을|은|이)?\s*(찾아|알려|보여|뭐|무엇|어디)|도면\s*목록|어떤\s*도면(이|들)?\s*있)")
 _DRAWING_WORDS = re.compile(r"(도면|시트|도곽|평면도|입면도|단면도|배치도|상세도|시방서|계획도|설비도)")
 
 
@@ -93,6 +94,7 @@ def _word_present(word: str, text: str) -> bool:
 def classify_intents(question: str) -> list[str]:
     intents = []
     for name, rx in (("summary", _SUMMARY_RE), ("count", _COUNT_RE), ("revision", _REVISION_RE),
+                     ("find_drawing", _FIND_DRAWING_RE),
                      ("location", _LOCATION_RE), ("list", _LIST_RE), ("drawing", _DRAWING_WORDS)):
         if rx.search(question):
             intents.append(name)
@@ -145,6 +147,8 @@ def choose_route(linked: Linked) -> str:
         return "keyword:sheet"
     if "revision" in linked.intents:
         return "graph:revision"
+    if "find_drawing" in linked.intents and not (linked.kinds and "count" in linked.intents):
+        return "graph:drawings"
     if linked.kinds and ("count" in linked.intents or linked.storeys):
         return "graph:elements"
     if linked.rooms:
@@ -231,7 +235,9 @@ class GraphRAG:
                 items += self._drawings(conn, question, keys, cypher)
             if len(items) < 3:
                 items += self._kg_lexical(conn, question, keys)
-            if route == "semantic" or len(items) < 3:
+            # Object-level hybrid search (pg_trgm + pgvector over every object) is the slowest stage, so a
+            # graph route only falls back to it when the graph found nothing.
+            if route == "semantic" or not items:
                 items += self._semantic(conn, question, keys)
             items = _dedupe(items)[:top_k]
             for i, item in enumerate(items, 1):

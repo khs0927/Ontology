@@ -29,6 +29,15 @@ from .resolve import KIND_KO
 EXCLUDE_PROJECTS = re.compile(r"^(eval20|eval20b|trial|it-\d+|blocks-\d+|ko-\d+.*|작업중)$")
 
 
+def josa(word: str, pair: str = "은는") -> str:
+    """Korean particle after ``word`` (은/는, 이/가, 을/를) by its final consonant."""
+    last = word.strip()[-1:] if word.strip() else ""
+    has_final = "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0
+    if not ("가" <= last <= "힣"):
+        has_final = last.isdigit() and last in "013678"
+    return word + (pair[0] if has_final else pair[1])
+
+
 def _p(values, q):
     if not values:
         return None
@@ -70,7 +79,7 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
             for sp in nodes("""SELECT id, name, props->>'storey' AS storey FROM aec.kg_nodes WHERE project_key=%s
                                AND type='Space' AND props->>'storey' IS NOT NULL
                                ORDER BY (props->>'occurrences')::int DESC, name LIMIT 3""", (key,)):
-                qs.append({"type": "room", "route": "graph:room", "q": f"{name} 프로젝트에서 {sp['name']}은 어느 층에 있어?",
+                qs.append({"type": "room", "route": "graph:room", "q": f"{name} 프로젝트에서 {josa(sp['name'])} 어느 층에 있어?",
                            "gold": [sp["id"]], "expect": [sp["storey"]]})
             # element counts
             for eg in nodes("""SELECT props->>'kind' AS kind, sum((props->>'count')::int) AS n,
@@ -78,7 +87,7 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
                                AND props->>'kind' IN ('Door','Window','Column','Stair','Wall') GROUP BY 1
                                ORDER BY 2 DESC LIMIT 2""", (key,)):
                 qs.append({"type": "count", "route": "graph:elements",
-                           "q": f"{name} 도면 전체에 {KIND_KO[eg['kind']]}은 몇 개야?", "gold": list(eg["ids"])[:20],
+                           "q": f"{name} 도면 전체에 {josa(KIND_KO[eg['kind']])} 몇 개야?", "gold": list(eg["ids"])[:20],
                            "expect": [str(eg["n"])]})
             # sheet numbers
             for d in nodes("""SELECT id, props->>'sheet_number' AS no, document_ids FROM aec.kg_nodes
@@ -94,7 +103,7 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
                 if not words:
                     continue
                 phrase = " ".join(words[:3])
-                qs.append({"type": "drawing", "route": "semantic", "q": f"{name} 프로젝트의 {phrase} 관련 도면을 찾아줘",
+                qs.append({"type": "drawing", "route": "graph:drawings", "q": f"{name} 프로젝트의 {phrase} 관련 도면을 찾아줘",
                            "gold": [d["id"], *d["document_ids"]]})
             # summary
             c = nodes("SELECT id FROM aec.kg_communities WHERE project_key=%s AND level=0", (key,))

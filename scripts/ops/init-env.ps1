@@ -34,8 +34,9 @@ function New-Secret([int]$Bytes = 32) {
 }
 
 function Read-Lines([string]$Path) {
-    if (Test-Path -LiteralPath $Path) { return [System.Collections.Generic.List[string]]([System.IO.File]::ReadAllLines($Path, $utf8)) }
-    return New-Object System.Collections.Generic.List[string]
+    $list = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $Path) { $list.AddRange([string[]][System.IO.File]::ReadAllLines($Path, $utf8)) }
+    return ,$list   # leading comma: keep the List (PowerShell would unroll it into string/object[])
 }
 
 function Get-Value($Lines, [string]$Key) {

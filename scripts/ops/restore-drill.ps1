@@ -21,12 +21,13 @@ param(
     [switch]$Backup,
     [string]$Target = 'D:\AECData\backups',
     [string]$Container = 'aec-db',
-    [string]$Scratch = 'aec_restore_drill',
+    [string]$Scratch = '',
     [string]$Report = '',
     [switch]$KeepScratch
 )
 . (Join-Path $PSScriptRoot '_common.ps1')
 $ErrorActionPreference = 'Stop'
+if (-not $Scratch) { $Scratch = 'aec_restore_drill_' + [guid]::NewGuid().ToString('N') }
 if ($Scratch -notmatch '^aec_[a-z0-9_]+$' -or $Scratch -eq 'aec') { throw "scratch db name must look like aec_<name> (got '$Scratch')" }
 
 if ($Backup) {
@@ -46,11 +47,35 @@ WHERE t.table_type = 'BASE TABLE'
 ORDER BY 1
 "@
 $indexSql = @"
-SELECT schemaname || '.' || tablename || '.' || indexname
-FROM pg_indexes
-WHERE schemaname IN ('aec', 'ag_catalog') OR schemaname LIKE 'aec\_%'
+SELECT json_build_object('schema', p.schemaname, 'table', p.tablename,
+       'name', p.indexname, 'definition', p.indexdef,
+       'valid', i.indisvalid, 'ready', i.indisready)::text
+FROM pg_indexes p
+JOIN pg_namespace n ON n.nspname = p.schemaname
+JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = p.indexname
+JOIN pg_index i ON i.indexrelid = c.oid
+WHERE p.schemaname IN ('aec', 'ag_catalog') OR p.schemaname LIKE 'aec\_%'
 ORDER BY 1
 "@
+$structureSql = @"
+SELECT 'constraint:' || json_build_object('schema', n.nspname, 'table', c.relname,
+       'name', k.conname, 'type', k.contype, 'validated', k.convalidated,
+       'definition', pg_get_constraintdef(k.oid))::text
+FROM pg_constraint k
+JOIN pg_class c ON c.oid = k.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('aec', 'ag_catalog') OR n.nspname LIKE 'aec\_%'
+UNION ALL
+SELECT 'extension:' || json_build_object('name', e.extname, 'version', e.extversion,
+       'schema', n.nspname)::text
+FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+ORDER BY 1
+"@
+function Get-Structure([string]$db) {
+    $rows = & docker exec $Container psql -U aec -d $db -At -v ON_ERROR_STOP=1 -c $structureSql
+    if ($LASTEXITCODE -ne 0) { throw "structure query failed on $db" }
+    @($rows)
+}
 function Get-Indexes([string]$db) {
     $rows = & docker exec $Container psql -U aec -d $db -At -v ON_ERROR_STOP=1 -c $indexSql
     if ($LASTEXITCODE -ne 0) { throw "index query failed on $db" }
@@ -67,14 +92,17 @@ function Get-Counts([string]$db) {
 $ErrorActionPreference = 'Continue'
 $start = Get-Date
 Write-Host "dump: $Dump ($([math]::Round((Get-Item -LiteralPath $Dump).Length/1MB,1)) MB)"
-& docker exec $Container dropdb -U aec --if-exists $Scratch 2>&1 | Out-Null
+$exists = & docker exec $Container psql -U aec -d postgres -At -v ON_ERROR_STOP=1 -c "SELECT 1 FROM pg_database WHERE datname = '$Scratch'"
+if ($LASTEXITCODE -ne 0) { throw 'scratch ownership check failed' }
+if ($exists) { throw "scratch database already exists; refusing to replace $Scratch" }
 & docker exec $Container createdb -U aec $Scratch
 if ($LASTEXITCODE -ne 0) { throw "createdb $Scratch failed" }
 $restoreErr = Join-Path $env:TEMP "restore-drill-$PID.err"
-& docker cp $Dump "${Container}:/tmp/restore-drill.dump" | Out-Null
+$containerDump = "/tmp/restore-drill-$PID.dump"
+& docker cp $Dump "${Container}:$containerDump" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'docker cp of the dump failed' }
 $t = Measure-Command {
-    & docker exec -e 'PGOPTIONS=-c max_parallel_maintenance_workers=0' $Container pg_restore -U aec -d $Scratch --no-owner /tmp/restore-drill.dump 2> $restoreErr
+    & docker exec -e 'PGOPTIONS=-c max_parallel_maintenance_workers=0' $Container pg_restore -U aec -d $Scratch --no-owner $containerDump 2> $restoreErr
 }
 $restoreExit = $LASTEXITCODE
 $errs = @(Get-Content -LiteralPath $restoreErr -ErrorAction SilentlyContinue | Where-Object { $_ -match 'error' })
@@ -90,15 +118,22 @@ foreach ($k in (@($live.Keys) + @($rest.Keys) | Sort-Object -Unique)) {
 }
 $liveIdx = Get-Indexes 'aec'
 $restIdx = Get-Indexes $Scratch
+$invalidIdx = @($restIdx | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { -not $_.valid -or -not $_.ready })
 $missingIdx = @($liveIdx | Where-Object { $restIdx -notcontains $_ })
+$extraIdx = @($restIdx | Where-Object { $liveIdx -notcontains $_ })
+$liveStructure = @(Get-Structure 'aec')
+$restStructure = @(Get-Structure $Scratch)
+$structureDiff = @(Compare-Object -ReferenceObject (@('sentinel') + $liveStructure) -DifferenceObject (@('sentinel') + $restStructure))
 $key = 'aec.documents', 'aec.objects', 'aec.relations', 'aec.embeddings', 'aec.jobs', 'aec.kg_nodes', 'aec.kg_edges', 'aec.kg_aliases', 'ag_catalog.ag_graph', 'ag_catalog.ag_label'
 $summary = [ordered]@{
     dump = $Dump; scratch = $Scratch; restore_seconds = [int]$t.TotalSeconds; restore_exit = $restoreExit
     restore_error_lines = $errs.Count; tables_live = $live.Count; tables_restored = $rest.Count
     rows_live = ($live.Values | Measure-Object -Sum).Sum; rows_restored = ($rest.Values | Measure-Object -Sum).Sum
     indexes_live = $liveIdx.Count; indexes_restored = $restIdx.Count; missing_indexes = $missingIdx
+    unexpected_indexes = $extraIdx; invalid_indexes = $invalidIdx
+    structure_differences = $structureDiff; restore_stderr = $restoreErr
     key_tables = [ordered]@{}; differing_tables = $diff
-    result = $(if ($diff.Count -eq 0 -and $errs.Count -eq 0 -and $missingIdx.Count -eq 0) { 'MATCH' } else { 'DIFF' })
+    result = $(if ($restoreExit -eq 0 -and $diff.Count -eq 0 -and $errs.Count -eq 0 -and $missingIdx.Count -eq 0 -and $extraIdx.Count -eq 0 -and $invalidIdx.Count -eq 0 -and $structureDiff.Count -eq 0) { 'MATCH' } else { 'DIFF' })
     finished = (Get-Date -Format s)
 }
 foreach ($k in $key) { $summary.key_tables[$k] = "$($live[$k]) / $($rest[$k])" }
@@ -106,6 +141,6 @@ $json = $summary | ConvertTo-Json -Depth 5
 if ($Report) { Set-Content -LiteralPath $Report -Value $json -Encoding UTF8 }
 $json
 if (-not $KeepScratch) { & docker exec $Container dropdb -U aec $Scratch 2>&1 | Out-Null }
-& docker exec $Container rm -f /tmp/restore-drill.dump 2>&1 | Out-Null
-Remove-Item -LiteralPath $restoreErr -ErrorAction SilentlyContinue
+& docker exec $Container rm -f $containerDump 2>&1 | Out-Null
+if ($summary.result -eq 'MATCH') { Remove-Item -LiteralPath $restoreErr -ErrorAction SilentlyContinue }
 if ($summary.result -ne 'MATCH') { exit 2 }

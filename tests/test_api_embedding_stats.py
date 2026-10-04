@@ -17,6 +17,7 @@ def test_pending_embedding_stats_use_active_model_and_current_revision(tmp_path,
         CREATE TABLE objects (id TEXT, kind TEXT, search_text TEXT, revision INTEGER);
         CREATE TABLE relations (id TEXT);
         CREATE TABLE embeddings (object_id TEXT, model TEXT, revision INTEGER);
+        CREATE TABLE text_vectors (model TEXT, content_hash TEXT);
         CREATE TABLE jobs (state TEXT);
         INSERT INTO objects VALUES
             ('current','Space','room',2), ('stale','Space','room',2), ('missing','Space','room',0),

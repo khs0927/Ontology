@@ -230,7 +230,9 @@ def test_embedding_outage_keeps_objects_and_reembed_fills_them(tmp_path, vector_
     from aec_intelligence.operational.worker import IngestionWorker
 
     emb._CIRCUIT.clear()
-    db, down, source = _stack(tmp_path, embedding_url="http://127.0.0.1:9", embedding_model="test-model")
+    # A model name of its own: texts embedded by an earlier run would be reused (one vector per distinct text).
+    model = f"test-model-{os.getpid()}"
+    db, down, source = _stack(tmp_path, embedding_url="http://127.0.0.1:9", embedding_model=model)
     project, key = f"P-pending-{os.getpid()}", f"pending:{os.getpid()}"
     with db.connect() as conn:
         conn.execute("DELETE FROM aec.jobs WHERE dedup_key=%s", (key,))
@@ -242,12 +244,18 @@ def test_embedding_outage_keeps_objects_and_reembed_fills_them(tmp_path, vector_
     assert job["state"] == "SUCCEEDED", job["error"]
     assert job["result"]["embeddings_pending"] is True and objects > 0
 
-    up = Settings(dsn=DSN, data_root=tmp_path, import_roots=(), embedding_url=vector_server, embedding_model="test-model")
+    up = Settings(dsn=DSN, data_root=tmp_path, import_roots=(), embedding_url=vector_server, embedding_model=model)
     emb._CIRCUIT.clear()
-    assert emb.reindex_embeddings(db, up, project, dry_run=True)["pending"] > 0
-    done = emb.reindex_embeddings(db, up, project)
-    assert done["written"] > 0 and done["error"] is None
-    assert emb.reindex_embeddings(db, up, project, dry_run=True)["pending"] == 0
+    try:
+        assert emb.reindex_embeddings(db, up, project, dry_run=True)["pending"] > 0
+        done = emb.reindex_embeddings(db, up, project)
+        assert done["written"] > 0 and done["error"] is None
+        assert done["embedded_texts"] == done["distinct_texts"] <= done["written"]
+        assert emb.reindex_embeddings(db, up, project, dry_run=True)["pending"] == 0
+    finally:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM aec.embeddings WHERE model=%s", (model,))
+            conn.execute("DELETE FROM aec.text_vectors WHERE model=%s", (model,))
 
 
 @pg

@@ -122,6 +122,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             embs_count = conn.execute("SELECT count(*) as c FROM aec.embeddings").fetchone()["c"]
             jobs_stat = conn.execute("SELECT state, count(*) as c FROM aec.jobs GROUP BY state").fetchall()
             by_model = conn.execute("SELECT model, count(*) AS c FROM aec.embeddings GROUP BY model").fetchall()
+            # Distinct embedded texts (migration 0003); objects with the same text share one vector.
+            text_vectors = conn.execute("SELECT count(*) AS c FROM aec.text_vectors").fetchone()["c"]
             active = EmbeddingService(current_settings).active_model()
             # Match reembed eligibility: a vector must use both the active model and current object revision.
             pending = conn.execute(
@@ -135,6 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "relations": rels_count,
             "embeddings": embs_count,
             "embeddings_by_model": {row["model"]: row["c"] for row in by_model},
+            "text_vectors": text_vectors,
             "embedding_model": active,
             "embeddings_pending": pending,
             "jobs_by_state": {row["state"]: row["c"] for row in jobs_stat},

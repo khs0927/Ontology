@@ -20,7 +20,7 @@ class SQLiteConnection:
     def execute(self, sql, params=None):
         sql = sql.replace("UPDATE aec.index_state s", "UPDATE aec.index_state AS s")
         sql = re.sub(r"=\s*ANY\((%\(\w+\)s|%s)\)", r" IN (SELECT value FROM json_each(\1))", sql)
-        sql = sql.replace("::text[]", "").replace("::text", "").replace("::vector", "")
+        sql = sql.replace("::text[]", "").replace("::text", "").replace("::vector", "").replace("::halfvec", "")
         if isinstance(params, dict):
             sql = re.sub(r"%\((\w+)\)s", r":\1", sql)
             params = {k: json.dumps(v) if isinstance(v, list) else v for k, v in params.items()}
@@ -38,6 +38,9 @@ class SQLiteConnection:
 
     def commit(self):
         self.raw.commit()
+
+    def rollback(self):
+        self.raw.rollback()
 
 
 def test_metadata_advanced_only_for_complete_current_document_vectors():
@@ -86,12 +89,16 @@ def test_reembed_replaces_old_parser_revision_and_repairs_metadata(monkeypatch):
         CREATE TABLE aec.objects(id TEXT PRIMARY KEY, document_id TEXT, project_id TEXT,
                                  kind TEXT, search_text TEXT, revision INT);
         CREATE TABLE aec.embeddings(object_id TEXT, model TEXT, revision INT, content_hash TEXT,
-                                    embedding TEXT, PRIMARY KEY(object_id, model));
+                                    PRIMARY KEY(object_id, model));
+        CREATE TABLE aec.text_vectors(model TEXT, content_hash TEXT, embedding TEXT,
+                                      PRIMARY KEY(model, content_hash));
         CREATE TABLE aec.index_state(document_id TEXT PRIMARY KEY, embedding_model TEXT, embedding_revision INT);
         INSERT INTO aec.documents VALUES ('d', 'P', 2);
         INSERT INTO aec.objects VALUES ('o', 'd', 'P', 'Door', 'changed door', 2);
-        INSERT INTO aec.embeddings VALUES ('o', 'bge-m3', 1, 'old', '[]');
-        INSERT INTO aec.embeddings VALUES ('o', 'hash-sha256-1024-v1', 1, 'old', '[]');
+        INSERT INTO aec.text_vectors VALUES ('bge-m3', 'old', '[]');
+        INSERT INTO aec.text_vectors VALUES ('hash-sha256-1024-v1', 'old', '[]');
+        INSERT INTO aec.embeddings VALUES ('o', 'bge-m3', 1, 'old');
+        INSERT INTO aec.embeddings VALUES ('o', 'hash-sha256-1024-v1', 1, 'old');
         INSERT INTO aec.index_state VALUES ('d', 'hash-sha256-1024-v1', 1);
     """)
     calls = []

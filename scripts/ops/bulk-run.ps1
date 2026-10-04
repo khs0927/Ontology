@@ -15,6 +15,9 @@
   AEC_IMPORT_ROOTS = every source root, OCR models in D:\AECData\ocr-models, 2 OCR threads,
   AEC_MIN_FREE_GB from sources.json "min_free_gb" (census and workers pause while a drive is low).
   The process runs at BelowNormal priority; ODA/OCR child processes inherit it.
+  Worker count: sources.json "workers" (re-read before every round) overrides -Workers, so it can be
+  lowered while a re-embed or another heavy job runs. A round (run-workers) lasts until the queue is
+  empty, so to apply a change now: stop-workers.ps1 -Drain, then -Resume.
   Logs: <LogDir>\<role>-yyyyMMdd.log
 #>
 param(
@@ -75,6 +78,11 @@ $stopFile = if ($env:AEC_WORKER_STOP_FILE) { $env:AEC_WORKER_STOP_FILE } else {
     Join-Path $(if ($env:AEC_DATA_ROOT) { $env:AEC_DATA_ROOT } else { 'D:\AECData' }) 'bulk\STOP-WORKERS' }
 while ($true) {
     if (Test-Path -LiteralPath $stopFile) { Write-BulkLog "stop file $stopFile present: exiting"; exit 0 }
-    [void](Invoke-Logged @('run-workers', '--processes', "$Workers", '--queue', ($(if ($cfg.queue) { $cfg.queue } else { 'cad' }))))
+    $n = $Workers
+    try {
+        $live = [System.IO.File]::ReadAllText($Config, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($live.workers -and [int]$live.workers -ge 1) { $n = [int]$live.workers }
+    } catch { Write-BulkLog "could not re-read $Config ($_); using $n worker(s)" }
+    [void](Invoke-Logged @('run-workers', '--processes', "$n", '--queue', ($(if ($cfg.queue) { $cfg.queue } else { 'cad' }))))
     Start-Sleep -Seconds $IdleSleepSec
 }

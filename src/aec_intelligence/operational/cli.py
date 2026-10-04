@@ -227,6 +227,11 @@ def _add_batch_commands(subparsers):
     p.add_argument("--dry-run", action="store_true", help="Only count pending objects and stale rows")
     p.add_argument("--delete-stale", action="store_true",
                    help="Drop vectors of other models for objects that have the active model's vector")
+    p.add_argument("--chunk-retries", type=int, default=8,
+                   help="Retry a failed chunk this many times with exponential backoff (0 = stop at once)")
+    p.add_argument("--max-backoff", type=float, default=300.0, help="Cap of the backoff between chunk retries (s)")
+    p.add_argument("--pause", type=float, default=0.0, help="Sleep between chunks (s) to leave the GPU to others")
+    p.add_argument("--timeout", type=float, default=None, help="Per-request timeout (s); AEC_EMBEDDING_TIMEOUT")
 
     p = subparsers.add_parser("convert-dwg", help="Pre-convert DWG files into the DXF cache (run on the host with ODA)")
     p.add_argument("paths", nargs="*", help="DWG files or folders (recursive)")
@@ -334,11 +339,19 @@ def _cmd_reembed(parsed, settings, db):
         result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
                                     dry_run=parsed.dry_run, delete_stale=parsed.delete_stale,
                                     progress=lambda done, total: print(f"[reembed] {done}/{total}",
-                                                                       file=sys.stderr, flush=True))
+                                                                       file=sys.stderr, flush=True),
+                                    chunk_retries=parsed.chunk_retries, max_backoff=parsed.max_backoff,
+                                    pause=parsed.pause, timeout=parsed.timeout,
+                                    on_retry=lambda n, wait, err: print(
+                                        f"[reembed] chunk failed (attempt {n}), retry in {wait:.0f}s: {err}",
+                                        file=sys.stderr, flush=True))
     except EmbeddingEndpointError as exc:
         print(f"ERROR: embedding endpoint failed: {exc}", file=sys.stderr)
         sys.exit(3)
     _emit(result)
+    if result.get("error") and not parsed.dry_run:
+        print(f"ERROR: reembed incomplete (re-run resumes): {result['error']}", file=sys.stderr)
+        sys.exit(3)
     return result
 
 

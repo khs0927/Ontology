@@ -97,12 +97,13 @@ jobs:
         run: |
           # A decoy .env must never reach the image (.dockerignore).
           echo "AEC_API_TOKEN=ci-decoy-not-a-secret" > .env
+          mkdir -p logs && echo "decoy private log" > logs/decoy.log
           docker build -f docker/Dockerfile.app -t aec-intelligence-app:ci .
-          rm .env
+          rm -r .env logs
 
-      - name: Image hygiene (no .env/.git/.venv, non-root)
+      - name: Image hygiene (no .env/.git/.venv/logs, non-root)
         run: |
-          docker run --rm aec-intelligence-app:ci sh -c 'test ! -e /app/.env && test ! -e /app/.git && test ! -e /app/.venv && test "$(id -u)" != 0 && echo hygiene-ok'
+          docker run --rm aec-intelligence-app:ci sh -c 'test ! -e /app/.env && test ! -e /app/.git && test ! -e /app/.venv && test ! -e /app/logs && test "$(id -u)" != 0 && echo hygiene-ok'
 
       - name: Smoke-test the image
         run: |

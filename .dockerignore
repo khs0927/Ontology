@@ -16,3 +16,7 @@ venv
 *.dump
 *.sql.gz
 node_modules
+# Host-side runtime output (backup/worker logs, local repositories, project data) is private.
+logs
+runtime
+projects

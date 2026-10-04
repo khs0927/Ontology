@@ -74,7 +74,7 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 | AEC-Bulk-Workers | `bulk-run.ps1 -Role workers` (적재 워커 루프, 개수는 `sources.json`의 `workers`) | 로그온 + 10분마다 감시 | `register-bulk-tasks.ps1` |
 | AEC-Bulk-Census | census 재개(끝난 소스는 건너뜀) | 로그온 | 〃 |
 | AEC-Bulk-Census-Refresh | 새/변경 도면 탐색 | 매일 03:00 | 〃 |
-| AEC-Ollama | `C:\AECLocal\Ollama\ollama.exe serve` (현재 등록본은 같은 환경변수를 넣은 `cmd /c`; `register-host-tasks.ps1 -Only Ollama`로 다시 등록하면 `ollama-serve.ps1`+로그 회전) | 로그온 + 5분마다 감시 | `register-host-tasks.ps1` |
+| AEC-Ollama | `ollama-serve.ps1` → `C:\AECLocal\Ollama\ollama.exe serve` (이미 응답 중이면 즉시 종료 = 감시, 시작 시 로그 200 MB 넘으면 회전) | 로그온 + 5분마다 감시 | `register-host-tasks.ps1` |
 | AEC-Reembed | `reembed.ps1` (대기 중 벡터 채우기, 청크 단위 커밋) | 로그온 + 30분마다 | 〃 |
 | AEC-WSL-Reclaim | `wsl-reclaim.ps1` (Windows 가용 RAM < 750 MB일 때만 VM 페이지 캐시 비움) | 30분마다 | 〃 |
 | `\AEC-DB-Backup` | `backup.ps1 -Keep 7 -Target D:\AECData\backups` | 매일 04:30 | `register-backup-task.ps1` |
@@ -104,6 +104,8 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 - D:는 USB라 무작위 읽기가 느립니다. Postgres의 HNSW 인덱스가 캐시에서 밀려나면 벡터 INSERT/검색이 느려집니다.
   그래서 AEC-WSL-Reclaim은 Windows 메모리가 정말 부족할 때만 캐시를 비웁니다.
 - 공간 점검: `docker system df`, `Get-PSDrive C,D`.
+- **백업도 D:에 있습니다**(DB와 같은 USB 디스크). 디스크 고장 시 둘 다 잃으므로, 중요한 시점에는 덤프를 다른 디스크/Drive로
+  복사하세요([DRIVE-CHECKPOINT.ko.md](DRIVE-CHECKPOINT.ko.md)).
 
 ## 6. 백업 / 복원 / 복원 훈련
 
@@ -154,6 +156,14 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Dump D:\
 - LLM은 **로컬 Ollama만** 사용합니다(원격 URL은 거부, 프록시 무시). 클라우드 LLM은 사용자가 명시적으로 허용할 때만.
 
 자세히: [GRAPHRAG.ko.md](GRAPHRAG.ko.md), [mcp-gateway.md](mcp-gateway.md)
+
+### 지연 점검
+```powershell
+# 비공개 평가셋(도면 질문)은 git 밖에 둡니다. 결과: D:\AECData\eval\latency\<시각>\run.log
+powershell -ExecutionPolicy Bypass -File scripts\ops\latency-check.ps1 -EvalSet D:\AECData\eval\graphrag-ko-50.jsonl
+```
+기준(2026-10-04, 512 문서, 유휴 시): 검색 p50 약 2 s, Graph RAG(LLM 없음) p50 0.1 s 미만·p95 2 s 미만, LLM 답변 5–15 s.
+재임베딩·적재가 동시에 돌면 USB 디스크 WAL 경합으로 몇 배 느려집니다.
 
 ## 9. 문제 해결
 

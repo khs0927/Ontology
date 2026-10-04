@@ -11,8 +11,12 @@ Answer policy
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +76,48 @@ _UNSUPPORTED = (
     (re.compile(r"(수상|받은\s*상|상\s*이름|어워드|award)", re.IGNORECASE), re.compile(r"(수상|award)", re.IGNORECASE)),
     (re.compile(r"(날씨|기온|주식|주가|환율|뉴스|코인|로또)"), None),
 )
+
+
+# Latency budget of the object-level semantic leg (pg_trgm + pgvector over every object), the only stage
+# that can take tens of seconds on a cold index. Normal questions get AEC_ASK_SEMANTIC_TIMEOUT_MS; a
+# question asking for an attribute the drawing graph does not model (cost, phone, award...) whose
+# evidence is not in the knowledge graph either gets the much smaller AEC_ASK_GATE_TIMEOUT_MS: it is
+# almost always refused, so it should be refused fast. A leg that runs out of budget contributes nothing
+# (the answer degrades to the graph items or a refusal; it never waits for the vector index).
+DEFAULT_SEMANTIC_TIMEOUT_MS = 8000
+DEFAULT_GATE_TIMEOUT_MS = 1200
+_SEMANTIC_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="aec-semantic")
+
+
+def _budget_ms(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, "") or default))
+    except ValueError:
+        return default
+
+
+def asked_attribute(question: str):
+    """(asked word, evidence regex) for an attribute the graph does not model; None otherwise."""
+    for ask_rx, evidence_rx in _UNSUPPORTED:
+        m = ask_rx.search(question)
+        if m and evidence_rx is not None:
+            return m.group(0), evidence_rx
+    return None
+
+
+@contextmanager
+def _local_statement_timeout(conn, ms: int):
+    """statement_timeout = ``ms`` for the statements inside, then the previous value again.
+
+    SET LOCAL inside a savepoint outlives a *released* savepoint (it only reverts on rollback), so a
+    short probe timeout would otherwise cancel every later statement of the caller's transaction."""
+    prev = conn.execute("SELECT current_setting('statement_timeout') AS v").fetchone()
+    prev = prev["v"] if isinstance(prev, dict) else prev[0]
+    conn.execute("SELECT set_config('statement_timeout', %s, true)", (f"{int(ms)}ms",))
+    try:
+        yield
+    finally:
+        conn.execute("SELECT set_config('statement_timeout', %s, true)", (prev,))
 
 
 @dataclass
@@ -205,6 +251,7 @@ def choose_route(linked: Linked) -> str:
 
 class GraphRAG:
     def __init__(self, db, settings=None, llm=None, search_router=None):
+        self._semantic_timed_out = False
         self.db = db
         self.settings = settings
         self.llm = llm
@@ -284,14 +331,40 @@ class GraphRAG:
                 items += self._kg_lexical(conn, question, keys)
             # Object-level hybrid search (pg_trgm + pgvector over every object) is the slowest stage, so a
             # graph route only falls back to it when the graph found nothing.
+            semantic_budget = None
             if route == "semantic" or not items:
-                items += self._semantic(conn, question, keys)
+                semantic_budget = _budget_ms("AEC_ASK_SEMANTIC_TIMEOUT_MS", DEFAULT_SEMANTIC_TIMEOUT_MS)
+                attr = asked_attribute(question)
+                if attr and not any(attr[1].search(i.text) for i in items) \
+                        and not self._kg_has_evidence(conn, keys, attr[1]):
+                    semantic_budget = min(semantic_budget or 10**9,
+                                          _budget_ms("AEC_ASK_GATE_TIMEOUT_MS", DEFAULT_GATE_TIMEOUT_MS))
+                    gate_note = f"'{attr[0]}' has no evidence in the knowledge graph"
+                else:
+                    gate_note = None
+                items += self._semantic(conn, question, keys, budget_ms=semantic_budget)
             items = _dedupe(items)[:top_k]
+            # An asked attribute (cost, phone, award) that no retrieved text supports is refused by ask()
+            # anyway (unsupported_by_context over a subset of these texts): refuse here, before resolving
+            # citations, which reads object payloads and is slow on a cold disk.
+            attr = asked_attribute(question)
+            if attr and not any(attr[1].search(i.text) for i in items):
+                out = {"linked": linked, "route": "refuse", "items": [], "cypher": cypher,
+                       "gate": f"asked attribute not in context: {attr[0]}",
+                       "retrieval_ms": round((time.monotonic() - started) * 1000)}
+                if semantic_budget is not None:
+                    out["semantic"] = {"budget_ms": semantic_budget, "timed_out": self._semantic_timed_out,
+                                       "gate": gate_note}
+                return out
             for i, item in enumerate(items, 1):
                 item.cid = f"C{i}"
             self._resolve_citations(conn, items)
-        return {"linked": linked, "route": route, "items": items, "cypher": cypher,
-                "retrieval_ms": round((time.monotonic() - started) * 1000)}
+        out = {"linked": linked, "route": route, "items": items, "cypher": cypher,
+               "retrieval_ms": round((time.monotonic() - started) * 1000)}
+        if semantic_budget is not None:
+            out["semantic"] = {"budget_ms": semantic_budget, "timed_out": self._semantic_timed_out,
+                               "gate": gate_note}
+        return out
 
     def _nodes(self, conn, sql: str, params) -> list[dict[str, Any]]:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -568,7 +641,20 @@ class GraphRAG:
             out.append(item)
         return out
 
-    def _semantic(self, conn, question, keys) -> list[ContextItem]:
+    def _kg_has_evidence(self, conn, keys, evidence_rx) -> bool:
+        """Cheap probe (a few thousand KG nodes, not every object): does any node text match the evidence?"""
+        pf, pp = self._project_filter(keys, "n")
+        with _local_statement_timeout(conn, 1000):
+            try:
+                with conn.transaction():
+                    row = conn.execute(f"SELECT 1 AS hit FROM aec.kg_nodes n WHERE n.search_text ~* %s {pf} LIMIT 1",
+                                       [evidence_rx.pattern, *pp]).fetchone()
+            except Exception:  # noqa: BLE001 - unknown: let the semantic leg decide under its normal budget
+                return True
+        return row is not None
+
+    def _semantic(self, conn, question, keys, budget_ms: int | None = None) -> list[ContextItem]:
+        self._semantic_timed_out = False
         if self._search is None:
             if self.settings is None:
                 return []
@@ -579,10 +665,36 @@ class GraphRAG:
             project_ids = [r["alias"] for r in conn.execute(
                 "SELECT a.alias FROM aec.kg_aliases a WHERE a.alias_type='project_id' AND a.node_id = ANY(%s)",
                 ([f"kg:p:{k}" for k in keys],)).fetchall()]
-        hits = []
-        for pid in (project_ids or [None])[:4]:
-            res = self._search.search(question, project_id=pid, top_k=8, expand_graph=False)
-            hits += res.hits
+        deadline = time.monotonic() + budget_ms / 1000 if budget_ms else None
+        timed_out = []
+
+        def run() -> list:
+            found = []
+            for pid in (project_ids or [None])[:4]:
+                left = None
+                if deadline is not None:
+                    left = int((deadline - time.monotonic()) * 1000)
+                    if left < 50:
+                        timed_out.append(True)
+                        break
+                res = self._search.search(question, project_id=pid, top_k=8, expand_graph=False, timeout_ms=left)
+                if any("budget" in w for w in res.warnings):
+                    timed_out.append(True)
+                found += res.hits
+            return found
+
+        if deadline is None:
+            hits = run()
+        else:
+            # Wall-clock bound: statement_timeout covers only the SQL, not the query embedding (queued behind
+            # ingest/re-embed batches on the shared GPU) nor a cancel that waits on a slow disk read. A leg
+            # still running at the deadline is abandoned (it ends by its own statement_timeout).
+            future = _SEMANTIC_POOL.submit(run)
+            try:
+                hits = future.result(timeout=max(0.05, deadline - time.monotonic()) + 0.05)
+            except FutureTimeout:
+                hits, timed_out = [], [True]
+        self._semantic_timed_out = bool(timed_out)
         hits.sort(key=lambda h: -h.score)
         out = []
         for h in hits[:8]:
@@ -642,7 +754,7 @@ class GraphRAG:
         warnings: list[str] = []
         result: dict[str, Any] = {
             "question": question, "route": ret["route"], "linked": ret["linked"].to_dict(),
-            "cypher": ret["cypher"], "retrieval_ms": ret["retrieval_ms"],
+            "cypher": ret["cypher"], "retrieval_ms": ret["retrieval_ms"], "semantic": ret.get("semantic"),
             "contexts": [{"id": i.cid, "source": i.source, "score": round(i.score, 3), "text": i.text,
                           "kg_node_id": i.node_id} for i in items],
         }

@@ -34,12 +34,15 @@ MIGRATION_LOCK = 7_146_221_001  # pg_advisory_lock key: one migration runner at 
 
 
 class Database:
-    def __init__(self, dsn, *, connect_timeout_seconds=None, statement_timeout_seconds=None):
+    def __init__(self, dsn, *, connect_timeout_seconds=None, statement_timeout_seconds=None, application_name=None):
         """``AEC_DB_CONNECT_TIMEOUT_SECONDS`` (10) bounds a hung connect (Docker Desktop restarts,
         a paused WSL VM); ``AEC_DB_STATEMENT_TIMEOUT_SECONDS`` (30) is the interactive default."""
         from .config import env_int
 
         self.dsn = dsn
+        # Shown in pg_stat_activity; the API's sessions are 'aec-api' so background writers can see a
+        # running interactive query (operational/priority.py).
+        self.application_name = application_name
         self.connect_timeout_seconds = (env_int("AEC_DB_CONNECT_TIMEOUT_SECONDS", 10, minimum=1)
                                         if connect_timeout_seconds is None else int(connect_timeout_seconds))
         self.statement_timeout_seconds = (env_int("AEC_DB_STATEMENT_TIMEOUT_SECONDS", 30, minimum=0)
@@ -55,7 +58,9 @@ class Database:
         if statement_timeout_seconds is None:
             statement_timeout_seconds = self.statement_timeout_seconds
         timeout = max(0, int(statement_timeout_seconds))
-        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=self.connect_timeout_seconds) as conn:
+        extra = {"application_name": self.application_name} if self.application_name else {}
+        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=self.connect_timeout_seconds,
+                             **extra) as conn:
             conn.execute("LOAD 'age'")
             conn.execute('SET search_path = ag_catalog, aec, public')
             conn.execute(f"SET statement_timeout = '{timeout}s'")

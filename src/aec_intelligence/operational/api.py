@@ -22,6 +22,7 @@ from .db import Database
 from .embeddings import EmbeddingService
 from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
+from .priority import API_APPLICATION_NAME, ActivityStamp
 from .search import SearchRouter
 
 
@@ -83,15 +84,37 @@ def _job_uuid(job_id: str) -> str:
         raise HTTPException(status_code=404, detail="Job not found") from exc
 
 
+# Requests that count as interactive for the writers' priority gate. /v1/stats and /v1/jobs are left out:
+# dashboards poll them and would otherwise keep the background writers paused forever.
+INTERACTIVE_PATHS = ("/v1/search", "/v1/ask", "/v1/kg", "/v1/elements", "/v1/drawings", "/v1/blocks",
+                     "/v1/catalog", "/v1/objects")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     current_settings = settings or Settings.from_env()
     db = Database(current_settings.dsn)
+    # Visible in pg_stat_activity: background writers see a running API query (priority.py).
+    db.application_name = API_APPLICATION_NAME
+    activity = ActivityStamp(current_settings.dsn)
 
     app = FastAPI(
         title="AEC Intelligence Operational API",
         description="Source-grounded architectural drawing ontology and GraphRAG operational service",
         version="0.2.0",
     )
+
+    # Interactive priority: stamp query activity so reembed / ingest embedding pause (priority.py).
+    # Registered first = innermost, so only requests that passed the token check are counted.
+    @app.middleware("http")
+    async def interactive_activity(request, call_next):
+        interactive = request.url.path.startswith(INTERACTIVE_PATHS)
+        if interactive:
+            activity.touch()
+        try:
+            return await call_next(request)
+        finally:
+            if interactive:
+                activity.touch(force=True)
 
     # Added before CORS so CORS stays the outermost layer and can still answer preflights and
     # decorate 401 responses for allowed origins.

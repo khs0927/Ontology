@@ -20,6 +20,8 @@ param(
     [int]$ChunkRetries = 12,
     [double]$TimeoutSec = 180,
     [string]$Project = '',
+    # Local-time window, e.g. '22-7' (default: AEC_REEMBED_HOURS from .env, unset = always)
+    [string]$Hours = '',
     [string]$LogDir = 'D:\AECData\bulk\logs',
     [ValidateSet('Idle', 'BelowNormal', 'Normal')][string]$Priority = 'BelowNormal',
     [switch]$DryRun
@@ -48,6 +50,7 @@ $python = Get-AecPython
 $cliArgs = @('reembed', '--batch-size', "$BatchSize", '--pause', "$Pause", '--chunk-retries', "$ChunkRetries",
              '--timeout', "$TimeoutSec")
 if ($Project) { $cliArgs += @('--project', $Project) }
+if ($Hours) { $cliArgs += @('--hours', $Hours) }
 if ($DryRun) { $cliArgs += '--dry-run' }
 Add-Content -LiteralPath $log -Value "$(Get-Date -Format s) start pid $PID $($cliArgs -join ' ')" -Encoding UTF8
 & $python -m aec_intelligence.operational.cli @cliArgs 2>&1 | ForEach-Object {

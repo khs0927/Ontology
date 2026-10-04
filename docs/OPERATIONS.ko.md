@@ -165,6 +165,30 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\latency-check.ps1 -EvalSet 
 기준(2026-10-04, 512 문서, 유휴 시): 검색 p50 약 2 s, Graph RAG(LLM 없음) p50 0.1 s 미만·p95 2 s 미만, LLM 답변 5–15 s.
 재임베딩·적재가 동시에 돌면 USB 디스크 WAL 경합으로 몇 배 느려집니다.
 
+### 대화형 우선순위 · 빠른 거절 · 영어 질의 (환경 변수, 기본값)
+- **배경 쓰기 양보**: API가 질의(`/v1/search`, `/v1/ask`, `/v1/kg…` 등; `/v1/stats`·`/v1/jobs` 제외)를 처리하면
+  `aec.interactive_activity`(UNLOGGED)에 시각을 남기고, reembed와 워커의 임베딩 단계는 청크마다
+  최근 `AEC_INTERACTIVE_YIELD_SECONDS`(15)초 안에 질의가 있었거나 지금 API 쿼리가 실행 중이면 멈춥니다.
+  한 번에 최대 `AEC_INTERACTIVE_MAX_WAIT_SECONDS`(120)초(워커는 30초)까지만 기다립니다. 0이면 끔.
+- **reembed 야간 창**: `AEC_REEMBED_HOURS=22-7`(또는 `reembed.ps1 -Hours 22-7`)이면 그 시간대에만 돌고, 창을 벗어나면
+  현재 청크까지 커밋하고 정상 종료(코드 0)합니다. 30분마다 뜨는 `AEC-Reembed`가 다음 창에서 이어 갑니다. 기본은 항상.
+- **빠른 거절**: Graph RAG의 객체 의미 검색 단계는 `AEC_ASK_SEMANTIC_TIMEOUT_MS`(8000) 안에서만 돕니다. 공사비·연락처·수상처럼
+  도면 그래프가 모델링하지 않는 속성을 묻고 지식그래프에도 근거 문자열이 없으면 `AEC_ASK_GATE_TIMEOUT_MS`(1200)로 줄여
+  근거가 없으면 바로 거절합니다. 예산을 넘긴 검색은 결과 없음 + 경고로 끝나며 오류가 되지 않습니다.
+- **영어 질의 확장**: `AEC_QUERY_EXPANSION=glossary`(기본) — 일반 AEC 용어 사전(공개 용어만)으로 영어 질의를 한국어 검색어로
+  바꿉니다("gas piping on the second floor" → "가스 배관 2층", 층 필터도 적용). `llm`이면 사전에 없는 단어를 로컬 LLM이 번역
+  (`AEC_QUERY_TRANSLATION_CACHE=D:\AECData\cache\query-translations.json` 캐시), `off`면 끔.
+
+### 성능 측정 CLI (예전 D:\AECData\dev 임시 스크립트)
+```powershell
+# 검색 골든셋(비공개, git 밖): [{"q": "...", "expect": "<document_id 일부>", "set": "ko|en"}, ...]
+python -m aec_intelligence.operational.cli search-eval --cases D:\AECData\eval\search-cases.json --out D:\AECData\eval --tag now
+python -m aec_intelligence.operational.cli search-eval --cases ... --set en --expansion off   # 확장 전후 비교
+# 적재 상태: 상태별 건수, 실패율, 최근 N시간 처리량, ETA, (로그를 주면) 작업당 소요 시간
+python -m aec_intelligence.operational.cli ingest-stats --hours 6 --log D:\AECData\bulk\logs\workers-<날짜>.log
+python -m aec_intelligence.operational.cli storage-report   # 테이블/인덱스 바이트, 문서당 바이트
+```
+
 ## 9. 문제 해결
 
 | 증상 | 원인 / 조치 |

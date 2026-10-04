@@ -239,6 +239,23 @@ def _add_batch_commands(subparsers):
     p.add_argument("--max-backoff", type=float, default=300.0, help="Cap of the backoff between chunk retries (s)")
     p.add_argument("--pause", type=float, default=0.0, help="Sleep between chunks (s) to leave the GPU to others")
     p.add_argument("--timeout", type=float, default=None, help="Per-request timeout (s); AEC_EMBEDDING_TIMEOUT")
+    p.add_argument("--hours", default=None,
+                   help="Only run inside this local-time window, e.g. 22-7 (default AEC_REEMBED_HOURS; unset = always). "
+                        "Outside it the run stops after the current chunk and exits 0; the next run resumes")
+
+    p = subparsers.add_parser("search-eval", help="Golden-set search quality/latency in-process (hit@k, MRR per set)")
+    p.add_argument("--cases", required=True, help='JSON list of {"q", "expect" (document_id substring), "set"}; '
+                                                  "keep it outside the repository (private drawing names)")
+    p.add_argument("--set", default=None, help="Only these sets (comma separated), e.g. ko,en")
+    p.add_argument("--top-k", type=int, default=10)
+    p.add_argument("--expansion", choices=["glossary", "llm", "off"], default=None,
+                   help="Override AEC_QUERY_EXPANSION for this run (English query expansion)")
+    p.add_argument("--out", default=None, help="Folder for search-eval-<tag>.json (rows + summary)")
+    p.add_argument("--tag", default="run")
+
+    p = subparsers.add_parser("ingest-stats", help="Queue states, failure rate, throughput, ETA (+ job durations from a log)")
+    p.add_argument("--hours", type=float, default=6.0, help="Throughput window (h)")
+    p.add_argument("--log", default=None, help="Workers log (bulk-run.ps1) for claim->done durations")
 
     p = subparsers.add_parser("convert-dwg", help="Pre-convert DWG files into the DXF cache (run on the host with ODA)")
     p.add_argument("paths", nargs="*", help="DWG files or folders (recursive)")
@@ -342,6 +359,9 @@ def _cmd_reembed(parsed, settings, db):
                   "and real model vectors would be deleted.", file=sys.stderr)
             sys.exit(2)
         print("WARNING: AEC_EMBEDDING_URL is not set; the target model is the hash fallback.", file=sys.stderr)
+    from .priority import parse_hours
+
+    hours = parse_hours(parsed.hours if parsed.hours is not None else os.getenv("AEC_REEMBED_HOURS"))
     try:
         result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
                                     dry_run=parsed.dry_run, delete_stale=parsed.delete_stale,
@@ -351,11 +371,13 @@ def _cmd_reembed(parsed, settings, db):
                                     pause=parsed.pause, timeout=parsed.timeout,
                                     on_retry=lambda n, wait, err: print(
                                         f"[reembed] chunk failed (attempt {n}), retry in {wait:.0f}s: {err}",
-                                        file=sys.stderr, flush=True))
+                                        file=sys.stderr, flush=True), hours=hours)
     except EmbeddingEndpointError as exc:
         print(f"ERROR: embedding endpoint failed: {exc}", file=sys.stderr)
         sys.exit(3)
     _emit(result)
+    if result.get("stopped"):
+        print(f"[reembed] stopped: {result['stopped']}", file=sys.stderr)
     if result.get("error") and not parsed.dry_run:
         print(f"ERROR: reembed incomplete (re-run resumes): {result['error']}", file=sys.stderr)
         sys.exit(3)
@@ -449,6 +471,34 @@ def _cmd_convert_dwg(parsed, settings, db):
     return summary
 
 
+def _cmd_search_eval(parsed, settings, db):
+    from .perf import load_cases, search_eval
+
+    if parsed.expansion:
+        os.environ["AEC_QUERY_EXPANSION"] = parsed.expansion
+    cases = load_cases(parsed.cases)
+    if parsed.set:
+        wanted = set(_split([parsed.set]))
+        cases = [c for c in cases if c["set"] in wanted]
+    result = search_eval(SearchRouter(db, settings), cases, top_k=parsed.top_k)
+    result["expansion"] = os.getenv("AEC_QUERY_EXPANSION") or "glossary"
+    if parsed.out:
+        out = Path(parsed.out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"search-eval-{parsed.tag}.json").write_text(json.dumps(result, ensure_ascii=False, indent=1),
+                                                            encoding="utf-8")
+    _emit({k: v for k, v in result.items() if k != "rows"})
+    return result
+
+
+def _cmd_ingest_stats(parsed, settings, db):
+    from .perf import ingest_stats
+
+    result = ingest_stats(db, hours=parsed.hours, log_path=parsed.log)
+    _emit(result)
+    return result
+
+
 def _cmd_graph_indexes(parsed, settings, db):
     created = db.ensure_all_graph_indexes()
     _emit({"graphs": len(created), "created": {g: c for g, c in created.items() if c}})
@@ -461,6 +511,7 @@ BATCH_COMMANDS = {
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
     "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
     "vectors-gc": _cmd_vectors_gc, "storage-report": _cmd_storage_report,
+    "search-eval": _cmd_search_eval, "ingest-stats": _cmd_ingest_stats,
 }
 
 

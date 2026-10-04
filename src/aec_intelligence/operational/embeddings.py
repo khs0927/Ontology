@@ -44,6 +44,8 @@ DEFAULT_BATCH_SIZE = 32
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_RETRIES = 3
 CIRCUIT_COOLDOWN_SECONDS = 30.0
+# An ingest job waits at most this long per chunk for interactive queries (it holds its transaction).
+INGEST_MAX_YIELD_SECONDS = 30.0
 
 # endpoint -> monotonic time until which the remote is considered down
 _CIRCUIT: dict[str, float] = {}
@@ -302,8 +304,14 @@ def _autocommit_connection(settings: Settings):
 
 
 def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings,
-                              service: EmbeddingService | None = None) -> int:
-    """Stores the text vectors (deduplicated) and object mappings for the meaningful objects of a snapshot."""
+                              service: EmbeddingService | None = None, gate=None) -> int:
+    """Stores the text vectors (deduplicated) and object mappings for the meaningful objects of a snapshot.
+
+    Between chunks the ingest yields to interactive queries (``gate``, default from the environment;
+    see priority.py); the per-call cap keeps a busy API from stalling the job beyond its lease."""
+    from .priority import InteractiveGate
+
+    gate = gate if gate is not None else InteractiveGate.from_env(max_wait_cap=INGEST_MAX_YIELD_SECONDS)
     doc_id = snapshot["document_id"]
     rev = snapshot["revision"]
     service = service or EmbeddingService(settings)
@@ -320,6 +328,7 @@ def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings
     with _autocommit_connection(settings) as side:
         for start in range(0, len(objects), chunk):
             part = objects[start:start + chunk]
+            gate.wait_turn(conn)
             hashes = [text_hash(obj["search_text"]) for obj in part]
             model, _ = embed_missing_texts(conn, service, dict(zip(hashes, (obj["search_text"] for obj in part))),
                                            vector_conn=side)
@@ -369,7 +378,9 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                        progress: Callable[[int, int], None] | None = None, chunk_retries: int = 0,
                        max_backoff: float = 300.0, pause: float = 0.0, timeout: float | None = None,
                        sleep: Callable[[float], None] = time.sleep,
-                       on_retry: Callable[[int, float, str], None] | None = None) -> dict[str, Any]:
+                       on_retry: Callable[[int, float, str], None] | None = None,
+                       gate=None, hours: tuple[int, int] | None = None,
+                       clock_now: Callable[[], Any] | None = None) -> dict[str, Any]:
     """Give every embeddable object a vector of the active model (after a hash fallback, a model change or
     an ingest that ran while the endpoint was down).
 
@@ -387,12 +398,26 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     first, and only ``chunk_retries`` consecutive failures end the run with ``error`` set (the
     chunks written so far stay committed). ``pause`` sleeps between chunks to leave the GPU/CPU to
     interactive work. With the default 0 the first failure raises ``EmbeddingEndpointError``.
+
+    Interactive priority (``priority.py``): before every chunk the run waits while the API served a
+    query recently (``gate``, default ``InteractiveGate.from_env``), and with ``hours`` (e.g. (22, 7))
+    it stops cleanly once the local time leaves that window (``stopped`` is set, nothing is lost).
     """
+    from .priority import InteractiveGate, in_window
+
+    gate = gate if gate is not None else InteractiveGate.from_env(sleep=sleep)
+    stopped: str | None = None
     service = EmbeddingService(settings, batch_size=batch_size, timeout=timeout)
     target = service.active_model()
     written, skipped, deleted, retried, embedded = 0, 0, 0, 0, 0
     failure: str | None = None
     params = {"p": project_id, "m": target}
+    if not dry_run and not in_window(hours, clock_now() if clock_now else None):
+        # Checked before the (large) pending-object scan: a scheduled run outside the window is a no-op.
+        return {"model": target, "dry_run": False, "pending": None, "distinct_texts": None, "embedded_texts": 0,
+                "written": 0, "skipped": 0, "deleted": 0, "retried_chunks": 0, "complete": False, "error": None,
+                "stopped": f"outside the re-embed hours {hours[0]:02d}-{hours[1]:02d}; the next run resumes",
+                "yielded_seconds": 0.0, "yields": 0}
     with db.connect() as conn:
         rows = conn.execute(
             """SELECT o.id, o.document_id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
@@ -419,8 +444,13 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
         step = service.batch_size * 8
         for start in range(0, len(hashes), step):
             part = hashes[start:start + step]
+            if not in_window(hours, clock_now() if clock_now else None):
+                stopped = f"outside the re-embed hours {hours[0]:02d}-{hours[1]:02d}; the next run resumes"
+                skipped += sum(len(groups[h]) for h in hashes[start:])
+                break
             if start and pause > 0:
                 sleep(pause)
+            gate.wait_turn(conn)
             failures = 0
             while True:
                 try:
@@ -466,7 +496,8 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     return {"model": target, "dry_run": False, "pending": len(rows), "distinct_texts": len(groups),
             "embedded_texts": embedded, "written": written, "skipped": skipped,
             "deleted": deleted, "retried_chunks": retried, "complete": failure is None and not skipped,
-            "error": failure or service.last_error}
+            "error": failure or service.last_error, "stopped": stopped,
+            "yielded_seconds": round(gate.waited_total, 1), "yields": gate.yields}
 
 
 def vectors_gc(db, *, batch: int = 5000, max_batches: int = 1000, min_age_seconds: float = 3600) -> dict[str, Any]:

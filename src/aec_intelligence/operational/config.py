@@ -69,7 +69,7 @@ class Settings:
     def from_env(cls):
         root = Path(os.getenv("AEC_DATA_ROOT", "D:/AECData" if os.name == "nt" else "/data")).resolve()
         return cls(
-            os.getenv("AEC_DATABASE_URL", "postgresql://aec:change-me@localhost:55432/aec"), root,
+            os.getenv("AEC_DATABASE_URL", "postgresql://aec:change-me@127.0.0.1:55432/aec"), root,
             tuple(Path(p).resolve() for p in split_roots(os.getenv("AEC_IMPORT_ROOTS", str(root / "imports")))),
             os.getenv("AEC_EMBEDDING_URL", ""), os.getenv("AEC_RAG_URL", ""),
             os.getenv("AEC_EMBEDDING_MODEL", "BAAI/bge-m3"), os.getenv("AEC_EMBEDDING_REVISION", ""),

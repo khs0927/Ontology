@@ -21,6 +21,31 @@ from .census import _fs as long_path
 logger = logging.getLogger(__name__)
 
 
+class _OncePerMessage(logging.Filter):
+    """Let each distinct message through once. ezdxf logs "no default font found" for every text
+    entity of a drawing that uses a missing font (23k lines in one bulk-ingest hour)."""
+
+    def __init__(self, limit: int = 1000):
+        super().__init__()
+        self.limit, self.seen = limit, set()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        key = (record.name, record.levelno, record.getMessage())
+        if key in self.seen:
+            return False
+        if len(self.seen) < self.limit:
+            self.seen.add(key)
+        return True
+
+
+def quiet_noisy_loggers() -> None:
+    """Deduplicate third-party per-entity warnings (idempotent)."""
+    for name in ("ezdxf",):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, _OncePerMessage) for f in lg.filters):
+            lg.addFilter(_OncePerMessage())
+
+
 def source_sha256(source_path: Path, payload: dict[str, Any] | None = None, chunk_size: int = 1 << 20) -> str:
     """Return the source hash, preferring the census-provided ``sha256`` in the job payload.
 

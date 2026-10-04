@@ -38,7 +38,8 @@ AEC_HOST_DATA_ROOT=D:/AECData
 AEC_DB_PASSWORD=원하는-비밀번호
 
 # 파이프라인(파이썬) 용
-AEC_DATABASE_URL=postgresql://aec:원하는-비밀번호@localhost:55432/aec
+# localhost 대신 127.0.0.1 사용 (Windows에서 localhost는 ::1을 먼저 시도해 연결마다 10초씩 지연됨)
+AEC_DATABASE_URL=postgresql://aec:원하는-비밀번호@127.0.0.1:55432/aec
 AEC_DATA_ROOT=D:\AECData
 # 적재를 허용할 원본 폴더. 여러 개면 ; 로 구분. Drive 루트를 그대로 넣어도 됩니다.
 AEC_IMPORT_ROOTS=G:\내 드라이브;D:\AECData\imports
@@ -225,7 +226,7 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\register-backup-task.ps1 -A
 python -m aec_intelligence.operational.cli restore "G:\내 드라이브\AEC-INTELLIGENCE\backups\aec-db-20261002T030000Z.dump" --docker-container aec-db --yes
 # 빈 새 DB 로 복원 검증만 할 때
 docker exec aec-db createdb -U aec aec_restore_check
-python -m aec_intelligence.operational.cli restore <덤프> --database-url postgresql://aec:비밀번호@localhost:55432/aec_restore_check --no-clean --yes
+python -m aec_intelligence.operational.cli restore <덤프> --database-url postgresql://aec:비밀번호@127.0.0.1:55432/aec_restore_check --no-clean --yes
 ```
 
 `--docker-container` 를 주면 DSN 의 사용자/DB 이름으로 컨테이너 안에서 `pg_restore` 를 실행합니다.

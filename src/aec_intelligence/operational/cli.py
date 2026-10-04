@@ -75,6 +75,9 @@ def main(args=None):
         print("Database schema and extensions initialized successfully.")
 
     elif parsed.subcommand == "worker":
+        from .worker import quiet_noisy_loggers
+
+        quiet_noisy_loggers()
         worker = IngestionWorker(db, settings, queue=parsed.queue)
         if parsed.once:
             processed = worker.run_once()

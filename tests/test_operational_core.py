@@ -189,3 +189,28 @@ def test_init_db_output_redacts_password():
     assert redact_dsn("postgresql://aec:s3cret@localhost:55432/aec") == "postgresql://aec:***@localhost:55432/aec"
     assert redact_dsn("host=db user=aec password=s3cret dbname=aec") == "host=db user=aec password=*** dbname=aec"
     assert redact_dsn("postgresql://aec@localhost/aec") == "postgresql://aec@localhost/aec"
+
+
+def test_quiet_noisy_loggers_lets_each_ezdxf_message_through_once():
+    import logging
+
+    from aec_intelligence.operational.worker import quiet_noisy_loggers
+
+    quiet_noisy_loggers()
+    quiet_noisy_loggers()  # idempotent: one filter only
+    lg = logging.getLogger("ezdxf")
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = Grab()
+    lg.addHandler(handler)
+    try:
+        for _ in range(50):
+            lg.warning("no default font found: txt_IV25.ttf")
+        lg.warning("another warning")
+    finally:
+        lg.removeHandler(handler)
+    assert records == ["no default font found: txt_IV25.ttf", "another warning"]

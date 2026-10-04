@@ -193,3 +193,40 @@ def test_gate_sees_api_stamp_postgres():
         assert gate.busy(conn) is True
         conn.execute("UPDATE aec.interactive_activity SET last_at = now() - interval '1 minute'")
         assert gate.busy(conn) is False
+
+
+def test_reembed_retries_a_chunk_after_a_statement_timeout(monkeypatch):
+    from psycopg import errors
+
+    conn = FakeConn(3)
+    real_cursor = conn.cursor
+    state = {"fail": 1}
+
+    def cursor():
+        cur = real_cursor()
+        orig = cur.executemany
+
+        def executemany(sql, rows):
+            if "text_vectors" in sql and state["fail"]:
+                state["fail"] -= 1
+                raise errors.QueryCanceled("canceling statement due to statement timeout")
+            return orig(sql, rows)
+
+        cur.executemany = executemany
+        return cur
+
+    conn.cursor = cursor
+    clock = Clock()
+    res = _run(monkeypatch, conn, chunk_retries=3, sleep=clock.sleep, gate=ScriptedGate([]))
+    assert res["written"] == 3 and res["complete"] and res["retried_chunks"] == 1 and clock.sleeps == [5.0]
+
+
+def test_reembed_does_not_retry_programming_errors(monkeypatch):
+    conn = FakeConn(2)
+
+    def boom():
+        raise TypeError("bug")
+
+    conn.cursor = boom
+    with pytest.raises(TypeError):
+        _run(monkeypatch, conn, chunk_retries=3, gate=ScriptedGate([]))

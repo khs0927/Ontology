@@ -18,6 +18,7 @@ import time
 import unicodedata
 import uuid
 from collections import Counter, defaultdict
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,6 +175,15 @@ def _load_previous(jsonl: Path) -> dict[str, tuple[int, int]]:
     return previous
 
 
+def _hash_row(row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        row["sha256"], row["dwg_version"] = hash_file(row["path"], row["ext"])
+        row["dwg_release"] = dwg_release(row["dwg_version"])
+    except OSError as exc:
+        row["status"], row["error"] = "error", f"{type(exc).__name__}: {exc}"
+    return row
+
+
 @dataclass
 class CensusResult:
     out: Path
@@ -183,7 +193,7 @@ class CensusResult:
 def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterable[str] = DEFAULT_EXTENSIONS,
                resume: bool = False, flush_every: int = 100, hash_placeholders: bool = True,
                progress: Any = None, only_folders: Iterable[str] = (), exclude: Iterable[str] = (),
-               inventory_extensions: Iterable[str] = ()) -> CensusResult:
+               inventory_extensions: Iterable[str] = (), hash_workers: int = 1) -> CensusResult:
     """Walk ``roots`` (or only ``root/<folder>`` for each of ``only_folders``) and record every drawing.
 
     Paths stay relative to the root so the top-level folder (= project) is the same whether a pilot
@@ -207,56 +217,74 @@ def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterabl
     counters = Counter()
     started = time.time()
     excluded = _excluder(exclude) if exclude else None
+    # Cloud drives (Google Drive for desktop) stream each file with high per-file latency: measured on
+    # the PC, 1 reader got 0.4 MB/s while 6 parallel readers got ~20 MB/s. Hash with a thread pool.
+    pool = ThreadPoolExecutor(max_workers=max(1, int(hash_workers)), thread_name_prefix="census-hash")
+    inflight: set = set()
     with open(jsonl, "a", encoding="utf-8", newline="\n") as sink:
         pending = 0
-        for root, scope in _scopes(roots, only_folders):
-            root_str = root
-            scopes.append(scope)
-            for path, st in walk(scope, walk_errors, excluded):
-                name = os.path.basename(path)
-                ext = os.path.splitext(name)[1].lower()
-                temp = is_temp_file(name)
-                if ext not in exts and not temp:
-                    other_ext[ext or "(none)"] += 1
-                    continue
-                if path in seen:  # overlapping roots
-                    continue
-                seen.add(path)
-                counters["walked"] += 1
-                if previous.get(path) == (st.st_size, st.st_mtime_ns):
-                    counters["resumed"] += 1
-                    continue
-                rel = _relative(path, root_str)
-                parts = rel.split("/")
-                attrs = getattr(st, "st_file_attributes", 0)
-                row: dict[str, Any] = {
-                    "path": path, "rel_path": rel, "root": root_str,
-                    "top_folder": parts[0] if len(parts) > 1 else "",
-                    "name": name, "ext": ext, "size": st.st_size, "mtime_ns": st.st_mtime_ns,
-                    "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
-                    "placeholder": bool(attrs & _PLACEHOLDER_ATTRS),
-                    "sha256": None, "dwg_version": None, "dwg_release": None, "status": "ok", "error": None,
-                }
-                if temp:
-                    row["status"] = "skipped_temp"
-                elif ext in inventory:
-                    row["status"] = "inventory"
-                elif row["placeholder"] and not hash_placeholders:
-                    row["status"] = "placeholder"
-                else:
-                    try:
-                        row["sha256"], row["dwg_version"] = hash_file(path, ext)
-                        row["dwg_release"] = dwg_release(row["dwg_version"])
-                    except OSError as exc:
-                        row["status"], row["error"] = "error", f"{type(exc).__name__}: {exc}"
-                sink.write(json.dumps(row, ensure_ascii=False) + "\n")
-                counters["recorded"] += 1
-                pending += 1
-                if pending >= flush_every:
-                    sink.flush()
-                    pending = 0
-                    if progress:
-                        progress(counters["walked"], path)
+
+        def emit(row):
+            nonlocal pending
+            sink.write(json.dumps(row, ensure_ascii=False) + "\n")
+            counters["recorded"] += 1
+            pending += 1
+            if pending >= flush_every:
+                sink.flush()
+                pending = 0
+                if progress:
+                    progress(counters["walked"], row["path"])
+
+        def drain(limit):
+            nonlocal inflight
+            while len(inflight) > limit:
+                done, inflight = wait(inflight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    emit(future.result())
+
+        try:
+            for root, scope in _scopes(roots, only_folders):
+                root_str = root
+                scopes.append(scope)
+                for path, st in walk(scope, walk_errors, excluded):
+                    name = os.path.basename(path)
+                    ext = os.path.splitext(name)[1].lower()
+                    temp = is_temp_file(name)
+                    if ext not in exts and not temp:
+                        other_ext[ext or "(none)"] += 1
+                        continue
+                    if path in seen:  # overlapping roots
+                        continue
+                    seen.add(path)
+                    counters["walked"] += 1
+                    if previous.get(path) == (st.st_size, st.st_mtime_ns):
+                        counters["resumed"] += 1
+                        continue
+                    rel = _relative(path, root_str)
+                    parts = rel.split("/")
+                    attrs = getattr(st, "st_file_attributes", 0)
+                    row: dict[str, Any] = {
+                        "path": path, "rel_path": rel, "root": root_str,
+                        "top_folder": parts[0] if len(parts) > 1 else "",
+                        "name": name, "ext": ext, "size": st.st_size, "mtime_ns": st.st_mtime_ns,
+                        "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                        "placeholder": bool(attrs & _PLACEHOLDER_ATTRS),
+                        "sha256": None, "dwg_version": None, "dwg_release": None, "status": "ok", "error": None,
+                    }
+                    if temp:
+                        row["status"] = "skipped_temp"
+                    elif ext in inventory:
+                        row["status"] = "inventory"
+                    elif row["placeholder"] and not hash_placeholders:
+                        row["status"] = "placeholder"
+                    else:
+                        inflight.add(pool.submit(_hash_row, row))
+                        drain(4 * max(1, int(hash_workers)))
+                        continue
+                    emit(row)
+            drain(0)
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
     summary = finalize(out_dir, seen, other_ext, walk_errors, scopes, exts)
     summary["run"] = {"walked": counters["walked"], "recorded_this_run": counters["recorded"],
                       "resumed_unchanged": counters["resumed"], "seconds": round(time.time() - started, 1)}
@@ -580,7 +608,7 @@ def load_bulk_config(path: str | Path) -> dict[str, Any]:
 
         {"out": "D:/AECData/census-v3", "extensions": ".dwg,.dxf,.pdf,.ifc",
          "inventory_extensions": ".rvt,.skp", "ingest_extensions": ".dwg,.dxf,.pdf",
-         "exclude": ["hillside_villa*"], "min_free_gb": {"C:/": 12, "D:/": 50},
+         "exclude": ["hillside_villa*"], "min_free_gb": {"C:/": 12, "D:/": 50}, "hash_workers": 6,
          "sources": [{"name": "01-live", "roots": ["G:/drive/live"], "priority": 10,
                       "project_root": "G:/drive/live", "project_depth": 2, "prefix": "P-",
                       "exclude": ["G:/drive/live/old"]}, ...]}
@@ -671,7 +699,8 @@ def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, r
         result = run_census(source["roots"], out, exts, resume=True, flush_every=50,
                             hash_placeholders=bool(source.get("hash_placeholders", True)), progress=progress,
                             exclude=[*config.get("exclude", []), *source.get("exclude", [])],
-                            inventory_extensions=inventory)
+                            inventory_extensions=inventory,
+                            hash_workers=int(source.get("hash_workers", config.get("hash_workers", 1))))
         entry["census"] = {"files": result.summary.get("files"), "unique_contents": result.summary.get("unique_contents"),
                            "by_status": result.summary.get("by_status"), "run": result.summary.get("run")}
         enqueue(True)

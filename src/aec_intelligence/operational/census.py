@@ -540,12 +540,47 @@ def enqueue_census(db, census: str | Path, queue: str = "cad", limit: int | None
 # bulk-census: every source of a sources.json, in priority order, enqueueing as it goes
 # --------------------------------------------------------------------------------------------
 
+def parse_min_free(value: str | dict | None) -> dict[str, float]:
+    """``"C:\\=12;D:\\=50"`` (or a dict) -> {path: GB}: minimum free space to keep on each drive."""
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return {str(k): float(v) for k, v in value.items()}
+    pairs = (item.rsplit("=", 1) for item in str(value).split(";") if "=" in item)
+    return {path.strip(): float(gb) for path, gb in pairs if path.strip()}
+
+
+def wait_for_disk(min_free: dict[str, float], log: Any = print, poll: float = 300.0, sleep=time.sleep) -> float:
+    """Block while any drive is below its free-space floor (e.g. a cloud-drive cache filling C:).
+
+    Returns the seconds waited. A drive that cannot be queried is ignored.
+    """
+    import shutil
+
+    waited = 0.0
+    while True:
+        low = []
+        for path, floor in min_free.items():
+            try:
+                free = shutil.disk_usage(path).free / 1024 ** 3
+            except OSError:
+                continue
+            if free < floor:
+                low.append(f"{path} {free:.1f} GB < {floor:g} GB")
+        if not low:
+            return waited
+        if waited == 0:
+            log(f"[disk] pausing: {', '.join(low)}")
+        sleep(poll)
+        waited += poll
+
+
 def load_bulk_config(path: str | Path) -> dict[str, Any]:
     """sources.json (kept next to the data, never in git: it names private folders)::
 
         {"out": "D:/AECData/census-v3", "extensions": ".dwg,.dxf,.pdf,.ifc",
          "inventory_extensions": ".rvt,.skp", "ingest_extensions": ".dwg,.dxf,.pdf",
-         "exclude": ["hillside_villa*"],
+         "exclude": ["hillside_villa*"], "min_free_gb": {"C:/": 12, "D:/": 50},
          "sources": [{"name": "01-live", "roots": ["G:/drive/live"], "priority": 10,
                       "project_root": "G:/drive/live", "project_depth": 2, "prefix": "P-",
                       "exclude": ["G:/drive/live/old"]}, ...]}
@@ -581,6 +616,7 @@ def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, r
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     exts = [e.strip() for e in str(config.get("extensions", ",".join(DEFAULT_EXTENSIONS))).split(",") if e.strip()]
     inventory = [e.strip() for e in str(config.get("inventory_extensions", "")).split(",") if e.strip()]
+    min_free = parse_min_free(config.get("min_free_gb"))
     ingest = [e.strip() for e in str(config.get("ingest_extensions", ".dwg,.dxf,.pdf")).split(",") if e.strip()]
 
     def save():
@@ -617,6 +653,8 @@ def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, r
         logged = [0]
 
         def progress(count, path, enqueue=enqueue, last=last, logged=logged, name=name):
+            if min_free:
+                wait_for_disk(min_free, log)
             if time.monotonic() - last[0] >= enqueue_every:
                 last[0] = time.monotonic()
                 try:
@@ -663,8 +701,11 @@ def worker_process(settings, queue: str, poll: float, index: int) -> int:
     logging.basicConfig(level=logging.INFO, format=f"[w{index}] %(asctime)s %(levelname)s %(message)s")
     db = Database(settings.dsn)
     worker = IngestionWorker(db, settings, queue=queue, worker_id=f"census-{os.getpid()}-{index}")
+    min_free = parse_min_free(os.getenv("AEC_MIN_FREE_GB"))
     processed = 0
     while True:
+        if min_free:
+            wait_for_disk(min_free, logging.getLogger(__name__).warning)
         try:
             if worker.run_once():
                 processed += 1

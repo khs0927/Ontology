@@ -176,6 +176,20 @@ def test_census_exclude_by_name_glob_and_path_prefix(tmp_path):
     assert "1층 평면도.dwg" in names
 
 
+def test_wait_for_disk_pauses_until_space_returns(monkeypatch):
+    import shutil
+    from collections import namedtuple
+
+    usage = namedtuple("usage", "total used free")
+    frees = iter([5, 8, 20])
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: usage(0, 0, next(frees) * 1024 ** 3))
+    logs, sleeps = [], []
+    waited = census.wait_for_disk({"C:/": 12}, logs.append, poll=60, sleep=sleeps.append)
+    assert waited == 120 and sleeps == [60, 60] and len(logs) == 1 and "C:/ 5.0 GB < 12 GB" in logs[0]
+    assert census.parse_min_free("C:\\=12; D:\\=50") == {"C:\\": 12.0, "D:\\": 50.0}
+    assert census.parse_min_free({"C:/": 3}) == {"C:/": 3.0} and census.parse_min_free(None) == {}
+
+
 def test_plan_jobs_project_depth_priority_and_newest_first(tmp_path):
     root = _tree(tmp_path)
     old = root / "현장A 오피스텔" / "구조" / "기초 구조도.dwg"

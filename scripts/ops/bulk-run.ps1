@@ -11,7 +11,8 @@
   sources.json (private: it names the drawing folders). See load_bulk_config in census.py.
 .NOTES
   Host overrides: AEC_EMBEDDING_URL=http://127.0.0.1:11434 (the .env value is for containers),
-  AEC_IMPORT_ROOTS = every source root, OCR models in D:\AECData\ocr-models, 2 OCR threads.
+  AEC_IMPORT_ROOTS = every source root, OCR models in D:\AECData\ocr-models, 2 OCR threads,
+  AEC_MIN_FREE_GB from sources.json "min_free_gb" (census and workers pause while a drive is low).
   The process runs at BelowNormal priority; ODA/OCR child processes inherit it.
   Logs: <LogDir>\<role>-yyyyMMdd.log
 #>
@@ -44,6 +45,10 @@ $env:AEC_IMPORT_ROOTS = ($roots -join ';')
 $env:AEC_EMBEDDING_URL = if ($env:AEC_HOST_EMBEDDING_URL) { $env:AEC_HOST_EMBEDDING_URL } else { 'http://127.0.0.1:11434' }
 if (-not $env:AEC_OCR_MODEL_DIR) { $env:AEC_OCR_MODEL_DIR = 'D:\AECData\ocr-models' }
 if (-not $env:AEC_OCR_THREADS) { $env:AEC_OCR_THREADS = '2' }
+# Workers pause while a drive is below its floor (Google Drive streams files through a cache on C:).
+if (-not $env:AEC_MIN_FREE_GB -and $cfg.min_free_gb) {
+    $env:AEC_MIN_FREE_GB = (($cfg.min_free_gb.PSObject.Properties | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ';')
+}
 $env:PYTHONPATH = (Join-Path $script:RepoRoot 'src') + ';' + $env:PYTHONPATH
 $python = Get-AecPython
 

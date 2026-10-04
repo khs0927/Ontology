@@ -428,10 +428,14 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 "written": 0, "skipped": 0, "deleted": 0, "retried_chunks": 0, "complete": False, "error": None,
                 "stopped": f"outside the re-embed hours {hours[0]:02d}-{hours[1]:02d}; the next run resumes",
                 "yielded_seconds": 0.0, "yields": 0}
-    with db.connect() as conn:
-        # Vector inserts go into an HNSW index; on a slow disk (cold cache, a checkpoint, a concurrent
-        # ingest) one chunk can exceed the 30 s interactive default. Batch headroom like ingest.
-        conn.execute(f"SET statement_timeout = '{int(getattr(settings, 'ingest_statement_timeout_seconds', 300) or 0)}s'")
+    from .db import Database
+
+    # Vector inserts go into an HNSW index; on a slow disk (cold cache, a checkpoint, a concurrent ingest)
+    # one chunk can exceed the 30 s interactive default. Batch headroom like ingest.
+    batch_timeout = getattr(settings, "ingest_statement_timeout_seconds", None)
+    session = (db.connect(statement_timeout_seconds=batch_timeout) if isinstance(db, Database) and batch_timeout
+               else db.connect())
+    with session as conn:
         rows = conn.execute(
             """SELECT o.id, o.document_id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
                WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND o.kind <> 'CADEntity' AND o.search_text <> ''

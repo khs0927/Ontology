@@ -235,6 +235,10 @@ def _add_batch_commands(subparsers):
 
     subparsers.add_parser("graph-indexes", help="Create missing indexes on every project graph's AGE label tables")
 
+    from .graphrag.commands import add_parsers as add_graphrag_parsers
+
+    add_graphrag_parsers(subparsers)
+
 
 def _cmd_census(parsed, settings, db):
     from .census import DEFAULT_EXTENSIONS, run_census
@@ -400,6 +404,15 @@ BATCH_COMMANDS = {
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
     "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
 }
+
+
+def _graphrag_commands():
+    from .graphrag.commands import COMMANDS
+
+    return COMMANDS
+
+
+BATCH_COMMANDS.update(_graphrag_commands())
 
 
 if __name__ == "__main__":

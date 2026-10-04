@@ -44,6 +44,13 @@ class SearchRequest(BaseModel):
     expand_graph: bool = Field(default=True, description="Whether to expand relations via Apache AGE")
 
 
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000, description="Korean question about the drawings")
+    project: str | None = Field(default=None, description="Canonical project key or stored project id")
+    top_k: int = Field(default=12, ge=1, le=30, description="Max context items (citations) to retrieve")
+    generate: bool = Field(default=True, description="False = retrieval + extractive answer, no LLM call")
+
+
 class ReviewAction(BaseModel):
     object_id: str = Field(..., description="ID of the candidate object")
     action: Literal["CONFIRM", "REJECT", "CHANGE_TYPE"] = Field(..., description="CONFIRM, REJECT, or CHANGE_TYPE")
@@ -222,6 +229,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             expand_graph=req.expand_graph,
         )
         return result.to_dict()
+
+    @app.post("/v1/ask")
+    def ask(req: AskRequest) -> dict[str, Any]:
+        """Graph RAG answer from the local LLM, grounded only in retrieved context, with citations."""
+        from .graphrag.ask import GraphRAG
+        from .graphrag.llm import LLMError, LocalLLM
+
+        llm = None
+        warnings = []
+        if req.generate:
+            try:
+                llm = LocalLLM()
+            except LLMError as exc:
+                warnings.append(str(exc))
+        result = GraphRAG(db, current_settings, llm=llm).ask(
+            req.question, project=req.project, top_k=req.top_k, generate=req.generate)
+        result["warnings"] = warnings + result.get("warnings", [])
+        return result
+
+    @app.get("/v1/kg/stats")
+    def kg_stats_endpoint() -> dict[str, Any]:
+        from .graphrag.kg import kg_stats
+
+        return kg_stats(db)
+
+    @app.get("/v1/kg/nodes/{node_id:path}")
+    def kg_node(node_id: str, limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
+        """One knowledge-graph node with its outgoing and incoming edges (explain a graph path)."""
+        with db.connect() as conn:
+            node = conn.execute("SELECT * FROM aec.kg_nodes WHERE id=%s", (node_id,)).fetchone()
+            if not node:
+                raise HTTPException(status_code=404, detail="Node not found")
+            out_edges = conn.execute(
+                """SELECT e.predicate, e.dst AS id, n.type, n.name FROM aec.kg_edges e
+                   JOIN aec.kg_nodes n ON n.id = e.dst WHERE e.src=%s ORDER BY e.predicate, n.name LIMIT %s""",
+                (node_id, limit)).fetchall()
+            in_edges = conn.execute(
+                """SELECT e.predicate, e.src AS id, n.type, n.name FROM aec.kg_edges e
+                   JOIN aec.kg_nodes n ON n.id = e.src WHERE e.dst=%s ORDER BY e.predicate, n.name LIMIT %s""",
+                (node_id, limit)).fetchall()
+        return {"node": dict(node), "out": [dict(r) for r in out_edges], "in": [dict(r) for r in in_edges]}
 
     @app.get("/v1/objects/{object_id}")
     def get_object(object_id: str) -> dict[str, Any]:

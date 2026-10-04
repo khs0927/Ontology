@@ -179,7 +179,8 @@ def canonical_room(name: str | None) -> str | None:
 
 
 def canonical_section(designation: str | None) -> str | None:
-    """``H-300X150X6.5X9`` / ``H300*150*6.5*9`` / ``H 300x150x6.5x9`` -> ``H-300x150x6.5x9``."""
+    """``H-300X150X6.5X9`` / ``H300*150*6.5*9`` / ``H 300x150x6.5x9`` -> ``H-300x150x6.5x9``;
+    ``PL-300x20`` -> ``PL-20x300`` (plates and flat bars are thickness x width)."""
     if not designation:
         return None
     text = str(designation).upper().replace("×", "X").replace("*", "X").replace(" ", "")
@@ -193,10 +194,7 @@ def canonical_section(designation: str | None) -> str | None:
             value = float(d)
         except ValueError:
             return text
-        norm.append(f"{value:g}")
-    return f"{match.group(1)}-{'x'.join(norm)}"
-
-
-def catalog_spec_key(spec: str) -> str | None:
-    """hs-steel catalog spec (``H300x150x6.5x9``) to the same canonical form as drawing designations."""
-    return canonical_section(spec)
+        norm.append(value)
+    if match.group(1) in ("PL", "FB") and len(norm) == 2:
+        norm.sort()  # plates / flat bars: thickness x width, whichever order the drawing wrote
+    return f"{match.group(1)}-{'x'.join(f'{v:g}' for v in norm)}"

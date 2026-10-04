@@ -8,7 +8,8 @@ Graph model (node types -> edges):
     Storey -hasSpace-> Space;   Drawing -depictsSpace-> Space
     Drawing -hasElements-> ElementGroup (one per drawing x kind, with counts); Storey -hasElements-> ElementGroup
     Drawing -usesSection-> SteelSection; ElementGroup -hasSection-> SteelSection; Project -usesSection-> SteelSection
-    Space -subjectTo-> Requirement (only when a rules file is configured, see load_requirements)
+    Space/Drawing/Project/... -subjectTo-> Requirement (only when a rules file is configured: ArchOntos
+    ``archontos-rule-export/1`` subject refs, or legacy space-use lists; see integrations.load_rules)
 
 Entity resolution (graphrag.resolve): folder project ids -> one Project (+ Phase), copies/revisions of a drawing
 -> one DrawingSeries, storey spellings -> one Storey per project, room spellings -> one Space per project+storey,
@@ -30,6 +31,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .integrations import (
+    catalog_spec_key,
+    load_rules,
+    load_section_handoffs,
+    match_section,
+    subject_ref,
+)
 from .resolve import (
     DISCIPLINE_KO,
     ELEMENT_KINDS,
@@ -131,11 +139,12 @@ def _bbox(payload: dict[str, Any]) -> list[float] | None:
 
 
 def load_steel_catalog(directory: str | os.PathLike | None) -> dict[str, dict[str, Any]]:
-    """hs-steel-cad section tables (``attributes/*.dat``: CP949, whitespace separated, header line;
-    columns Spec Shape M2..M7 UnitWeight PaintArea Color). Licensed data: read on the PC, never committed."""
-    catalog: dict[str, dict[str, Any]] = {}
+    """hs-steel-cad section tables: ``hs-steel-section-catalog/1`` handoff JSON (validated, preferred) and the
+    legacy ``attributes/*.dat`` tables (CP949, whitespace separated, header line; columns Spec Shape M2..M7
+    UnitWeight PaintArea Color). Licensed data: read on the PC, never committed."""
     if not directory:
-        return catalog
+        return {}
+    catalog: dict[str, dict[str, Any]] = load_section_handoffs(directory)
     root = Path(directory)
     files = sorted(root.glob("*.dat")) + sorted((root / "attributes").glob("*.dat"))
     for path in files:
@@ -152,7 +161,7 @@ def load_steel_catalog(directory: str | os.PathLike | None) -> dict[str, dict[st
                 weight, paint = float(fields[8]), float(fields[9])
             except ValueError:
                 continue
-            key = canonical_section(fields[0])
+            key = catalog_spec_key(fields[0], fields[1], path.stem)
             if key and key not in catalog:
                 catalog[key] = {"spec": fields[0], "family": path.stem, "shape": fields[1], "dims_mm": dims,
                                 "unit_weight_kg_m": weight, "paint_area_m2_m": paint, "source": "hs-steel-cad"}
@@ -160,13 +169,11 @@ def load_steel_catalog(directory: str | os.PathLike | None) -> dict[str, dict[st
 
 
 def load_requirements(path: str | os.PathLike | None) -> list[dict[str, Any]]:
-    """Optional rules file (JSON list) mapping space uses to requirements, e.g. exported from ArchOntos:
-    ``[{"id": "...", "title": "...", "text": "...", "applies_to": ["계단실", "복도"], "source": "건축법 ..."}]``.
-    Space nodes link to them with ``subjectTo`` and carry an ``archontos-aec-subject-ref/1`` reference."""
-    if not path or not Path(path).is_file():
-        return []
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return [r for r in data if isinstance(r, dict) and r.get("id") and r.get("applies_to")]
+    """Backward-compatible wrapper around integrations.load_rules (problems are logged)."""
+    rules, problems = load_rules(path)
+    for p in problems[:20]:
+        log.warning("rules file: %s", p)
+    return rules
 
 
 class KnowledgeGraphBuilder:
@@ -183,7 +190,9 @@ class KnowledgeGraphBuilder:
             grouped = load_documents(conn)
             state = {r["project_key"]: r["fingerprint"] for r in
                      conn.execute("SELECT project_key, fingerprint FROM aec.kg_build_state").fetchall()}
-            extra = f"cat{len(self.catalog)}:req{len(self.requirements)}"
+            # Catalog/rules content (not just their sizes) is part of every project's fingerprint.
+            extra = short_hash(json.dumps(sorted(self.catalog), ensure_ascii=False),
+                               json.dumps(self.requirements, ensure_ascii=False, sort_keys=True, default=str), n=16)
             # Projects whose documents are all gone (or moved to another canonical project) go first.
             stale = [k for k in state if k not in grouped and (not project_key or k == project_key)]
             for key in stale:
@@ -255,7 +264,7 @@ class KnowledgeGraphBuilder:
         self._storeys_and_spaces(conn, g, key, project_name, doc_ids, drawings, per_doc_storeys)
         groups = self._elements(conn, g, doc_ids, drawings, per_doc_storeys)
         self._sections(conn, g, key, doc_ids, drawings, groups, sorted({d['project_id'] for d in docs}))
-        self._requirements(g, key)
+        self._requirements(conn, g, key, docs)
         self._finish_text(g, project_name)
 
         counts = Counter(n.type for n in g.nodes.values())
@@ -422,8 +431,9 @@ class KnowledgeGraphBuilder:
                 continue
             spellings += 1
             secid = f"kg:sec:{key}:{des}"
-            node = g.node(secid, "SteelSection", des, designation=des, occurrences=0,
-                          catalog=self.catalog.get(des))
+            entry, how = match_section(des, self.catalog)
+            node = g.node(secid, "SteelSection", des, designation=des, occurrences=0, catalog=entry,
+                          catalog_match=how)
             node.props["occurrences"] += 1
             _add_ids(node.object_ids, [r["id"]])
             _add_ids(node.document_ids, [r["document_id"]])
@@ -448,24 +458,84 @@ class KnowledgeGraphBuilder:
             {"section_objects": spellings, "section_nodes": sum(1 for n in g.nodes.values()
                                                                 if n.type == "SteelSection")})
 
-    def _requirements(self, g, key):
+    def _requirements(self, conn, g, key, docs):
+        """Link rules to the nodes they apply to. ArchOntos subject refs resolve, most specific first, by
+        object id (node evidence, else the object's drawing), ``locator.kg_node``, ``locator.document_id`` /
+        ``source_id`` (drawing) and finally ``project_id`` (project). A ref whose byte revision differs from the
+        drawing's current hash is linked with ``stale: true`` so a reviewer re-checks it. Legacy space-use
+        rules link every Space with that room key."""
         if not self.requirements:
             return
+        by_id = {d["id"]: d for d in docs}
+        by_hash = {d["source_hash"]: d for d in docs if d.get("source_hash")}
+        project_ids = {d["project_id"] for d in docs}
+        pid = f"kg:p:{key}"
+        node_of_object: dict[str, str] = {}
+        for n in g.nodes.values():
+            for oid in n.object_ids:
+                node_of_object.setdefault(oid, n.id)
+        wanted = [s["object_id"] for r in self.requirements for s in r["subjects"]
+                  if s.get("object_id") and s["object_id"] not in node_of_object]
+        object_doc = {}
+        if wanted:
+            object_doc = {r["id"]: r["document_id"] for r in conn.execute(
+                "SELECT id, document_id FROM aec.objects WHERE id = ANY(%s) AND document_id = ANY(%s)",
+                (wanted, list(by_id))).fetchall()}
         spaces = [n for n in g.nodes.values() if n.type == "Space"]
+        unresolved = 0
         for req in self.requirements:
-            uses = {canonical_room(u) for u in req["applies_to"]}
-            matched = [s for s in spaces if s.props.get("room_key") in uses]
-            if not matched:
+            links: dict[str, dict[str, Any]] = {}
+            for s in spaces:
+                if s.props.get("room_key") in req["space_uses"]:
+                    links.setdefault(s.id, {"via": "space_use"})
+            for ref in req["subjects"]:
+                loc = ref.get("locator") or {}
+                doc = None
+                target = None
+                if ref.get("object_id"):
+                    target = node_of_object.get(ref["object_id"])
+                    if target is None and ref["object_id"] in object_doc:
+                        doc = by_id[object_doc[ref["object_id"]]]
+                        target = f"kg:d:{doc['id']}"
+                if target is None and loc.get("kg_node") in g.nodes:
+                    target = loc["kg_node"]
+                if target is None:
+                    doc = by_id.get(loc.get("document_id")) or by_hash.get(ref.get("source_id"))
+                    if doc:
+                        target = f"kg:d:{doc['id']}"
+                if target is None and not ref.get("object_id") and ref["project_id"] in project_ids:
+                    target = pid
+                if target is None or target not in g.nodes:
+                    unresolved += ref["project_id"] in project_ids
+                    continue
+                if doc is None:
+                    tdocs = g.nodes[target].document_ids
+                    doc = by_id.get(tdocs[0]) if len(tdocs) == 1 else None
+                evidence: dict[str, Any] = {"via": "subject_ref"}
+                if ref.get("source_byte_revision_id") and doc is not None:
+                    evidence["stale"] = ref["source_byte_revision_id"] != (doc.get("source_hash") or "")
+                links[target] = evidence
+            if not links:
                 continue
-            rid = f"kg:req:{key}:{short_hash(str(req['id']), n=12)}"
-            node = g.node(rid, "Requirement", str(req.get("title") or req["id"])[:200], rule_id=req["id"],
-                          text=req.get("text"), source=req.get("source"))
-            for s in matched:
-                g.edge(s.id, "subjectTo", rid)
-                s.props["aec_subject_ref"] = {"schema": "archontos-aec-subject-ref/1", "project_id": key,
-                                              "object_id": s.object_ids[0] if s.object_ids else None,
-                                              "locator": {"kg_node": s.id}}
-            node.document_ids = [d for s in matched for d in s.document_ids][:MAX_EVIDENCE_IDS]
+            rid = f"kg:req:{key}:{short_hash(str(req['id']), str(req.get('version_label') or ''), n=12)}"
+            node = g.node(rid, "Requirement", req["title"], rule_id=req["id"], version_label=req.get("version_label"),
+                          text=req.get("text"), source=req.get("source"), has_logic=bool(req.get("logic_expr")),
+                          outcome=req.get("outcome"),
+                          stale_links=sum(1 for e in links.values() if e.get("stale")))
+            docs_seen: list[str] = []
+            for target, evidence in sorted(links.items()):
+                g.edge(target, "subjectTo", rid, **evidence)
+                t = g.nodes[target]
+                _add_ids(docs_seen, t.document_ids)
+                if t.type in ("Space", "Drawing") and "aec_subject_ref" not in t.props:
+                    d = by_id.get(t.document_ids[0]) if t.document_ids else None
+                    t.props["aec_subject_ref"] = subject_ref(
+                        d["project_id"] if d else next(iter(sorted(project_ids))),
+                        object_id=t.object_ids[0] if t.type == "Space" and t.object_ids else None,
+                        document=d, locator={"kg_node": t.id})
+            node.document_ids = docs_seen
+        if unresolved:
+            g.nodes[pid].props.setdefault("resolution", {})["unresolved_subject_refs"] = unresolved
 
     def _finish_text(self, g, project_name):
         for n in g.nodes.values():

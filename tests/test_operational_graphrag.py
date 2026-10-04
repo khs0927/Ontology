@@ -179,3 +179,61 @@ def test_mcp_gateway_graph_rag_query_and_explain_path(seeded, tmp_path, monkeypa
     assert gateway.call_tool("aec.explain_path", {"node_id": "kg:none"})["status"] == "NOT_FOUND"
     off = gateway.call_tool("aec.graph_rag_query", {"question": "주식 시장 전망을 알려줘", "generate": False})
     assert off["status"] == "SUCCESS" and off["refused"] and off["citations"] == []
+
+
+def test_archontos_rules_link_by_subject_ref_and_facts_export(seeded, tmp_path):
+    from aec_intelligence.operational.graphrag.integrations import parser_revision_id, project_facts, subject_ref
+    from aec_intelligence.operational.graphrag.kg import KnowledgeGraphBuilder
+
+    db, key, docs = seeded
+    h_old, h_new = "1" * 64, "2" * 64
+    with db.connect() as conn:
+        conn.execute("UPDATE aec.documents SET source_hash=%s WHERE id=%s", (h_new, docs[2][0]))
+        conn.commit()
+    beam = f"obs_gr_{RUN}_3_2"
+    pid_b = docs[2][1]
+    rules = {"schema": "archontos-rule-export/1", "rules": [
+        {"rule_id": "R-stair", "version_label": "v1", "title": "직통계단 2개소", "outcome": "REVIEW",
+         "applies_to": [{"schema": "archontos-aec-subject-ref/1", "project_id": pid_b}]},
+        {"rule_id": "R-beam", "title": "보 내화",
+         "applies_to": [{"project_id": pid_b, "object_id": beam, "source_id": h_old,
+                         "source_byte_revision_id": h_old, "parser_revision_id": h_old}]},
+        {"rule_id": "R-room", "title": "회의실 배연", "space_uses": ["회의실 1"]},
+        {"rule_id": "R-elsewhere", "title": "다른 프로젝트", "applies_to": [{"project_id": "P-unknown"}]}]}
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
+    KnowledgeGraphBuilder(db, rules_file=str(path)).build(key, force=True)
+    with db.connect() as conn:
+        reqs = {r["name"]: r for r in conn.execute(
+            "SELECT id, name FROM aec.kg_nodes WHERE project_key=%s AND type='Requirement'", (key,))}
+        assert set(reqs) == {"직통계단 2개소", "보 내화", "회의실 배연"}  # unknown project never linked
+        outcome = conn.execute("SELECT props->>'outcome' AS o FROM aec.kg_nodes WHERE id=%s",
+                               (reqs["직통계단 2개소"]["id"],)).fetchone()["o"]
+        assert outcome == "REVIEW"
+        edges = {(r["name"], r["src"]): r["evidence"] for r in conn.execute(
+            """SELECT n.name, e.src, e.evidence FROM aec.kg_edges e JOIN aec.kg_nodes n ON n.id = e.dst
+               WHERE e.project_key=%s AND e.predicate='subjectTo'""", (key,))}
+        assert edges[("직통계단 2개소", f"kg:p:{key}")]["via"] == "subject_ref"
+        # The beam resolves to the node holding it (its Beam element group); the ref names an older byte
+        # revision of that drawing -> linked but stale.
+        beam_links = {src: ev for (name, src), ev in edges.items() if name == "보 내화"}
+        assert len(beam_links) == 1
+        (src, ev), = beam_links.items()
+        assert src.startswith("kg:eg:") and ev == {"via": "subject_ref", "stale": True}
+        room = [src for (name, src) in edges if name == "회의실 배연"]
+        assert len(room) == 1 and room[0].startswith("kg:sp:")
+        space = conn.execute("SELECT props FROM aec.kg_nodes WHERE id=%s", (room[0],)).fetchone()["props"]
+        assert space["aec_subject_ref"]["schema"] == "archontos-aec-subject-ref/1"
+
+    facts = project_facts(db, key)
+    assert facts["schema"] == "aec-facts-export/1"
+    assert facts["facts"]["building"]["floor_count"] == 2  # 1F + 2F depicted
+    assert "basement_count" not in facts["facts"]["building"]  # nothing drawn -> absent -> ArchOntos REVIEW
+    assert "회의실1" in facts["facts"]["space"]["uses"]
+    assert facts["facts"]["steel"]["sections"] == ["H-300x150x6.5x9"]
+    drawing = next(s for s in facts["subjects"] if s["kg_node"] == f"kg:d:{docs[2][0]}")
+    assert drawing["ref"] == subject_ref(pid_b, document={"id": docs[2][0], "revision": 0, "source_hash": h_new},
+                                         locator={"kg_node": f"kg:d:{docs[2][0]}"})
+    assert drawing["ref"]["parser_revision_id"] == parser_revision_id(docs[2][0], 0, h_new)
+    assert {s["ref"]["project_id"] for s in facts["subjects"] if s["type"] == "Project"} == {docs[0][1], pid_b}
+    assert project_facts(db, "no-such-project") is None

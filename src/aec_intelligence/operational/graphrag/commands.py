@@ -22,6 +22,10 @@ def add_parsers(subparsers) -> None:
 
     p = subparsers.add_parser("kg-stats", help="Knowledge graph node/edge/community counts")
 
+    p = subparsers.add_parser("kg-facts", help="Export rule facts + ArchOntos subject refs for one project")
+    p.add_argument("project", help="Canonical project key (see kg-stats / aec.kg_build_state)")
+    p.add_argument("--out", default=None, help="Write aec-facts-export/1 JSON here (default: stdout)")
+
     p = subparsers.add_parser("ask", help="Graph RAG question answering (local LLM, cited)")
     p.add_argument("question")
     p.add_argument("--project", default=None, help="Canonical project key or stored project id")
@@ -80,6 +84,22 @@ def cmd_kg_stats(parsed, settings, db):
     return result
 
 
+def cmd_kg_facts(parsed, settings, db):
+    from pathlib import Path
+
+    from .integrations import project_facts
+
+    result = project_facts(db, parsed.project)
+    if result is None:
+        raise SystemExit(f"unknown project key: {parsed.project}")
+    if parsed.out:
+        Path(parsed.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        _print({"written": parsed.out, "facts": sorted(result["facts"]), "subjects": len(result["subjects"])})
+    else:
+        _print(result)
+    return result
+
+
 def cmd_ask(parsed, settings, db):
     from .ask import GraphRAG
     from .llm import LocalLLM
@@ -116,4 +136,5 @@ def cmd_graphrag_eval_make(parsed, settings, db):
 
 
 COMMANDS = {"graphrag-eval-make": cmd_graphrag_eval_make, "kg-build": cmd_kg_build, "kg-summarize": cmd_kg_summarize, "kg-stats": cmd_kg_stats,
+            "kg-facts": cmd_kg_facts,
             "ask": cmd_ask, "graphrag-eval": cmd_graphrag_eval}

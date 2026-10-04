@@ -209,6 +209,13 @@ def _add_batch_commands(subparsers):
     p.add_argument("--delete-stale", action="store_true",
                    help="Drop vectors of other models for objects that have the active model's vector")
 
+    p = subparsers.add_parser("convert-dwg", help="Pre-convert DWG files into the DXF cache (run on the host with ODA)")
+    p.add_argument("paths", nargs="*", help="DWG files or folders (recursive)")
+    p.add_argument("--census", default=None, help="census.jsonl: convert every unique ok .dwg row (uses its sha256)")
+    p.add_argument("--limit", type=int, default=0, help="Stop after N conversions (0 = all)")
+
+    subparsers.add_parser("graph-indexes", help="Create missing indexes on every project graph's AGE label tables")
+
 
 def _cmd_census(parsed, settings, db):
     from .census import DEFAULT_EXTENSIONS, run_census
@@ -298,10 +305,66 @@ def _cmd_reembed(parsed, settings, db):
     return result
 
 
+def _iter_dwg_sources(parsed):
+    seen = set()
+    if parsed.census:
+        with open(parsed.census, encoding="utf-8") as handle:
+            for line in handle:
+                row = json.loads(line)
+                sha = row.get("sha256")
+                if row.get("status") == "ok" and str(row.get("ext", "")).lower() == ".dwg" and sha and sha not in seen:
+                    seen.add(sha)
+                    yield Path(row["path"]), sha
+    for raw in parsed.paths:
+        target = Path(raw)
+        files = [target] if target.is_file() else sorted(target.rglob("*")) if target.is_dir() else []
+        for f in files:
+            if f.is_file() and f.suffix.lower() == ".dwg":
+                yield f, None
+
+
+def _cmd_convert_dwg(parsed, settings, db):
+    import tempfile
+
+    from ..dwg import convert_dwg_cached, select_dwg_converter
+    from .census import _fs as long_path
+    from .worker import source_sha256
+
+    converter = select_dwg_converter(settings.dwg_converter, settings.oda_executable or None,
+                                     settings.libredwg_executable or None, settings.oda_timeout_seconds)
+    cache = settings.dxf_cache()
+    counts = {"hit": 0, "miss": 0, "failed": 0}
+    failures = []
+    done = 0
+    for path, sha in _iter_dwg_sources(parsed):
+        if parsed.limit and done >= parsed.limit:
+            break
+        os_path = Path(long_path(str(path.resolve())))
+        sha = sha or source_sha256(os_path)
+        with tempfile.TemporaryDirectory(prefix="aec-convert-") as tmp:
+            result = convert_dwg_cached(converter, os_path, tmp, cache, sha)
+        if result.status != "SUCCESS":
+            counts["failed"] += 1
+            failures.append({"path": str(path), "errors": result.errors})
+        else:
+            counts[(result.checks or {}).get("cache", "miss")] += 1
+        done += 1
+        print(f"  [{done}] {result.status} {(result.checks or {}).get('cache', '')} {path.name}", file=sys.stderr, flush=True)
+    summary = {"cache": str(cache), "converter": getattr(converter, "name", "?"), **counts, "failures": failures[:50]}
+    _emit(summary)
+    return summary
+
+
+def _cmd_graph_indexes(parsed, settings, db):
+    created = db.ensure_all_graph_indexes()
+    _emit({"graphs": len(created), "created": {g: c for g, c in created.items() if c}})
+    return created
+
+
 BATCH_COMMANDS = {
     "census": _cmd_census, "enqueue-census": _cmd_enqueue, "run-workers": _cmd_run_workers,
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
-    "reembed": _cmd_reembed,
+    "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
 }
 
 

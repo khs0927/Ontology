@@ -19,6 +19,7 @@ from . import catalog
 from .auth import BearerTokenMiddleware, api_token_from_env
 from .config import Settings
 from .db import Database
+from .embeddings import EmbeddingService
 from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
 from .search import SearchRouter
@@ -113,11 +114,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rels_count = conn.execute("SELECT count(*) as c FROM aec.relations").fetchone()["c"]
             embs_count = conn.execute("SELECT count(*) as c FROM aec.embeddings").fetchone()["c"]
             jobs_stat = conn.execute("SELECT state, count(*) as c FROM aec.jobs GROUP BY state").fetchall()
+            by_model = conn.execute("SELECT model, count(*) AS c FROM aec.embeddings GROUP BY model").fetchall()
+            active = EmbeddingService(current_settings).active_model()
+            # Objects `aec operational reembed` would embed: no vector from the active model yet
+            # (endpoint was down during ingest, or the rows still carry offline hash vectors).
+            pending = conn.execute(
+                """SELECT count(*) AS c FROM aec.objects o WHERE o.kind <> 'CADEntity' AND o.search_text <> ''
+                   AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %s)""",
+                (active,)).fetchone()["c"]
         return {
             "documents": docs_count,
             "objects": objs_count,
             "relations": rels_count,
             "embeddings": embs_count,
+            "embeddings_by_model": {row["model"]: row["c"] for row in by_model},
+            "embedding_model": active,
+            "embeddings_pending": pending,
             "jobs_by_state": {row["state"]: row["c"] for row in jobs_stat},
         }
 

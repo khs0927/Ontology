@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from aec_intelligence.operational.config import Settings
 from aec_intelligence.operational.parsers import observation
 
 

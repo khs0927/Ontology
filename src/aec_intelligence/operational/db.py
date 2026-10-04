@@ -30,19 +30,32 @@ def graph_name(project: str) -> str:
     return "aec_" + hashlib.sha256(project.encode()).hexdigest()[:24]
 
 
+MIGRATION_LOCK = 7_146_221_001  # pg_advisory_lock key: one migration runner at a time
+
+
 class Database:
-    def __init__(self, dsn):
+    def __init__(self, dsn, *, connect_timeout_seconds=None, statement_timeout_seconds=None):
+        """``AEC_DB_CONNECT_TIMEOUT_SECONDS`` (10) bounds a hung connect (Docker Desktop restarts,
+        a paused WSL VM); ``AEC_DB_STATEMENT_TIMEOUT_SECONDS`` (30) is the interactive default."""
+        from .config import env_int
+
         self.dsn = dsn
+        self.connect_timeout_seconds = (env_int("AEC_DB_CONNECT_TIMEOUT_SECONDS", 10, minimum=1)
+                                        if connect_timeout_seconds is None else int(connect_timeout_seconds))
+        self.statement_timeout_seconds = (env_int("AEC_DB_STATEMENT_TIMEOUT_SECONDS", 30, minimum=0)
+                                          if statement_timeout_seconds is None else int(statement_timeout_seconds))
 
     @contextmanager
-    def connect(self, statement_timeout_seconds=30):
+    def connect(self, statement_timeout_seconds=None):
         """Open a configured session.
 
-        Interactive/search sessions keep the 30s default. Long ingestion projection can
+        Interactive/search sessions keep the default (30s). Long ingestion projection can
         explicitly request a larger timeout without globally weakening query safeguards.
         """
+        if statement_timeout_seconds is None:
+            statement_timeout_seconds = self.statement_timeout_seconds
         timeout = max(0, int(statement_timeout_seconds))
-        with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
+        with psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=self.connect_timeout_seconds) as conn:
             conn.execute("LOAD 'age'")
             conn.execute('SET search_path = ag_catalog, aec, public')
             conn.execute(f"SET statement_timeout = '{timeout}s'")
@@ -51,7 +64,10 @@ class Database:
     def initialize(self):
         """Apply pending numbered migrations in order; each runs once, in its own transaction."""
         applied = []
-        with psycopg.connect(self.dsn, autocommit=True) as conn:
+        with psycopg.connect(self.dsn, autocommit=True, connect_timeout=self.connect_timeout_seconds) as conn:
+            # API, workers and CI may all call this at start-up; the session lock makes the second
+            # caller wait and then find every migration already recorded.
+            conn.execute('SELECT pg_advisory_lock(%s)', (MIGRATION_LOCK,))
             conn.execute('CREATE SCHEMA IF NOT EXISTS aec')
             conn.execute('''CREATE TABLE IF NOT EXISTS aec.schema_migrations (
                 version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())''')
@@ -63,7 +79,60 @@ class Database:
                     conn.execute(path.read_text(encoding='utf-8-sig'))
                     conn.execute('INSERT INTO aec.schema_migrations(version) VALUES(%s)', (path.stem,))
                 applied.append(path.stem)
+            conn.execute('SELECT pg_advisory_unlock(%s)', (MIGRATION_LOCK,))
+        if self._has_age():
+            self.ensure_all_graph_indexes()
         return applied
+
+    def _has_age(self):
+        with psycopg.connect(self.dsn, connect_timeout=self.connect_timeout_seconds) as conn:
+            return conn.execute("SELECT 1 FROM pg_extension WHERE extname='age'").fetchone() is not None
+
+    def ensure_graph_indexes(self, graph, conn=None):
+        """Index every label table of one project graph; returns the indexes that were missing.
+
+        AGE creates label tables without indexes on the vertex ``id`` or the edge ``start_id`` /
+        ``end_id`` columns. Every MATCH that joins a vertex to its edges, and the per-document
+        DETACH DELETE of a re-ingest, then scanned whole tables: one search hit took ~50 s on a
+        40k-edge graph, and a large drawing's re-ingest hit the statement timeout. Edge labels
+        include the legacy per-predicate labels (contains, onStorey, ...) that inherit from Rel.
+        """
+        if conn is None:
+            with self.connect() as own:
+                return self.ensure_graph_indexes(graph, own)
+        labels = conn.execute(
+            'SELECT l.name, l.kind FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON l.graph=g.graphid '
+            "WHERE g.name=%s AND l.name NOT IN ('_ag_label_vertex','_ag_label_edge')", (graph,)).fetchall()
+        wanted = []
+        for row in labels:
+            name, kind = row['name'], row['kind']
+            columns = ('id',) if kind == 'v' else ('start_id', 'end_id')
+            for column in columns:
+                index = f"{graph}_{name}_{column}"[:63]
+                wanted.append((index, name, column))
+            if kind == 'v':
+                wanted.append((f"{graph}_{name}_props"[:63] if name != 'Entity' else f'{graph}_entity_props',
+                               name, None))
+        existing = {r['indexname'] for r in conn.execute(
+            'SELECT indexname FROM pg_indexes WHERE schemaname=%s', (graph,))}
+        created = []
+        for index, table, column in wanted:
+            if index in existing:
+                continue
+            if column is None:
+                stmt = sql.SQL('CREATE INDEX IF NOT EXISTS {} ON {}.{} USING gin (properties)')
+                stmt = stmt.format(sql.Identifier(index), sql.Identifier(graph), sql.Identifier(table))
+            else:
+                stmt = sql.SQL('CREATE INDEX IF NOT EXISTS {} ON {}.{} ({})').format(
+                    sql.Identifier(index), sql.Identifier(graph), sql.Identifier(table), sql.Identifier(column))
+            conn.execute(stmt)
+            created.append(index)
+        return created
+
+    def ensure_all_graph_indexes(self):
+        with self.connect(statement_timeout_seconds=0) as conn:
+            graphs = [r['name'] for r in conn.execute('SELECT name FROM ag_catalog.ag_graph ORDER BY name')]
+            return {g: self.ensure_graph_indexes(g, conn) for g in graphs}
 
     def enqueue(self, payload, dedup_key):
         with self.connect() as conn:
@@ -129,6 +198,7 @@ class Database:
                     sql.Identifier(f'{graph}_entity_props'), sql.Identifier(graph), sql.Identifier('Entity')))
             if 'Rel' not in labels:
                 conn.execute("SELECT create_elabel(%s,'Rel')",(graph,))
+            self.ensure_graph_indexes(graph, conn)
 
     def project_graph(self, conn, snapshot):
         graph = graph_name(snapshot['project_id'])

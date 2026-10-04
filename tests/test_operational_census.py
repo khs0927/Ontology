@@ -7,7 +7,6 @@ possibly shared database: every test uses unique project ids/queues and deletes 
 import json
 import os
 import shutil
-import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

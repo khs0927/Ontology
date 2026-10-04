@@ -18,6 +18,30 @@ def split_roots(value: str, pathsep: str | None = None) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    """Integer setting from the environment; a malformed or too-small value is a startup error.
+
+    Silently falling back would hide a typo such as ``AEC_LEASE_SECONDS=5m`` until a lease expired.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    return value
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Settings:
     dsn: str
@@ -34,6 +58,12 @@ class Settings:
     libredwg_executable: str = ""
     # Long SQL/AGE projection statements for large drawings need more headroom than interactive queries.
     ingest_statement_timeout_seconds: int = 300
+    # Embedding endpoint failure during ingest: False (default) stores objects and leaves their vectors
+    # pending for `aec operational reembed`; True fails the job (the pre-2026-10 behaviour).
+    embedding_strict: bool = False
+    # DWG -> DXF conversions are cached by source sha256 so re-ingest/retry never converts twice.
+    dxf_cache_dir: Path | None = None
+    oda_timeout_seconds: int = 900
 
     @classmethod
     def from_env(cls):
@@ -46,8 +76,16 @@ class Settings:
             os.getenv("AEC_ODA_EXECUTABLE", ""),
             dwg_converter=os.getenv("AEC_DWG_CONVERTER", "auto"),
             libredwg_executable=os.getenv("AEC_LIBREDWG_EXECUTABLE", ""),
-            ingest_statement_timeout_seconds=int(os.getenv("AEC_INGEST_STATEMENT_TIMEOUT_SECONDS", "300")),
+            lease_seconds=env_int("AEC_LEASE_SECONDS", 300, minimum=15),
+            max_attempts=env_int("AEC_MAX_ATTEMPTS", 3, minimum=1),
+            ingest_statement_timeout_seconds=env_int("AEC_INGEST_STATEMENT_TIMEOUT_SECONDS", 300, minimum=0),
+            embedding_strict=env_flag("AEC_EMBEDDING_STRICT"),
+            dxf_cache_dir=Path(os.getenv("AEC_DXF_CACHE_DIR") or (root / "dxf-cache")).resolve(),
+            oda_timeout_seconds=env_int("AEC_ODA_TIMEOUT_SECONDS", 900, minimum=10),
         )
+
+    def dxf_cache(self) -> Path:
+        return self.dxf_cache_dir or (self.data_root / "dxf-cache")
 
     def allowed_source(self, value: str) -> Path:
         path = Path(value).resolve(strict=True)

@@ -13,7 +13,7 @@ from typing import Any
 
 from .config import Settings
 from .db import Database
-from .embeddings import HASH_MODEL, EmbeddingService, index_snapshot_embeddings
+from .embeddings import HASH_MODEL, EmbeddingEndpointError, EmbeddingService, index_snapshot_embeddings
 from .parsers import parse_source
 from .census import _fs as long_path
 
@@ -170,6 +170,10 @@ class IngestionWorker:
         output_dir = self.settings.data_root / "artifacts" / doc_id / f"rev-{revision}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Hash first: the DWG->DXF cache is keyed by it, so a retry or a copy of the same drawing in
+        # another folder reuses the conversion instead of running ODA again.
+        source_hash = source_sha256(source_path, payload)
+
         # Parse CAD / PDF / IFC / Raster
         parsed = parse_source(
             source=source_path,
@@ -177,10 +181,8 @@ class IngestionWorker:
             output=output_dir,
             settings=self.settings,
             source_name=doc_name,
+            source_hash=source_hash if source_hash != "unknown" else None,
         )
-
-        # Build snapshot dictionary
-        source_hash = source_sha256(source_path, payload)
 
         snapshot = {
             "document_id": doc_id,
@@ -209,10 +211,23 @@ class IngestionWorker:
             statement_timeout_seconds=self.settings.ingest_statement_timeout_seconds
         ) as conn:
             self.db.project(conn, snapshot, relative_snapshot_path)
-            # Index pgvector embeddings. A configured endpoint that fails raises here and fails the
-            # job instead of writing placeholder vectors; the model used is reported below.
+            # Index pgvector embeddings. A configured endpoint that fails never writes placeholder
+            # vectors. By default the objects are kept and their vectors stay pending: they are exactly
+            # the rows `python -m aec_intelligence.operational.cli reembed` selects (no vector of the active model). The drawing is
+            # searchable lexically and through the graph meanwhile. AEC_EMBEDDING_STRICT=1 fails the job.
             embedder = EmbeddingService(self.settings)
-            indexed_embeddings = index_snapshot_embeddings(conn, snapshot, self.settings, service=embedder)
+            embedding_error = None
+            try:
+                with conn.transaction():
+                    indexed_embeddings = index_snapshot_embeddings(conn, snapshot, self.settings, service=embedder)
+            except EmbeddingEndpointError as exc:
+                if self.settings.embedding_strict:
+                    raise
+                indexed_embeddings = 0
+                embedding_error = str(exc)
+                logger.warning("Job %s: embeddings pending (%s); run `python -m aec_intelligence.operational.cli reembed` once the "
+                               "endpoint is back", job["id"], exc)
+                snapshot["warnings"].append(f"embeddings pending: {exc}")
 
             # Record ingestion metrics
             metrics_payload = {
@@ -224,6 +239,8 @@ class IngestionWorker:
                 "embeddings_count": indexed_embeddings,
                 "embedding_model": embedder.active_model(),
                 "embeddings_degraded": embedder.active_model() == HASH_MODEL,
+                "embeddings_pending": embedding_error is not None,
+                "embedding_error": embedding_error,
                 "raw_metrics": parsed.get("metrics", {}),
             }
             conn.execute(
@@ -240,5 +257,7 @@ class IngestionWorker:
             "relations_count": len(snapshot["relations"]),
             "embedding_model": embedder.active_model(),
             "embeddings_degraded": embedder.active_model() == HASH_MODEL,
-            "warnings": parsed.get("warnings", []),
+            "embeddings_pending": embedding_error is not None,
+            "embedding_error": embedding_error,
+            "warnings": snapshot["warnings"],
         }

@@ -1,9 +1,10 @@
 # Optional real embeddings (BAAI/bge-m3, 1024 dims = aec.embeddings vector(1024)):
 #   docker compose --profile embeddings up -d
-# api/worker default AEC_EMBEDDING_URL to http://embeddings:80. Without the profile the
-# client fails fast (circuit breaker) and stores vectors under the offline hash model name;
-# search only compares vectors of the same model, so the two never mix. After enabling the
-# profile, re-embed old hash-only rows with operational.embeddings.reindex_embeddings().
+# api/worker default AEC_EMBEDDING_URL to http://embeddings:80 (set it to empty in .env for the
+# offline hash model, or to http://host.docker.internal:11434 for Ollama on the host). If the
+# endpoint is down during ingest, objects and graph are still stored and the job result says
+# embeddings_pending=true (AEC_EMBEDDING_STRICT=1 fails the job instead). Search only compares
+# vectors of the same model. Fill pending/old rows with `cli reembed` (see docs/operations-phase2.md).
 services:
   db:
     build:
@@ -30,6 +31,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot schema migration (idempotent, advisory-locked): SQL migrations + AGE graph label indexes.
+  # api/worker start only after it exits 0, so a new image never runs against an old schema.
+  migrate:
+    image: aec-intelligence-app:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    container_name: aec-migrate
+    command: python -m aec_intelligence.operational.cli init-db
+    environment:
+      AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
+      AEC_DATA_ROOT: /data
+    volumes:
+      - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -55,6 +76,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker:
@@ -67,12 +90,18 @@ services:
       # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
       AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
       AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
+      AEC_EMBEDDING_STRICT: ${AEC_EMBEDDING_STRICT:-0}
+      AEC_LEASE_SECONDS: ${AEC_LEASE_SECONDS:-300}
+      AEC_MAX_ATTEMPTS: ${AEC_MAX_ATTEMPTS:-3}
+      AEC_INGEST_STATEMENT_TIMEOUT_SECONDS: ${AEC_INGEST_STATEMENT_TIMEOUT_SECONDS:-300}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   ocr-worker:

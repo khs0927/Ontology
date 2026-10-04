@@ -108,6 +108,10 @@ Invoke-RestMethod "http://127.0.0.1:58000/v1/kg/nodes/kg:p:<project_key>" -Heade
   규칙을 평가하고 `archontos-rule-export/1` 링크 파일을 만듭니다. 그 파일을 `kg-build --rules`(또는
   `AEC_RULES_FILE`)로 주면 `subjectTo` 엣지가 생깁니다. 도면 해시 또는 파서 개정이 바뀌거나 현재 개정을
   확인할 수 없는 참조는 `stale: true`로 연결되며 결과는 `REVIEW`로 낮춥니다(`exported_outcome`은 보관).
+  가져온 PASS/FAIL은 `archontos-canonical-context/1`의 승인·활성·binding 상태, 원본/규칙/평가/주장
+  식별자, 평가일과 현재 시행 기간, 프로젝트 범위, 명시적인 비합성 출처가 모두 확인될 때만 유지합니다.
+  CLI의 오프라인 DSL 평가, legacy 링크, 합성 입력과 불완전한 메타데이터는 검토 근거로 남고 `REVIEW`가 됩니다.
+  이 메타데이터는 로컬 교환 계약이며, 파일 자체의 작성자나 법령의 진위를 인증하는 장치는 아닙니다.
   일부 도면의 최고층·최저 지하층은 관측 범위이며 건물 전체 층수가 아닙니다. 따라서 확정 총층수
   `building.floor_count`·`building.basement_count`는 내보내지 않고, 이를 요구하는 규칙은 `REVIEW`로 남습니다.
   도면에서 확인할 수 없는 사실(직통계단 수, 용도, 연면적)은 내보내지 않습니다. 그래서 그런 규칙은 ArchOntos에서

@@ -18,9 +18,10 @@ import hashlib
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from .resolve import canonical_room, canonical_section, storey_sort_key
 
@@ -34,6 +35,7 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 STEEL_DENSITY_KG_M_PER_MM2 = 0.00785  # 7.85 t/m3 -> kg per metre per mm2 of cross-section
 MAX_RULES = 5000
 MAX_SUBJECTS_PER_RULE = 10_000  # same bound as ArchOntos AssertionContract.applies_to
+CANONICAL_CONTEXT_SCHEMA = "archontos-canonical-context/1"
 
 
 # --------------------------------------------------------------------------- ArchOntos subject references
@@ -82,6 +84,60 @@ def validate_subject_ref(ref: Any) -> list[str]:
     return problems
 
 
+def canonical_context_problems(value: Any, *, today: date | None = None) -> list[str]:
+    """Check an exported canonical evaluation's authority metadata, never infer it from an outcome.
+
+    This is a local handoff contract, not an authentication mechanism. An offline DSL result without
+    canonical provenance remains review evidence even if its computed branch was PASS or FAIL.
+    """
+    if not isinstance(value, dict) or value.get("schema") != CANONICAL_CONTEXT_SCHEMA:
+        return ["canonical evaluation context missing or unsupported"]
+    problems = []
+    for field in ("rule_version_id", "evaluation_id", "source_version_id"):
+        try:
+            UUID(value.get(field, ""))
+        except (ValueError, TypeError, AttributeError):
+            problems.append(f"canonical_context.{field} must be a UUID")
+    assertions = value.get("assertion_ids")
+    if not isinstance(assertions, list) or not assertions or len(assertions) > MAX_SUBJECTS_PER_RULE:
+        problems.append("canonical_context.assertion_ids must be a non-empty bounded list")
+    else:
+        for item in assertions:
+            try:
+                UUID(item)
+            except (ValueError, TypeError, AttributeError):
+                problems.append("canonical_context.assertion_ids must contain UUIDs")
+                break
+    if value.get("review_status") != "approved":
+        problems.append("canonical assertion provenance is not approved")
+    if value.get("status") != "active":
+        problems.append("canonical rule version is not active")
+    if value.get("binding") is not True:
+        problems.append("canonical evaluation is not binding")
+    if value.get("synthetic") is not False:
+        problems.append("canonical evidence is synthetic or its origin is unspecified")
+    if not isinstance(value.get("project_key"), str) or not value["project_key"].strip():
+        problems.append("canonical_context.project_key is required")
+    try:
+        evaluated_at = datetime.fromisoformat(value.get("evaluated_at", "").replace("Z", "+00:00"))
+        if evaluated_at.tzinfo is None:
+            raise ValueError("timezone missing")
+        start = date.fromisoformat(value.get("valid_from", ""))
+        end = date.fromisoformat(value["valid_to"]) if value.get("valid_to") is not None else None
+        if end is not None and end < start:
+            raise ValueError("reversed interval")
+        current = today or datetime.now(evaluated_at.tzinfo).date()
+        if evaluated_at.date() < start or (end is not None and evaluated_at.date() > end):
+            problems.append("canonical rule was not effective at evaluation")
+        if current < start or (end is not None and current > end):
+            problems.append("canonical rule is not currently effective")
+        if evaluated_at.date() > current:
+            problems.append("canonical evaluation is in the future")
+    except (ValueError, TypeError, AttributeError):
+        problems.append("canonical_context requires valid effective dates and timezone-aware evaluated_at")
+    return problems
+
+
 def load_rules(path: str | Path | None) -> tuple[list[dict[str, Any]], list[str]]:
     """Rules to link into the KG. Two accepted shapes:
 
@@ -89,7 +145,8 @@ def load_rules(path: str | Path | None) -> tuple[list[dict[str, Any]], list[str]
       "logic_expr", "applies_to": [AecSubjectRef...], "space_uses": [...]}]}`` (the ArchOntos contract);
     * the legacy list ``[{"id", "title", "text", "applies_to": ["계단실", ...], "source"}]`` (space uses only).
 
-    Returns ``(rules, problems)``; invalid subject refs are dropped and reported, never linked."""
+    Returns ``(rules, problems)``; invalid refs are dropped. PASS/FAIL is accepted only with valid canonical
+    context; legacy, offline, synthetic and incomplete authority evidence remains REVIEW."""
     problems: list[str] = []
     if not path or not Path(path).is_file():
         return [], problems
@@ -102,6 +159,8 @@ def load_rules(path: str | Path | None) -> tuple[list[dict[str, Any]], list[str]
         raw_rules = data
     else:
         return [], ["rules file must be a list or an archontos-rule-export/1 object"]
+    if not isinstance(raw_rules, list):
+        return [], ["rules must be a list"]
     rules = []
     for i, raw in enumerate(raw_rules[:MAX_RULES]):
         if not isinstance(raw, dict):
@@ -111,23 +170,38 @@ def load_rules(path: str | Path | None) -> tuple[list[dict[str, Any]], list[str]
         if not rid:
             problems.append(f"rules[{i}]: rule_id missing")
             continue
-        uses, subjects = list(raw.get("space_uses") or []), []
-        for j, item in enumerate((raw.get("applies_to") or [])[:MAX_SUBJECTS_PER_RULE]):
+        uses, subjects = raw.get("space_uses") or [], []
+        refs = raw.get("applies_to") or []
+        if not isinstance(uses, list) or not all(isinstance(u, str) for u in uses) or not isinstance(refs, list):
+            problems.append(f"rules[{i}]: space_uses and applies_to must be lists")
+            continue
+        uses = list(uses)
+        authority_problems = canonical_context_problems(raw.get("canonical_context"))
+        if len(refs) > MAX_SUBJECTS_PER_RULE:
+            authority_problems.append("applies_to was truncated")
+        for j, item in enumerate(refs[:MAX_SUBJECTS_PER_RULE]):
             if isinstance(item, str):  # legacy: space use name
                 uses.append(item)
                 continue
             bad = validate_subject_ref(item)
             if bad:
                 problems.append(f"rules[{i}].applies_to[{j}]: {'; '.join(bad)}")
+                authority_problems.append("invalid subject reference")
             else:
                 subjects.append(item)
         if not uses and not subjects:
             problems.append(f"rules[{i}] ({rid}): no space_uses and no valid applies_to")
             continue
+        exported_outcome = raw.get("outcome") if raw.get("outcome") in ("PASS", "FAIL", "REVIEW") else None
+        if authority_problems and exported_outcome in ("PASS", "FAIL"):
+            problems.append(f"rules[{i}] ({rid}): outcome requires REVIEW: {'; '.join(authority_problems)}")
         rules.append({"id": str(rid), "version_label": raw.get("version_label"),
                       "title": str(raw.get("title") or rid)[:200], "text": raw.get("text"),
                       "source": raw.get("source"), "logic_expr": raw.get("logic_expr"),
-                      "outcome": raw.get("outcome") if raw.get("outcome") in ("PASS", "FAIL", "REVIEW") else None,
+                      "outcome": "REVIEW" if authority_problems else exported_outcome,
+                      "exported_outcome": exported_outcome,
+                      "canonical_context": raw.get("canonical_context") if isinstance(raw.get("canonical_context"), dict) else None,
+                      "authority_problems": authority_problems,
                       "space_uses": sorted({u for u in (canonical_room(x) for x in uses) if u}),
                       "subjects": subjects})
     if len(raw_rules) > MAX_RULES:

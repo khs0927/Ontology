@@ -537,10 +537,16 @@ class KnowledgeGraphBuilder:
                 continue
             rid = f"kg:req:{key}:{short_hash(str(req['id']), str(req.get('version_label') or ''), n=12)}"
             stale_links = sum(1 for e in links.values() if e.get("stale"))
+            authority_problems = list(req.get("authority_problems") or [])
+            context = req.get("canonical_context") or {}
+            if context and context.get("project_key") != key:
+                authority_problems.append("canonical evaluation belongs to another project")
             node = g.node(rid, "Requirement", req["title"], rule_id=req["id"], version_label=req.get("version_label"),
                           text=req.get("text"), source=req.get("source"), has_logic=bool(req.get("logic_expr")),
-                          outcome="REVIEW" if stale_links else req.get("outcome"),
-                          exported_outcome=req.get("outcome"), stale_links=stale_links)
+                          outcome="REVIEW" if stale_links or authority_problems else req.get("outcome"),
+                          exported_outcome=req.get("exported_outcome", req.get("outcome")),
+                          canonical_context=req.get("canonical_context"), authority_problems=authority_problems,
+                          stale_links=stale_links)
             docs_seen: list[str] = []
             for target, evidence in sorted(links.items()):
                 g.edge(target, "subjectTo", rid, **evidence)

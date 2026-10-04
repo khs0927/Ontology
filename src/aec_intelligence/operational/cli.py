@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -161,6 +162,8 @@ def _add_batch_commands(subparsers):
                    help="Scan only <root>/<folder> (repeatable); project grouping stays relative to the root")
     p.add_argument("--skip-placeholders", action="store_true",
                    help="Do not hash cloud-only placeholder files (avoids downloading them)")
+    p.add_argument("--exclude", action="append", default=[],
+                   help="Skip a folder/file: a path prefix (has a separator) or a name glob (repeatable)")
 
     p = subparsers.add_parser("enqueue-census", help="Enqueue one ingestion job per unique file in a census")
     p.add_argument("census", help="census.jsonl or the census output folder")
@@ -170,10 +173,21 @@ def _add_batch_commands(subparsers):
     p.add_argument("--extensions", action="append", default=None)
     p.add_argument("--project-prefix", default="P-")
     p.add_argument("--default-discipline", default="ARCH")
+    p.add_argument("--project-root", default=None,
+                   help="Folder below which --project-depth folders name the project (default: census root)")
+    p.add_argument("--project-depth", type=int, default=1, help="Folder levels below --project-root (default 1)")
+    p.add_argument("--priority", type=int, default=None,
+                   help="Claim order across enqueues: lower first (default 100); newest files first within it")
     p.add_argument("--requeue-failed", action="store_true", help="Put FAILED jobs of these files back in the queue")
     p.add_argument("--ignore-import-roots", action="store_true",
                    help="Do not require sources to be under AEC_IMPORT_ROOTS")
     p.add_argument("--dry-run", action="store_true")
+
+    p = subparsers.add_parser("bulk-census",
+                              help="Census + enqueue every source of a sources.json in order (resumable, re-runnable)")
+    p.add_argument("--config", required=True, help="sources.json (private; keep it next to the data)")
+    p.add_argument("--enqueue-every", type=float, default=600.0, help="Seconds between partial enqueues")
+    p.add_argument("--refresh", action="store_true", help="Re-walk finished sources too (resume keeps hashes)")
 
     p = subparsers.add_parser("run-workers", help="Run N worker processes until the queue is drained")
     p.add_argument("-n", "--processes", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)))
@@ -226,7 +240,7 @@ def _cmd_census(parsed, settings, db):
     result = run_census([*parsed.roots, *parsed.root], parsed.out,
                         _split(parsed.extensions) or DEFAULT_EXTENSIONS, resume=parsed.resume,
                         flush_every=parsed.flush_every, hash_placeholders=not parsed.skip_placeholders,
-                        progress=progress, only_folders=parsed.only_folder)
+                        progress=progress, only_folders=parsed.only_folder, exclude=parsed.exclude)
     summary = {k: v for k, v in result.summary.items() if k not in ("duplicates", "walk_errors")}
     summary["duplicate_groups"] = result.summary["duplicates"]["groups"]
     summary["outputs"] = [str(result.out / n) for n in ("census.jsonl", "census.csv", "summary.json", "summary.md")]
@@ -240,11 +254,22 @@ def _cmd_enqueue(parsed, settings, db):
                             only_folders=parsed.only_folder, extensions=_split(parsed.extensions) or None,
                             import_roots=None if parsed.ignore_import_roots else settings.import_roots,
                             requeue_failed=parsed.requeue_failed, prefix=parsed.project_prefix,
-                            default_discipline=parsed.default_discipline, dry_run=parsed.dry_run)
+                            default_discipline=parsed.default_discipline, dry_run=parsed.dry_run,
+                            project_root=parsed.project_root, project_depth=parsed.project_depth,
+                            priority=parsed.priority)
     if result.get("outside_import_roots"):
         print("WARNING: some files are outside AEC_IMPORT_ROOTS and were skipped "
               f"({result['outside_import_roots']}). Add the drive root to AEC_IMPORT_ROOTS.", file=sys.stderr)
     _emit(result)
+
+
+def _cmd_bulk_census(parsed, settings, db):
+    from .census import run_bulk_census
+
+    def log(message):
+        print(f"{datetime.now().isoformat(timespec='seconds')} {message}", file=sys.stderr, flush=True)
+
+    _emit(run_bulk_census(db, parsed.config, enqueue_every=parsed.enqueue_every, refresh=parsed.refresh, log=log))
 
 
 def _cmd_run_workers(parsed, settings, db):
@@ -365,6 +390,7 @@ def _cmd_graph_indexes(parsed, settings, db):
 
 BATCH_COMMANDS = {
     "census": _cmd_census, "enqueue-census": _cmd_enqueue, "run-workers": _cmd_run_workers,
+    "bulk-census": _cmd_bulk_census,
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
     "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
 }

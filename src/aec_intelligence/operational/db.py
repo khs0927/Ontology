@@ -148,7 +148,8 @@ class Database:
             return conn.execute("""WITH candidate AS (
                 SELECT id FROM aec.jobs WHERE (state='QUEUED' OR (state='RUNNING' AND lease_until<now()))
                 AND attempts<%s AND COALESCE(payload->>'queue','cad')=%s
-                ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+                ORDER BY COALESCE((payload->>'priority')::int, 100), payload->>'mtime' DESC NULLS LAST, created_at
+                FOR UPDATE SKIP LOCKED LIMIT 1)
                 UPDATE aec.jobs j SET state='RUNNING',attempts=attempts+1,lease_owner=%s,
                 lease_until=now()+make_interval(secs=>%s),updated_at=now()
                 FROM candidate c WHERE j.id=c.id RETURNING j.*""", (max_attempts,queue,owner,lease_seconds)).fetchone()

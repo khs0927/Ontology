@@ -25,7 +25,8 @@ from typing import Any, Iterable, Iterator
 
 DEFAULT_EXTENSIONS = (".dwg", ".dxf", ".ifc", ".pdf")
 SKIP_PATTERNS = ("*.bak", "*.sv$", "~$*", "*.dwl", "*.dwl2", "*.tmp", "~*.tmp", "*.ac$")
-SKIP_DIRS = {"$RECYCLE.BIN", "System Volume Information", ".tmp.drivedownload", ".tmp.driveupload"}
+SKIP_DIRS = {"$RECYCLE.BIN", "System Volume Information", ".tmp.drivedownload", ".tmp.driveupload",
+             ".git", "node_modules", ".venv", "__pycache__", ".pytest_cache"}
 CHUNK = 1024 * 1024
 
 # DWG/DXF "AC10xx" signature -> AutoCAD release (format family).
@@ -97,7 +98,29 @@ def hash_file(path: str, ext: str) -> tuple[str, str | None]:
     return digest.hexdigest(), sniff_version(ext, head)
 
 
-def walk(root: str, errors: list[dict[str, str]]) -> Iterator[tuple[str, os.stat_result]]:
+def _excluder(patterns: Iterable[str]):
+    """Predicate for ``--exclude``: a pattern with a path separator is a path prefix (``G:\\a\\b``),
+    anything else a case-insensitive glob on the file/folder name (``hillside_villa*``)."""
+    prefixes, globs = [], []
+    for pattern in patterns or ():
+        pattern = unicodedata.normalize("NFC", str(pattern).strip())
+        if not pattern:
+            continue
+        if "/" in pattern or "\\" in pattern:
+            prefixes.append(os.path.normcase(os.path.abspath(pattern)).rstrip("/\\"))
+        else:
+            globs.append(pattern.lower())
+
+    def excluded(path: str) -> bool:
+        name = unicodedata.normalize("NFC", os.path.basename(path)).lower()
+        if any(fnmatch.fnmatchcase(name, g) for g in globs):
+            return True
+        norm = os.path.normcase(unicodedata.normalize("NFC", path))
+        return any(norm == p or norm.startswith(p + os.sep) for p in prefixes)
+    return excluded
+
+
+def walk(root: str, errors: list[dict[str, str]], excluded=None) -> Iterator[tuple[str, os.stat_result]]:
     """Iterative os.scandir walk; never raises on unreadable folders, never follows links."""
     stack = [root]
     while stack:
@@ -107,6 +130,8 @@ def walk(root: str, errors: list[dict[str, str]]) -> Iterator[tuple[str, os.stat
                 children = []
                 for entry in entries:
                     path = os.path.join(current, entry.name)
+                    if excluded is not None and excluded(path):
+                        continue
                     try:
                         if entry.is_dir(follow_symlinks=False):
                             if entry.name not in SKIP_DIRS:
@@ -157,7 +182,7 @@ class CensusResult:
 
 def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterable[str] = DEFAULT_EXTENSIONS,
                resume: bool = False, flush_every: int = 100, hash_placeholders: bool = True,
-               progress: Any = None, only_folders: Iterable[str] = ()) -> CensusResult:
+               progress: Any = None, only_folders: Iterable[str] = (), exclude: Iterable[str] = ()) -> CensusResult:
     """Walk ``roots`` (or only ``root/<folder>`` for each of ``only_folders``) and record every drawing.
 
     Paths stay relative to the root so the top-level folder (= project) is the same whether a pilot
@@ -176,12 +201,13 @@ def run_census(roots: Iterable[str | Path], out: str | Path, extensions: Iterabl
     scopes: list[str] = []
     counters = Counter()
     started = time.time()
+    excluded = _excluder(exclude) if exclude else None
     with open(jsonl, "a", encoding="utf-8", newline="\n") as sink:
         pending = 0
         for root, scope in _scopes(roots, only_folders):
             root_str = root
             scopes.append(scope)
-            for path, st in walk(scope, walk_errors):
+            for path, st in walk(scope, walk_errors, excluded):
                 name = os.path.basename(path)
                 ext = os.path.splitext(name)[1].lower()
                 temp = is_temp_file(name)
@@ -397,9 +423,26 @@ def _under_roots(path: str, roots: Iterable[Path]) -> bool:
     return any(candidate == root or candidate.is_relative_to(root) for root in roots)
 
 
+def project_folder(row: dict[str, Any], project_root: str | None = None, depth: int = 1) -> str:
+    """Folder that names the row's project: the first ``depth`` folders below ``project_root``
+    (default: the census root, i.e. its ``top_folder``); the root's own name for files directly in it."""
+    if project_root is None and depth == 1:
+        return row.get("top_folder") or os.path.basename(row.get("root", "").rstrip("/\\"))
+    root = project_root or row.get("root", "")
+    parts = _relative(row["path"], root).split("/")[:-1]
+    if parts and parts[0] == "..":  # not below project_root: fall back to the census grouping
+        return row.get("top_folder") or os.path.basename(row.get("root", "").rstrip("/\\"))
+    return "/".join(parts[:max(0, depth)]) or os.path.basename(root.rstrip("/\\"))
+
+
 def plan_jobs(census: str | Path, extensions: Iterable[str] | None = None, only_folders: Iterable[str] = (),
-              prefix: str = "P-", default_discipline: str = "ARCH") -> list[dict[str, Any]]:
-    """One job per unique sha256; the lexicographically first path is canonical, the rest are aliases."""
+              prefix: str = "P-", default_discipline: str = "ARCH", project_root: str | None = None,
+              project_depth: int = 1, priority: int | None = None) -> list[dict[str, Any]]:
+    """One job per unique sha256; the lexicographically first path is canonical, the rest are aliases.
+
+    Jobs come newest first (``mtime`` of the newest copy), and carry ``priority``/``mtime`` so workers
+    claim live projects before old archives (see ``Database.claim``).
+    """
     exts = {e.lower() if e.startswith(".") else "." + e.lower() for e in extensions} if extensions else None
     only = {unicodedata.normalize("NFC", f) for f in only_folders}
     groups: dict[str, dict[str, Any]] = {}
@@ -418,11 +461,21 @@ def plan_jobs(census: str | Path, extensions: Iterable[str] | None = None, only_
             group["canonical"] = row
         else:
             group["aliases"].append(row["path"])
+    newest: dict[str, str] = {}
+    for sha, group in groups.items():
+        newest[sha] = group["canonical"].get("mtime") or ""
+    for row in iter_census(census):
+        if row.get("sha256") in newest and (row.get("mtime") or "") > newest[row["sha256"]]:
+            newest[row["sha256"]] = row["mtime"]
     jobs = []
-    for sha, group in sorted(groups.items(), key=lambda item: item[1]["canonical"]["path"]):
+    for sha, group in sorted(groups.items(), key=lambda item: (newest[item[0]], item[1]["canonical"]["path"]),
+                             reverse=True):
         row = group["canonical"]
-        folder = row.get("top_folder") or os.path.basename(row.get("root", "").rstrip("/\\"))
-        jobs.append({
+        folder = project_folder(row, project_root, project_depth)
+        extra = {"mtime": newest[sha]}
+        if priority is not None:
+            extra["priority"] = int(priority)
+        jobs.append({**extra,
             "source": row["path"], "name": row["name"], "project_id": project_id_for(folder, prefix),
             "document_id": document_id_for(sha), "revision": 0,
             "discipline": guess_discipline(row["rel_path"], default_discipline),
@@ -435,10 +488,13 @@ def plan_jobs(census: str | Path, extensions: Iterable[str] | None = None, only_
 def enqueue_census(db, census: str | Path, queue: str = "cad", limit: int | None = None,
                    only_folders: Iterable[str] = (), extensions: Iterable[str] | None = None,
                    import_roots: Iterable[Path] | None = None, requeue_failed: bool = False,
-                   prefix: str = "P-", default_discipline: str = "ARCH", dry_run: bool = False) -> dict[str, Any]:
+                   prefix: str = "P-", default_discipline: str = "ARCH", dry_run: bool = False,
+                   project_root: str | None = None, project_depth: int = 1,
+                   priority: int | None = None) -> dict[str, Any]:
     from psycopg.types.json import Jsonb
 
-    jobs = plan_jobs(census, extensions, only_folders, prefix, default_discipline)
+    jobs = plan_jobs(census, extensions, only_folders, prefix, default_discipline, project_root, project_depth,
+                     priority)
     roots = [Path(r).resolve() for r in import_roots] if import_roots else None
     stats = Counter()
     outside: list[str] = []
@@ -471,6 +527,109 @@ def enqueue_census(db, census: str | Path, queue: str = "cad", limit: int | None
                     stats["requeued_failed"] += 1
     return {"planned": len(selected), "unique_contents": len(jobs), **stats,
             "aliased_paths": sum(len(j["aliases"]) for j in selected), "outside_examples": outside[:20]}
+
+
+# --------------------------------------------------------------------------------------------
+# bulk-census: every source of a sources.json, in priority order, enqueueing as it goes
+# --------------------------------------------------------------------------------------------
+
+def load_bulk_config(path: str | Path) -> dict[str, Any]:
+    """sources.json (kept next to the data, never in git: it names private folders)::
+
+        {"out": "D:/AECData/census-v3", "extensions": ".dwg,.dxf,.pdf,.ifc,.rvt,.skp",
+         "ingest_extensions": ".dwg,.dxf,.pdf", "exclude": ["hillside_villa*"],
+         "sources": [{"name": "01-live", "roots": ["G:/drive/live"], "priority": 10,
+                      "project_root": "G:/drive/live", "project_depth": 2, "prefix": "P-",
+                      "exclude": ["G:/drive/live/old"]}, ...]}
+
+    Sources run in list order; ``priority`` (lower first) orders the worker queue across sources.
+    """
+    config = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    names = [s.get("name") for s in config.get("sources", [])]
+    if not names or any(not n for n in names) or len(set(names)) != len(names):
+        raise ValueError("sources.json needs a non-empty 'sources' list with unique 'name's")
+    for source in config["sources"]:
+        if not source.get("roots"):
+            raise ValueError(f"source {source['name']}: 'roots' is empty")
+    return config
+
+
+def bulk_import_roots(config: dict[str, Any]) -> list[str]:
+    return sorted({os.path.abspath(r) for s in config["sources"] for r in s["roots"]})
+
+
+def run_bulk_census(db, config_path: str | Path, enqueue_every: float = 600.0, refresh: bool = False,
+                    log: Any = print) -> dict[str, Any]:
+    """Census every source (resumable), enqueueing its unique drawings while the census is still running.
+
+    Re-running is safe: finished sources are skipped (``refresh`` re-walks them with ``resume``), the
+    census of an interrupted source resumes from its jsonl, and jobs are deduplicated by sha256.
+    Progress is kept in ``<out>/state.json``.
+    """
+    config = load_bulk_config(config_path)
+    out_root = Path(config["out"])
+    out_root.mkdir(parents=True, exist_ok=True)
+    state_path = out_root / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    exts = [e.strip() for e in str(config.get("extensions", ",".join(DEFAULT_EXTENSIONS))).split(",") if e.strip()]
+    ingest = [e.strip() for e in str(config.get("ingest_extensions", ".dwg,.dxf,.pdf")).split(",") if e.strip()]
+
+    def save():
+        tmp = state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, state_path)
+
+    for source in config["sources"]:
+        name = source["name"]
+        entry = state.setdefault(name, {})
+        if entry.get("done") and not refresh:
+            log(f"[bulk] {name}: done at {entry.get('finished_at')}, skipping")
+            continue
+        out = out_root / name
+
+        def enqueue(final: bool, source=source, out=out, entry=entry, name=name) -> dict[str, Any]:
+            if not (out / "census.jsonl").exists():
+                return {}
+            result = enqueue_census(db, out, queue=config.get("queue", "cad"), extensions=ingest,
+                                    import_roots=[Path(r) for r in bulk_import_roots(config)],
+                                    prefix=source.get("prefix", "P-"),
+                                    default_discipline=source.get("default_discipline", "ARCH"),
+                                    project_root=source.get("project_root"),
+                                    project_depth=int(source.get("project_depth", 1)),
+                                    priority=int(source.get("priority", 100)))
+            result.pop("outside_examples", None)
+            entry["enqueue"] = result
+            entry["enqueued_at"] = _now()
+            save()
+            log(f"[bulk] {name}: {'final' if final else 'partial'} enqueue {json.dumps(result, ensure_ascii=False)}")
+            return result
+
+        last = [time.monotonic()]
+        logged = [0]
+
+        def progress(count, path, enqueue=enqueue, last=last, logged=logged, name=name):
+            if time.monotonic() - last[0] >= enqueue_every:
+                last[0] = time.monotonic()
+                try:
+                    enqueue(False)
+                except Exception as exc:  # the census must not die because the DB blinked
+                    log(f"[bulk] {name}: partial enqueue failed: {exc}")
+            if count // 1000 > logged[0]:
+                logged[0] = count // 1000
+                log(f"[bulk] {name}: {count:,} files walked")
+
+        entry.update(started_at=entry.get("started_at") or _now(), done=False)
+        save()
+        log(f"[bulk] {name}: census {source['roots']} -> {out}")
+        result = run_census(source["roots"], out, exts, resume=True, flush_every=50,
+                            hash_placeholders=bool(source.get("hash_placeholders", True)), progress=progress,
+                            exclude=[*config.get("exclude", []), *source.get("exclude", [])])
+        entry["census"] = {"files": result.summary.get("files"), "unique_contents": result.summary.get("unique_contents"),
+                           "by_status": result.summary.get("by_status"), "run": result.summary.get("run")}
+        enqueue(True)
+        entry.update(done=True, finished_at=_now())
+        save()
+    return state
 
 
 # --------------------------------------------------------------------------------------------

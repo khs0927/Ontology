@@ -34,15 +34,14 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -RestartInterval (New-TimeSpan -Minutes 5)
 $common = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" -Config `"$Config`""
 
-$workers = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role workers -Workers $Workers"
-Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Workers' -Action $workers -Principal $principal `
+# (PowerShell names are case-insensitive: an action variable called $workers would be the [int]$Workers parameter)
+$workersAction = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role workers -Workers $Workers"
+Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Workers' -Action $workersAction -Principal $principal `
     -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $user) -Force | Out-Null
 
-$census = @(
-    (New-ScheduledTaskAction -Execute $ps -Argument "$common -Role census")
-)
+$censusAction = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role census"
 $censusDaily = New-ScheduledTaskAction -Execute $ps -Argument "$common -Role census -Refresh"
-Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Census' -Action $census -Principal $principal `
+Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Census' -Action $censusAction -Principal $principal `
     -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $user) -Force | Out-Null
 Register-ScheduledTask -TaskPath '\AEC\' -TaskName 'AEC-Bulk-Census-Refresh' -Action $censusDaily -Principal $principal `
     -Settings $settings -Trigger (New-ScheduledTaskTrigger -Daily -At 3am) -Force | Out-Null

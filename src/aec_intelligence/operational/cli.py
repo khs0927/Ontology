@@ -480,7 +480,10 @@ def _cmd_search_eval(parsed, settings, db):
     if parsed.set:
         wanted = set(_split([parsed.set]))
         cases = [c for c in cases if c["set"] in wanted]
-    result = search_eval(SearchRouter(db, settings), cases, top_k=parsed.top_k)
+    from .priority import ActivityStamp
+
+    result = search_eval(SearchRouter(db, settings), cases, top_k=parsed.top_k,
+                         on_query=ActivityStamp(settings.dsn, "eval").touch)
     result["expansion"] = os.getenv("AEC_QUERY_EXPANSION") or "glossary"
     if parsed.out:
         out = Path(parsed.out)

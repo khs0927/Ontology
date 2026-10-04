@@ -96,7 +96,6 @@ class IngestionWorker:
             return False
 
         job_id = job["id"]
-        payload = job.get("payload") or {}
         logger.info(f"Worker {self.worker_id} claimed job {job_id} on queue {self.queue}")
 
         heartbeat_stop = threading.Event()

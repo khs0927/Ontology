@@ -9,7 +9,6 @@ manifest or used by a later visual comparison workflow.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from typing import Any

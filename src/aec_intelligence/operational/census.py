@@ -14,8 +14,6 @@ import json
 import multiprocessing as mp
 import os
 import re
-import stat as stat_mod
-import sys
 import time
 import unicodedata
 import uuid
@@ -332,7 +330,7 @@ def _mb(value: int) -> str:
 
 
 def summary_markdown(summary: dict[str, Any]) -> str:
-    lines = [f"# 도면 전수조사 (census) 요약", "", f"- 생성: {summary['generated_at']}",
+    lines = ["# 도면 전수조사 (census) 요약", "", f"- 생성: {summary['generated_at']}",
              f"- 루트: {', '.join(summary['roots'])}",
              f"- 대상 파일: {summary['files']:,}개 / {_mb(summary['bytes'])}",
              f"- 고유 내용(sha256): {summary['unique_contents']:,}개",

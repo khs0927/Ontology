@@ -94,12 +94,16 @@ def test_textless_page_warns_instead_of_failing(tmp_path, settings, monkeypatch)
     import builtins
     real_import = builtins.__import__
 
-    def no_paddle(name, *args, **kwargs):
-        if name == "paddleocr":
-            raise ImportError("paddleocr missing")
+    from aec_intelligence.operational import parsers
+
+    def no_ocr(name, *args, **kwargs):
+        if name in ("paddleocr", "rapidocr"):
+            raise ImportError(f"{name} missing")
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "__import__", no_paddle)
+    monkeypatch.setattr(builtins, "__import__", no_ocr)
+    monkeypatch.setattr(parsers, "_OCR_ENGINES", {})
+    monkeypatch.setenv("AEC_OCR_ENGINE", "auto")
 
     def build(doc):
         _drawing_page(doc)
@@ -130,3 +134,44 @@ def test_scanned_page_takes_its_storey_from_ocr_text(tmp_path, settings, monkeyp
     page = next(o for o in result["objects"] if o["type"] == "Page")
     assert page["storey"] == "B1" and page["properties"]["storey_source"] == "ocr_text"
     assert {o["storey"] for o in result["objects"] if o["type"] == "Annotation"} == {"B1"}
+
+
+def test_rapidocr_engine_maps_boxes_and_is_loaded_once(tmp_path, settings, monkeypatch):
+    import sys
+    import types
+
+    from aec_intelligence.operational import parsers
+
+    created = []
+
+    class FakeRapidOCR:
+        def __init__(self, params):
+            created.append(params)
+
+        def __call__(self, path):
+            return types.SimpleNamespace(boxes=[[[20, 40], [220, 40], [220, 80], [20, 80]]],
+                                         txts=("도면번호 A-101",), scores=(0.97,))
+
+    fake = types.ModuleType("rapidocr")
+    fake.RapidOCR = FakeRapidOCR
+    fake.LangRec = types.SimpleNamespace(KOREAN="korean")
+    fake.ModelType = types.SimpleNamespace(MOBILE="mobile")
+    fake.OCRVersion = types.SimpleNamespace(PPOCRV5="PP-OCRv5")
+    monkeypatch.setitem(sys.modules, "rapidocr", fake)
+    monkeypatch.setattr(parsers, "_OCR_ENGINES", {})
+    monkeypatch.setenv("AEC_OCR_ENGINE", "auto")
+    monkeypatch.setenv("AEC_OCR_MODEL_DIR", str(tmp_path / "ocr-models"))
+
+    path = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page(width=842, height=595).draw_line((10, 10), (500, 400))
+    doc.save(path)
+    result = parse_source(path, "doc_scan", tmp_path / "data" / "out", settings, "scan-0002.pdf")
+    texts = [o for o in result["objects"] if o["type"] == "Annotation"]
+    assert [o["label"] for o in texts] == ["도면번호 A-101"] * 2
+    assert texts[0]["evidence"]["method"] == "RapidOCR" and texts[0]["evidence"]["ocr_confidence"] == 0.97
+    assert texts[0]["bbox"] == {"min_x": 10.0, "min_y": 20.0, "max_x": 110.0, "max_y": 40.0}  # page render was 2x
+    assert len(created) == 1  # one engine per process, not per page
+    assert created[0]["Rec.lang_type"] == "korean" and created[0]["Global.model_root_dir"] == str(tmp_path / "ocr-models")
+    assert not any(w.startswith("OCR_REQUIRED") for w in result["warnings"])

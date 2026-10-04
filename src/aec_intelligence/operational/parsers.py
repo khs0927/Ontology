@@ -2,7 +2,9 @@
 import hashlib
 import json
 import math
+import os
 import re
+import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 from xml.etree import ElementTree
@@ -863,7 +865,7 @@ def parse_source(source, doc, output, settings, source_name=None, source_hash=No
                         if 'OCR_REQUIRED' not in str(exc): raise
                         page_obj['properties']['ocr_required'] = True
                         warnings.append(f'OCR_REQUIRED: page {i+1} has no text layer; indexed page and vectors only '
-                                        '(run the ocr-worker profile with PaddleOCR for text).')
+                                        '(install rapidocr + onnxruntime on the worker for text).')
                         ocr_items = []
                     for obj in ocr_items: add(obj,page_obj)
                 # A scanned page has no title-block fields, so its OCR text is the last resort.
@@ -898,20 +900,73 @@ def parse_source(source, doc, output, settings, source_name=None, source_hash=No
     return result
 
 
+_OCR_ENGINES = {}
+_OCR_LOCK = threading.Lock()
+
+
+def _rapidocr_engine():
+    """RapidOCR (PP-OCR det + Korean PP-OCRv5 rec as ONNX on CPU); models live in AEC_OCR_MODEL_DIR."""
+    from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
+
+    params = {'Global.log_level': 'warning', 'Rec.lang_type': LangRec.KOREAN,
+              'Rec.ocr_version': OCRVersion.PPOCRV5, 'Rec.model_type': ModelType.MOBILE,
+              # Drawing sheets are large: the default 2000 px cap would shrink title-block text away.
+              'Global.max_side_len': int(os.getenv('AEC_OCR_MAX_SIDE', '4096'))}
+    if model_dir := os.getenv('AEC_OCR_MODEL_DIR', '').strip():
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        params['Global.model_root_dir'] = model_dir
+    if threads := os.getenv('AEC_OCR_THREADS', '').strip():
+        params['EngineConfig.onnxruntime.intra_op_num_threads'] = int(threads)
+    engine = RapidOCR(params=params)
+
+    def run(path):
+        out = engine(str(path))
+        boxes = out.boxes if out.boxes is not None else []
+        return [([list(map(float, point)) for point in box], str(text), float(score))
+                for box, text, score in zip(boxes, out.txts or (), out.scores or ())]
+    return run
+
+
+def _paddleocr_engine():
+    from paddleocr import PaddleOCR
+
+    engine = PaddleOCR(lang='korean', use_angle_cls=True, show_log=False)
+
+    def run(path):
+        pages = engine.ocr(str(path), cls=True)
+        return [(polygon, text, float(confidence)) for rows in (pages or []) for polygon, (text, confidence) in (rows or [])]
+    return run
+
+
+def _ocr_engine():
+    """The configured OCR engine, loaded once per process. AEC_OCR_ENGINE: auto (RapidOCR, then PaddleOCR),
+    rapidocr, paddleocr or off. Raises OCR_REQUIRED when none is usable."""
+    choice = os.getenv('AEC_OCR_ENGINE', 'auto').strip().lower() or 'auto'
+    with _OCR_LOCK:
+        if choice in _OCR_ENGINES:
+            return _OCR_ENGINES[choice]
+        loaders = {'rapidocr': [('RapidOCR', _rapidocr_engine)], 'paddleocr': [('PaddleOCR', _paddleocr_engine)],
+                   'auto': [('RapidOCR', _rapidocr_engine), ('PaddleOCR', _paddleocr_engine)]}.get(choice, [])
+        for method, loader in loaders:
+            try:
+                _OCR_ENGINES[choice] = (method, loader())
+                return _OCR_ENGINES[choice]
+            except ImportError:
+                continue
+    raise RuntimeError(f'OCR_REQUIRED: no OCR engine available (AEC_OCR_ENGINE={choice}); '
+                       'install rapidocr + onnxruntime on the worker')
+
+
 def ocr(source,doc,key,evidence):
-    try:
-        from paddleocr import PaddleOCR
-    except ImportError as exc:
-        raise RuntimeError('OCR_REQUIRED: run this job with the ocr-worker profile (PaddleOCR)') from exc
-    engine = PaddleOCR(lang='korean',use_angle_cls=True,show_log=False)
-    pages = engine.ocr(str(source),cls=True)
+    method, run = _ocr_engine()
+    scale = evidence.get('ocr_scale',1)
     objects = []
-    for p,rows in enumerate(pages or []):
-        for i,(polygon,(text,confidence)) in enumerate(rows or []):
-            scale = evidence.get('ocr_scale',1)
-            xs,ys = [v[0]/scale for v in polygon],[v[1]/scale for v in polygon]
-            bbox = [min(xs),min(ys),max(xs),max(ys)]
-            objects.append(observation(doc,f'{key}:ocr:{p}:{i}','Annotation',text,
-                {**evidence,'bbox':bbox,'ocr_confidence':float(confidence),'method':'PaddleOCR'},
-                dict(zip(('min_x','min_y','max_x','max_y'),bbox))))
+    for i,(polygon,text,confidence) in enumerate(run(source)):
+        if not str(text).strip():
+            continue
+        xs,ys = [v[0]/scale for v in polygon],[v[1]/scale for v in polygon]
+        bbox = [min(xs),min(ys),max(xs),max(ys)]
+        objects.append(observation(doc,f'{key}:ocr:0:{i}','Annotation',text,
+            {**evidence,'bbox':bbox,'ocr_confidence':round(float(confidence),4),'method':method},
+            dict(zip(('min_x','min_y','max_x','max_y'),bbox))))
     return objects

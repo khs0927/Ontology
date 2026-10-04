@@ -41,6 +41,12 @@ _SYNONYMS = {
 }
 
 
+
+# Candidate pool sizes for the hybrid stage (see SearchRouter.search).
+LEXICAL_CANDIDATES = 20000
+VECTOR_CANDIDATES = 400
+
+
 @dataclass
 class ParsedQuery:
     terms: list[str]
@@ -271,6 +277,33 @@ class SearchRouter:
                 embedding_join = "LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s"
                 vector_params = [vec_str, query_model]
 
+            # Candidate generation keeps the scoring below off a full table scan: index-backed lexical
+            # matches (pg_trgm gin: ILIKE and the word-similarity operator) plus the nearest vectors
+            # (HNSW with iterative scan, or an exact scan of one project's objects when it is filtered).
+            # The OR-of-everything match used to score ~all objects (a 0.6 cosine distance matches most
+            # bge-m3 rows), which took 15 s at 270k objects and grew with every ingested drawing.
+            candidate_sql, candidate_params = "", []
+            if terms:
+                parts, cparams = [], []
+                parts.append(f"""(SELECT o.id FROM aec.objects o JOIN aec.documents d ON o.document_id = d.id
+                                  WHERE {where_sql} AND ({" OR ".join("o.search_text ILIKE %s" for _ in terms)}
+                                        OR %s <%% o.search_text)
+                                  LIMIT {LEXICAL_CANDIDATES})""")
+                cparams += [*params, *[like_pattern(t) for t in terms], " ".join(terms)]
+                if query_model is not None:
+                    limit = max(VECTOR_CANDIDATES, top_k * 40)
+                    if project_id:
+                        parts.append(f"""(WITH p AS MATERIALIZED (SELECT id FROM aec.objects WHERE project_id = %s)
+                                          SELECT e.object_id FROM aec.embeddings e JOIN p ON p.id = e.object_id
+                                          WHERE e.model = %s ORDER BY e.embedding <=> %s::vector LIMIT {limit})""")
+                        cparams += [project_id, query_model, vec_str]
+                    else:
+                        parts.append(f"""(SELECT e.object_id FROM aec.embeddings e WHERE e.model = %s
+                                          ORDER BY e.embedding <=> %s::vector LIMIT {limit})""")
+                        cparams += [query_model, vec_str]
+                candidate_sql = " AND o.id IN (" + " UNION ".join(parts) + ")"
+                candidate_params = cparams
+
             sql_query = f"""
                 SELECT * FROM (
                     SELECT
@@ -282,15 +315,20 @@ class SearchRouter:
                     FROM aec.objects o
                     JOIN aec.documents d ON o.document_id = d.id
                     {embedding_join}
-                    WHERE {where_sql} AND {match_sql}
+                    WHERE {where_sql} AND {match_sql}{candidate_sql}
                 ) ranked
                 ORDER BY lexical_score * {lexical_weight} + vector_score * {vector_weight} + kind_prior DESC, label
                 LIMIT %s
             """
-            full_params = [*lexical_params, *vector_params, *params, *match_params, top_k * 2]
+            full_params = [*lexical_params, *vector_params, *params, *match_params, *candidate_params, top_k * 2]
 
             try:
                 with conn.transaction():
+                    # Transaction-local: the trigram operator uses the same 0.3 cut as word_similarity()
+                    # above; iterative HNSW scans keep returning neighbours until LIMIT is filled.
+                    conn.execute("SELECT set_config('pg_trgm.word_similarity_threshold', '0.3', true), "
+                                 "set_config('hnsw.iterative_scan', 'relaxed_order', true), "
+                                 "set_config('hnsw.ef_search', '200', true)")
                     rows = conn.execute(sql_query, full_params).fetchall()
             except Exception as exc:
                 # If vector extension or age is absent in light test DB, fallback to simple ILIKE.

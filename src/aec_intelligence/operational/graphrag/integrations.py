@@ -148,7 +148,8 @@ def project_facts(db, project_key: str) -> dict[str, Any] | None:
     """``aec-facts-export/1`` for one canonical project: rule-engine facts derived from the KG, each with
     provenance, plus the AEC subject references a decision can attach to.
 
-    Only facts the drawings positively show are emitted. Anything else stays absent so an ArchOntos rule that
+    Only facts the drawings positively show are emitted. Observed storey labels are partial coverage, not
+    authoritative building floor/basement counts. Anything else stays absent so an ArchOntos rule that
     needs it evaluates to REVIEW (fail closed), e.g. ``stair.direct_count`` (stairs are not reliably countable
     from 2D drawings) or ``building.basement_count`` when no basement storey was seen."""
     with db.connect() as conn:
@@ -171,19 +172,22 @@ def project_facts(db, project_key: str) -> dict[str, Any] | None:
     below = [(lv[1], n) for n in storeys if (lv := _level_number(n["name"])) and lv[0] == "below"]
     if above:
         top, node = max(above, key=lambda t: t[0])
-        facts.setdefault("building", {})["floor_count"] = top
-        provenance["building.floor_count"] = {
+        facts.setdefault("building", {})["highest_observed_floor"] = top
+        provenance["building.highest_observed_floor"] = {
             "method": "highest above-ground storey label depicted in the project's drawings (nF)",
+            "coverage": "partial", "authoritative_total": False,
             "kg_nodes": [node["id"]], "documents": list(node["document_ids"])[:10]}
     if below:
         deep, node = max(below, key=lambda t: t[0])
-        facts.setdefault("building", {})["basement_count"] = deep
-        provenance["building.basement_count"] = {
+        facts.setdefault("building", {})["deepest_observed_basement"] = deep
+        provenance["building.deepest_observed_basement"] = {
             "method": "deepest basement storey label depicted (Bn); absent when no basement is drawn",
+            "coverage": "partial", "authoritative_total": False,
             "kg_nodes": [node["id"]], "documents": list(node["document_ids"])[:10]}
     if storeys:
         facts.setdefault("building", {})["storeys"] = sorted((n["name"] for n in storeys), key=storey_sort_key)
-        provenance["building.storeys"] = {"method": "canonical storey nodes", "kg_nodes": [n["id"] for n in storeys]}
+        provenance["building.storeys"] = {"method": "canonical observed storey nodes", "coverage": "partial",
+                                          "kg_nodes": [n["id"] for n in storeys]}
     spaces = [n for n in nodes if n["type"] == "Space"]
     if spaces:
         facts["space"] = {"uses": sorted({(n["props"] or {}).get("room_key") or n["name"] for n in spaces})}
@@ -209,7 +213,8 @@ def project_facts(db, project_key: str) -> dict[str, Any] | None:
     return {"schema": FACTS_EXPORT_SCHEMA, "producer": "khs0927/Ontology", "project_key": project_key,
             "project_name": proj["name"], "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "facts": facts, "provenance": provenance, "subjects": subjects,
-            "absent_by_design": ["stair.direct_count", "building.use_group", "building.gross_floor_area"]}
+            "absent_by_design": ["building.floor_count", "building.basement_count", "stair.direct_count",
+                                 "building.use_group", "building.gross_floor_area"]}
 
 
 # --------------------------------------------------------------------------- hs-steel-cad section catalog

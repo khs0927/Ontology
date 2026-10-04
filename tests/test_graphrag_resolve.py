@@ -1,5 +1,7 @@
 """Phase 4 entity resolution and query routing rules (pure functions, no database)."""
 
+import json
+
 import pytest
 
 from aec_intelligence.operational.graphrag.ask import REFUSAL, choose_route, link_static
@@ -121,3 +123,104 @@ def test_unsupported_attribute_needs_evidence_in_context():
     assert unsupported_by_context(q, ["건축주 홍길동 TEL 051-123-4567"]) is None
     assert unsupported_by_context("총 공사비는 얼마야?", ["실 '회의실': 면적 12.5㎡"]) is not None
     assert unsupported_by_context("회의실 면적이 얼마야?", ["실 '회의실': 면적 12.5㎡"]) is None
+
+
+def _stub_ollama(handler_log, fail=False):
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            handler_log.append((self.path, body))
+            if fail:
+                self.send_response(500)
+                self.end_headers()
+                return
+            out = {"model": body["model"], "message": {"content": "<think>x</think>요약"}, "eval_count": 3}
+            data = json.dumps(out).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_llm_warm_and_chat_share_num_ctx_and_keep_alive(monkeypatch):
+    monkeypatch.setenv("AEC_LLM_KEEP_ALIVE", "3m")
+    log = []
+    srv = _stub_ollama(log)
+    try:
+        monkeypatch.setenv("AEC_LLM_URL", f"http://127.0.0.1:{srv.server_port}")
+        llm = LocalLLM()
+        assert llm.warm() >= 0
+        assert llm.chat("s", "u")["text"] == "요약"
+    finally:
+        srv.shutdown()
+    (warm_path, warm), (chat_path, chat) = log
+    assert warm_path == "/api/generate" and warm["prompt"] == "" and chat_path == "/api/chat"
+    assert warm["keep_alive"] == chat["keep_alive"] == "3m"
+    assert warm["options"]["num_ctx"] == chat["options"]["num_ctx"]  # no reload between warm-up and chat
+
+
+def test_summarize_stops_after_two_endpoint_failures():
+    from aec_intelligence.operational.graphrag import communities
+
+    class Conn:
+        def __init__(self):
+            self.updates = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def execute(self, sql, params=None):
+            self.updates.append(sql.split()[0])
+            rows = [{"id": i, "title": f"c{i}", "facts": ["f"]} for i in range(5)]
+
+            class R:
+                def fetchall(self_inner):
+                    return rows
+            return R()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    class DB:
+        conn = Conn()
+
+        def connect(self, **kw):
+            return self.conn
+
+    class DownLLM:
+        model = "m"
+        calls = 0
+
+        def warm(self):
+            return 0.1
+
+        def chat(self, *a, **k):
+            DownLLM.calls += 1
+            raise LLMError("LLM endpoint failed: timed out")
+
+    out = communities.summarize(DB(), DownLLM())
+    assert DownLLM.calls == 2 and out["failed"] == 1 and "timed out" in out["aborted"]
+
+    class NoLoad(DownLLM):
+        def warm(self):
+            raise LLMError("LLM model load failed: refused")
+
+    out = communities.summarize(DB(), NoLoad())
+    assert out["pending"] == 5 and out["summarized"] == 0 and "load failed" in out["aborted"]

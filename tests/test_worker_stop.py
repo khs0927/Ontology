@@ -49,3 +49,17 @@ def test_worker_process_exits_before_claiming(tmp_path, monkeypatch):
     monkeypatch.setattr(worker_mod, "IngestionWorker", FakeWorker)
     assert census.worker_process(settings, "cad", 0.01, 0) == 0
     assert claimed == []
+
+
+def test_api_container_path_maps_to_host_data_root(tmp_path, monkeypatch):
+    from aec_intelligence.operational.worker import host_source_path
+
+    monkeypatch.delenv("AEC_CONTAINER_DATA_ROOT", raising=False)
+    (tmp_path / "e2e").mkdir()
+    (tmp_path / "e2e" / "A-101.dxf").write_text("0\nEOF\n")
+    mapped = host_source_path("/data/e2e/A-101.dxf", tmp_path)
+    assert mapped == str(tmp_path / "e2e" / "A-101.dxf")
+    assert host_source_path(r"D:\AECData\x.dxf", tmp_path) == r"D:\AECData\x.dxf"   # host paths untouched
+    assert host_source_path("/database/x.dxf", tmp_path) == "/database/x.dxf"        # prefix must be a dir
+    existing = tmp_path / "e2e" / "A-101.dxf"
+    assert host_source_path(str(existing), tmp_path) == str(existing)

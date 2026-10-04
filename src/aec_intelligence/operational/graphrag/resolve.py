@@ -81,39 +81,32 @@ def _parts(top_folder: str) -> list[str]:
     return [p for p in re.split(r"[\\/]+", str(top_folder)) if p.strip()]
 
 
-def container_folders(top_folders) -> set[str]:
-    """First-level folders that group several projects: two or more second-level children that are not
-    phase folders ("계획/화목동698-14", "계획/..."; "용변/남천동", "용변/주례동"). A folder whose children are
-    only phases ("학장동 574-29/#허가", "/#사용승인") stays one project."""
-    children: dict[str, set[str]] = {}
-    for top in top_folders:
-        if not top:
-            continue
-        parts = _parts(top)
-        if len(parts) >= 2 and not _is_phase(parts[1]):
-            children.setdefault(parts[0], set()).add(parts[1])
-    return {first for first, kids in children.items() if len(kids) >= 2}
-
-
-def canonical_project(project_id: str, top_folder: str | None = None,
-                      containers: set[str] | frozenset[str] = frozenset()) -> dict[str, str]:
+def canonical_project(project_id: str, top_folder: str | None = None) -> dict[str, str]:
     """Canonical project for a document: ``{"key", "name", "phase"}``.
 
-    ``top_folder`` is the census' first two folder levels under an import root. Without it (manual
-    imports, eval sets) the stored ``project_id`` is the project. ``containers`` comes from
-    ``container_folders`` over the whole corpus.
+    ``top_folder`` is the folder path the census used for the document's project id (``project_depth``
+    levels under the source root), so its last level is the project, except:
+
+    - a phase/sub-folder as the last level ("학장동 574-29/#허가", "/#사용승인", "학장동 카페/허가") belongs
+      to its parent project, recorded as the phase;
+    - a first level marked ``##`` ("##학장동 카페", "##캠핑장") is the user's own project marker, so every
+      sub-folder below it is part of that project ("###프로젝트" and "#감리" are group folders, not projects).
+
+    Without ``top_folder`` (manual imports, eval sets) the stored ``project_id`` is the project.
     """
     if top_folder:
         parts = _parts(top_folder)
         phase = ""
-        if len(parts) >= 2 and (_is_container(parts[0]) or parts[0] in containers):
-            name = parts[1]
-            if len(parts) >= 3 and _is_phase(parts[2]):
-                phase = _clean_folder(parts[2])
-        elif len(parts) >= 2 and _is_phase(parts[1]):
-            name, phase = parts[0], _clean_folder(parts[1])
+        if not parts:
+            name = project_id
+        elif parts[0].startswith("##") and not parts[0].startswith("###"):
+            name = parts[0]
+            if len(parts) >= 2:
+                phase = _clean_folder(parts[1]) if _is_phase(parts[1]) else ""
+        elif len(parts) >= 2 and _is_phase(parts[-1]) and not _is_container(parts[-2]):
+            name, phase = parts[-2], _clean_folder(parts[-1])
         else:
-            name = parts[0] if parts else project_id
+            name = parts[-1]
         name = _clean_folder(name) or project_id
         return {"key": slug(name), "name": name, "phase": phase}
     name = re.sub(r"^P-", "", str(project_id or "unknown"))

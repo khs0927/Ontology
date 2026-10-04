@@ -38,7 +38,6 @@ from .resolve import (
     canonical_room,
     canonical_section,
     canonical_storey,
-    container_folders,
     drawing_fields,
     short_hash,
     storey_sort_key,
@@ -111,10 +110,8 @@ LEFT JOIN (
 def load_documents(conn) -> dict[str, list[dict[str, Any]]]:
     """Documents grouped by canonical project key (with the resolved project name/phase attached)."""
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    rows = conn.execute(_DOCS_SQL).fetchall()
-    containers = container_folders(r["top_folder"] for r in rows)
-    for row in rows:
-        project = canonical_project(row["project_id"], row["top_folder"], containers)
+    for row in conn.execute(_DOCS_SQL).fetchall():
+        project = canonical_project(row["project_id"], row["top_folder"])
         row = dict(row)
         row["project"] = project
         grouped[project["key"]].append(row)

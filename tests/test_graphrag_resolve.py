@@ -8,19 +8,10 @@ from aec_intelligence.operational.graphrag.resolve import (
     canonical_project,
     canonical_room,
     canonical_section,
-    container_folders,
     date_token,
     drawing_fields,
     series_key,
 )
-
-TOPS = ["계획/화목동698-14", "계획/다른현장", "##학장동 574-29/#허가", "##학장동 574-29/#사용승인",
-        "##학장동 카페/허가", "###프로젝트/제로스", "#감리/#부산여중 해체감리", "##작업중"]
-
-
-def test_container_folders_need_two_non_phase_children():
-    assert container_folders(TOPS) == {"계획"}
-
 
 @pytest.mark.parametrize("top,key,phase", [
     ("계획/화목동698-14", "화목동698-14", ""),
@@ -29,9 +20,13 @@ def test_container_folders_need_two_non_phase_children():
     ("##학장동 카페/허가", "학장동-카페", "허가"),
     ("###프로젝트/제로스", "제로스", ""),
     ("#감리/#부산여중 해체감리", "부산여중-해체감리", ""),
+    ("용변/남천동 17-2", "남천동-17-2", ""),
+    ("##캠핑장/인테리어 업체", "캠핑장", ""),
+    ("5.설계방/양산주택/구조", "양산주택", "구조"),
+    ("##작업중", "작업중", ""),
 ])
 def test_canonical_project_merges_phase_folders(top, key, phase):
-    result = canonical_project("P-x", top, container_folders(TOPS))
+    result = canonical_project("P-x", top)
     assert (result["key"], result["phase"]) == (key, phase)
 
 

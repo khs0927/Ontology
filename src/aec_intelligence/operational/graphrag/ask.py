@@ -619,3 +619,40 @@ class GraphRAG:
                       model=model, warnings=warnings,
                       citations=[] if refused else [i.citation for i in items if i.cid in used])
         return result
+
+
+def graph_rag_query(db, question: str, project: str | None = None, top_k: int = MAX_CONTEXT,
+                    generate: bool = True) -> dict[str, Any]:
+    """Entry point shared by the MCP gateway: local LLM when reachable, extractive answer otherwise."""
+    from ..config import Settings
+    from .llm import LLMError, LocalLLM
+
+    llm, warnings = None, []
+    if generate:
+        try:
+            llm = LocalLLM()
+        except LLMError as exc:
+            warnings.append(str(exc))
+    try:
+        settings = Settings.from_env()
+    except Exception:  # noqa: BLE001 - the vector stage is optional
+        settings = None
+    result = GraphRAG(db, settings, llm=llm).ask(question, project=project, top_k=top_k, generate=generate)
+    result["warnings"] = warnings + result.get("warnings", [])
+    return result
+
+
+def explain_node(db, node_id: str, limit: int = 50) -> dict[str, Any] | None:
+    """A knowledge-graph node with its typed in/out edges (the path an answer was drawn from)."""
+    with db.connect() as conn:
+        node = conn.execute("SELECT id, project_key, type, name, props, object_ids, document_ids "
+                            "FROM aec.kg_nodes WHERE id=%s", (node_id,)).fetchone()
+        if not node:
+            return None
+        out_edges = conn.execute(
+            """SELECT e.predicate, e.dst AS id, n.type, n.name FROM aec.kg_edges e JOIN aec.kg_nodes n ON n.id = e.dst
+               WHERE e.src=%s ORDER BY e.predicate, n.name LIMIT %s""", (node_id, limit)).fetchall()
+        in_edges = conn.execute(
+            """SELECT e.predicate, e.src AS id, n.type, n.name FROM aec.kg_edges e JOIN aec.kg_nodes n ON n.id = e.src
+               WHERE e.dst=%s ORDER BY e.predicate, n.name LIMIT %s""", (node_id, limit)).fetchall()
+    return {"node": dict(node), "out": [dict(r) for r in out_edges], "in": [dict(r) for r in in_edges]}

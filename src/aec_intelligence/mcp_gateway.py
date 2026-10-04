@@ -136,6 +136,8 @@ class MCPGateway:
             "aec.block_catalog": self._block_catalog,
             "aec.drawing_index": self._drawing_index,
             "aec.element_context": self._element_context,
+            "aec.graph_rag_query": self._graph_rag_query,
+            "aec.explain_path": self._explain_path,
             "aec.visual_inspect_artifact": self._visual_inspect_artifact,
             "aec.visual_validate_drive_project": self._visual_validate_drive_project,
         }
@@ -1106,6 +1108,34 @@ class MCPGateway:
             return {"status": "NOT_FOUND", "error": f"object not found: {kwargs.get('object_id')}"}
         return {"status": "SUCCESS", **json.loads(json.dumps(result, ensure_ascii=False, default=str))}
 
+    def _graphrag_call(self, function_name: str, **kwargs: Any) -> dict[str, Any]:
+        import os
+        dsn = os.getenv("AEC_DATABASE_URL", "").strip()
+        if not dsn:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": "AEC_DATABASE_URL is not set; Graph RAG reads the operational database"}
+        try:
+            import psycopg
+            from .operational.db import Database
+            from .operational.graphrag import ask
+        except ImportError as exc:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": f"operational dependencies missing: {exc}"}
+        try:
+            result = getattr(ask, function_name)(Database(dsn), **kwargs)
+        except psycopg.OperationalError as exc:
+            return {"status": "REQUIRES_CONFIGURATION", "provider": "PostgreSQL", "error": f"operational database unreachable: {str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__}"}
+        if result is None:
+            return {"status": "NOT_FOUND", "error": f"node not found: {kwargs.get('node_id')}"}
+        return {"status": "SUCCESS", **json.loads(json.dumps(result, ensure_ascii=False, default=str))}
+
+    def _graph_rag_query(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        question = str(arguments["question"]).strip()
+        if not question:
+            raise ValueError("question must not be empty")
+        return self._graphrag_call("graph_rag_query", question=question, **self._pick(arguments, "project", "top_k", "generate"))
+
+    def _explain_path(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._graphrag_call("explain_node", node_id=str(arguments["node_id"]), **self._pick(arguments, "limit"))
+
     @staticmethod
     def _pick(arguments: dict[str, Any], *keys: str) -> dict[str, Any]:
         return {key: arguments[key] for key in keys if arguments.get(key) is not None}
@@ -1185,6 +1215,8 @@ TOOL_DEFINITIONS = (
     MCPToolDefinition("aec.find_elements", "List parsed elements with CAD handles, layer, block name, attributes, bbox and source evidence; filter by kind (Door/문/창호...), drawing_category (평면도/상세도...), storey (2F/2층/B1/지하1층/RF), layer, block_name, text, bbox; paginate with cursor", {"type": "object", "properties": {"kind": {"type": ["string", "array", "null"], "items": {"type": "string"}}, "project_id": {"type": ["string", "null"]}, "document_id": {"type": ["string", "null"]}, "drawing_category": {"type": ["string", "null"]}, "layer": {"type": ["string", "null"]}, "block_name": {"type": ["string", "null"]}, "text": {"type": ["string", "null"]}, "bbox": {"type": ["array", "string", "null"], "items": {"type": "number"}}, "state": {"type": ["string", "null"]}, "storey": {"type": ["string", "null"], "description": "Storey such as 2F, 2층, B1, 지하1층, RF"}, "include_properties": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.block_catalog", "CAD block library aggregated by name across drawings: definitions, instance counts, attribute tags, layers, xref/anonymous flags and what the instances were classified as", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "name_like": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.drawing_index", "Sheet index: documents and layouts with drawing category, title-block number/title/scale and per-sheet element counts", {"type": "object", "properties": {"project_id": {"type": ["string", "null"]}, "category": {"type": ["string", "null"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "cursor": {"type": ["string", "null"]}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.graph_rag_query", "Graph RAG question answering over the ingested drawings (Korean): routes to keyword / vector / knowledge-graph traversal / project summaries and answers with the local LLM only from retrieved context; every claim cites document, sheet/layout, object ids and bbox, and unsupported questions are refused", {"type": "object", "required": ["question"], "properties": {"question": {"type": "string", "minLength": 1, "maxLength": 2000}, "project": {"type": "string"}, "top_k": {"type": "integer", "minimum": 1, "maximum": 30}, "generate": {"type": "boolean"}}, "additionalProperties": False}),
+    MCPToolDefinition("aec.explain_path", "One knowledge-graph node (kg:...) with its typed incoming/outgoing edges, to explain the graph path behind a Graph RAG answer", {"type": "object", "required": ["node_id"], "properties": {"node_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, "additionalProperties": False}),
     MCPToolDefinition("aec.element_context", "Neighbourhood of one element through relations in both directions (contains, instanceOf, hasTitleBlock, hasSection ...), 1-2 hops, confirmed against the AGE graph", {"type": "object", "required": ["object_id"], "properties": {"object_id": {"type": "string"}, "hops": {"type": "integer", "minimum": 1, "maximum": 2}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000}}, "additionalProperties": False}),
     MCPToolDefinition("aec.visual_inspect_artifact", "Use NVIDIA Cosmos Reason to create non-canonical VisualObservation/CandidateObject evidence for one local drawing image, PDF, SVG, or CAD preview", {"type": "object", "required": ["source", "project_id"], "properties": {"source": {"type": "string"}, "project_id": {"type": "string"}, "preview": {"type": ["string", "null"]}, "context": {"type": ["string", "null"]}}, "additionalProperties": False}),
     MCPToolDefinition("aec.visual_validate_drive_project", "Materialize a bounded set of visual Google Drive project artifacts, inspect them with NVIDIA Cosmos Reason, and sync advisory reports without changing CAIR truth", {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}, "include_derived": {"type": "boolean"}, "sync_reports": {"type": "boolean"}, "context": {"type": ["string", "null"]}}, "additionalProperties": False}),

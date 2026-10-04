@@ -257,19 +257,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/kg/nodes/{node_id:path}")
     def kg_node(node_id: str, limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
         """One knowledge-graph node with its outgoing and incoming edges (explain a graph path)."""
-        with db.connect() as conn:
-            node = conn.execute("SELECT * FROM aec.kg_nodes WHERE id=%s", (node_id,)).fetchone()
-            if not node:
-                raise HTTPException(status_code=404, detail="Node not found")
-            out_edges = conn.execute(
-                """SELECT e.predicate, e.dst AS id, n.type, n.name FROM aec.kg_edges e
-                   JOIN aec.kg_nodes n ON n.id = e.dst WHERE e.src=%s ORDER BY e.predicate, n.name LIMIT %s""",
-                (node_id, limit)).fetchall()
-            in_edges = conn.execute(
-                """SELECT e.predicate, e.src AS id, n.type, n.name FROM aec.kg_edges e
-                   JOIN aec.kg_nodes n ON n.id = e.src WHERE e.dst=%s ORDER BY e.predicate, n.name LIMIT %s""",
-                (node_id, limit)).fetchall()
-        return {"node": dict(node), "out": [dict(r) for r in out_edges], "in": [dict(r) for r in in_edges]}
+        from .graphrag.ask import explain_node
+
+        result = explain_node(db, node_id, limit)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+        return json.loads(json.dumps(result, ensure_ascii=False, default=str))
 
     @app.get("/v1/objects/{object_id}")
     def get_object(object_id: str) -> dict[str, Any]:

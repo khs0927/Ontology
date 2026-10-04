@@ -29,6 +29,11 @@ def add_parsers(subparsers) -> None:
     p.add_argument("--no-llm", action="store_true", help="Retrieval + extractive answer only")
     p.add_argument("--json", action="store_true", help="Print the full JSON result")
 
+    p = subparsers.add_parser("graphrag-eval-make", help="Write a Korean golden set from the ingested data (private)")
+    p.add_argument("out", help="JSONL path on the data disk (not in git)")
+    p.add_argument("--projects", type=int, default=3)
+    p.add_argument("--total", type=int, default=50)
+
     p = subparsers.add_parser("graphrag-eval", help="Run a Graph RAG eval set (JSONL) and write a report")
     p.add_argument("eval_file")
     p.add_argument("--out", default=None, help="Report JSON path (default: next to the eval file)")
@@ -102,5 +107,13 @@ def cmd_graphrag_eval(parsed, settings, db):
     return result
 
 
-COMMANDS = {"kg-build": cmd_kg_build, "kg-summarize": cmd_kg_summarize, "kg-stats": cmd_kg_stats,
+def cmd_graphrag_eval_make(parsed, settings, db):
+    from .evaluate import make_eval_set
+
+    result = make_eval_set(db, parsed.out, projects=parsed.projects, total=parsed.total)
+    _print(result)
+    return result
+
+
+COMMANDS = {"graphrag-eval-make": cmd_graphrag_eval_make, "kg-build": cmd_kg_build, "kg-summarize": cmd_kg_summarize, "kg-stats": cmd_kg_stats,
             "ask": cmd_ask, "graphrag-eval": cmd_graphrag_eval}

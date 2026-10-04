@@ -132,6 +132,12 @@ def test_ask_routes_cites_and_refuses(seeded):
     assert cited["bbox"] and cited["object_ids"] and cited["document_id"] == docs[2][0]
     assert cited["document_ids"][0] == cited["document_id"]
 
+    # _0626 supersedes _0611: the older revision's 2 doors are not counted next to the newer drawing's 1.
+    res = rag.ask(f"그래프시험{RUN} 문은 몇 개야?", project=key, generate=False)
+    assert res["route"] == "graph:elements"
+    first = res["answer"].splitlines()[0]
+    assert "한 도면 최대 1개" in first and "도면 1건" in first and "_0611" not in first, first
+
     uncited = GraphRAG(db, settings=None, llm=FakeLLM("회의실이 있습니다."))
     res = uncited.ask(f"그래프시험{RUN} 1층 실 목록 알려줘")
     assert res["answer_mode"] == "extractive" and res["citations"]

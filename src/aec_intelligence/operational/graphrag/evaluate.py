@@ -82,7 +82,7 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
                 qs.append({"type": "room", "route": "graph:room", "q": f"{name} 프로젝트에서 {josa(sp['name'])} 어느 층에 있어?",
                            "gold": [sp["id"]], "expect": [sp["storey"]]})
             # element counts
-            for eg in nodes("""SELECT props->>'kind' AS kind, sum((props->>'count')::int) AS n,
+            for eg in nodes("""SELECT props->>'kind' AS kind, max((props->>'count')::int) AS n,
                                       array_agg(id) AS ids FROM aec.kg_nodes WHERE project_key=%s AND type='ElementGroup'
                                AND props->>'kind' IN ('Door','Window','Column','Stair','Wall') GROUP BY 1
                                ORDER BY 2 DESC LIMIT 2""", (key,)):
@@ -91,7 +91,7 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
                            "expect": [str(eg["n"])]})
             # element counts on one storey
             for eg in nodes("""SELECT props->>'kind' AS kind, props->>'storey' AS storey,
-                                      sum((props->>'count')::int) AS n, array_agg(id) AS ids
+                                      max((props->>'count')::int) AS n, array_agg(id) AS ids
                                FROM aec.kg_nodes WHERE project_key=%s AND type='ElementGroup'
                                AND props->>'storey' IS NOT NULL
                                AND props->>'kind' IN ('Door','Window','Column','Stair','Wall') GROUP BY 1, 2

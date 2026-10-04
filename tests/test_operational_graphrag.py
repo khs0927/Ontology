@@ -155,3 +155,21 @@ def test_communities_are_cached_and_resumable(seeded):
     assert rest["summarized"] == first["new"] - 1  # resumes where the first run stopped
     assert communities.refresh(db, key) == {"unchanged": first["new"]}
     assert communities.summarize(db, llm, project_key=key)["summarized"] == 0  # cached by input_hash
+
+
+def test_mcp_gateway_graph_rag_query_and_explain_path(seeded, tmp_path, monkeypatch):
+    from aec_intelligence.mcp_gateway import MCPGateway
+    from aec_intelligence.operational.graphrag.kg import KnowledgeGraphBuilder
+
+    db, key, docs = seeded
+    KnowledgeGraphBuilder(db).build(key, force=True)
+    monkeypatch.setenv("AEC_DATABASE_URL", DSN)
+    gateway = MCPGateway(tmp_path)
+    res = gateway.call_tool("aec.graph_rag_query", {"question": f"그래프시험{RUN} 1층 실 목록 알려줘", "generate": False})
+    assert res["status"] == "SUCCESS" and res["route"] == "graph:storey" and res["citations"]
+    node = res["citations"][0]["kg_node_id"]
+    explained = gateway.call_tool("aec.explain_path", {"node_id": node})
+    assert explained["status"] == "SUCCESS"
+    assert gateway.call_tool("aec.explain_path", {"node_id": "kg:none"})["status"] == "NOT_FOUND"
+    off = gateway.call_tool("aec.graph_rag_query", {"question": "주식 시장 전망을 알려줘", "generate": False})
+    assert off["status"] == "SUCCESS" and off["refused"] and off["citations"] == []

@@ -140,3 +140,14 @@ def test_mcp_gateway_forwards_storey_filters(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(gateway, "_catalog_call", lambda name, **kwargs: seen.update(kwargs) or {"status": "SUCCESS"})
     assert gateway.call_tool("aec.find_elements", {"storey": "지하1층", "kind": "Door"})["status"] == "SUCCESS"
     assert seen == {"storey": "지하1층", "kind": "Door"}
+
+
+def test_mcp_gateway_graph_rag_tools_need_the_operational_database(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("AEC_DATABASE_URL", raising=False)
+    gateway = MCPGateway(tmp_path)
+    names = {tool["name"] for tool in gateway.list_tools()}
+    assert {"aec.graph_rag_query", "aec.explain_path"} <= names
+    res = gateway.call_tool("aec.graph_rag_query", {"question": "2층 실 목록 알려줘"})
+    assert res["status"] == "REQUIRES_CONFIGURATION" and "AEC_DATABASE_URL" in res["error"]
+    assert gateway.call_tool("aec.explain_path", {"node_id": "kg:p:x"})["status"] == "REQUIRES_CONFIGURATION"
+    assert gateway.call_tool("aec.graph_rag_query", {"question": "  "})["status"] == "FAILED"

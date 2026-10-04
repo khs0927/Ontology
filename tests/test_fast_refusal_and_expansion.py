@@ -70,6 +70,20 @@ def test_probe_timeout_is_restored_for_the_rest_of_the_transaction():
     assert [p for s, p in log if "set_config" in s] == [("1000ms",), ("30s",)]
 
 
+def test_semantic_leg_has_a_wall_clock_bound():
+    import time as _time
+
+    class Slow(StubSearch):
+        def search(self, question, **kw):
+            _time.sleep(0.5)  # e.g. the query embedding waits behind a re-embed batch
+            return super().search(question, **kw)
+
+    rag = ask.GraphRAG(db=None, settings=None, search_router=Slow())
+    started = _time.monotonic()
+    assert rag._semantic(Conn(), "q", None, budget_ms=100) == []
+    assert _time.monotonic() - started < 0.4 and rag._semantic_timed_out is True
+
+
 def test_budget_env(monkeypatch):
     monkeypatch.setenv("AEC_ASK_GATE_TIMEOUT_MS", "900")
     assert ask._budget_ms("AEC_ASK_GATE_TIMEOUT_MS", 1200) == 900

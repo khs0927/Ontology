@@ -14,6 +14,8 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +86,7 @@ _UNSUPPORTED = (
 # (the answer degrades to the graph items or a refusal; it never waits for the vector index).
 DEFAULT_SEMANTIC_TIMEOUT_MS = 8000
 DEFAULT_GATE_TIMEOUT_MS = 1200
+_SEMANTIC_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="aec-semantic")
 
 
 def _budget_ms(name: str, default: int) -> int:
@@ -662,19 +665,36 @@ class GraphRAG:
             project_ids = [r["alias"] for r in conn.execute(
                 "SELECT a.alias FROM aec.kg_aliases a WHERE a.alias_type='project_id' AND a.node_id = ANY(%s)",
                 ([f"kg:p:{k}" for k in keys],)).fetchall()]
-        hits = []
         deadline = time.monotonic() + budget_ms / 1000 if budget_ms else None
-        for pid in (project_ids or [None])[:4]:
-            left = None
-            if deadline is not None:
-                left = int((deadline - time.monotonic()) * 1000)
-                if left < 50:
-                    self._semantic_timed_out = True
-                    break
-            res = self._search.search(question, project_id=pid, top_k=8, expand_graph=False, timeout_ms=left)
-            if any("budget" in w for w in res.warnings):
-                self._semantic_timed_out = True
-            hits += res.hits
+        timed_out = []
+
+        def run() -> list:
+            found = []
+            for pid in (project_ids or [None])[:4]:
+                left = None
+                if deadline is not None:
+                    left = int((deadline - time.monotonic()) * 1000)
+                    if left < 50:
+                        timed_out.append(True)
+                        break
+                res = self._search.search(question, project_id=pid, top_k=8, expand_graph=False, timeout_ms=left)
+                if any("budget" in w for w in res.warnings):
+                    timed_out.append(True)
+                found += res.hits
+            return found
+
+        if deadline is None:
+            hits = run()
+        else:
+            # Wall-clock bound: statement_timeout covers only the SQL, not the query embedding (queued behind
+            # ingest/re-embed batches on the shared GPU) nor a cancel that waits on a slow disk read. A leg
+            # still running at the deadline is abandoned (it ends by its own statement_timeout).
+            future = _SEMANTIC_POOL.submit(run)
+            try:
+                hits = future.result(timeout=max(0.05, deadline - time.monotonic()) + 0.05)
+            except FutureTimeout:
+                hits, timed_out = [], [True]
+        self._semantic_timed_out = bool(timed_out)
         hits.sort(key=lambda h: -h.score)
         out = []
         for h in hits[:8]:

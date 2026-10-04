@@ -51,6 +51,7 @@ def test_reembed_cli_passes_options(monkeypatch):
     monkeypatch.setattr(embeddings, "reindex_embeddings", fake)
     monkeypatch.setattr(cli, "Database", lambda dsn: object())
     cli.main(["reembed", "--project", "P-1", "--batch-size", "4", "--dry-run", "--delete-stale"])
+    assert callable(seen.pop("progress"))
     assert seen == {"project": "P-1", "batch_size": 4, "dry_run": True, "delete_stale": True}
 
 
@@ -94,3 +95,56 @@ def test_reindex_dry_run_and_delete_stale_postgres():
             conn.execute("DELETE FROM aec.embeddings WHERE object_id=%s", (oid,))
             conn.execute("DELETE FROM aec.objects WHERE id=%s", (oid,))
             conn.execute("DELETE FROM aec.documents WHERE id=%s", (doc,))
+
+
+@pytest.mark.skipif(not DSN, reason="AEC_TEST_DATABASE_URL not set")
+def test_reindex_commits_each_chunk_postgres(monkeypatch):
+    """An interrupted reembed keeps the chunks it already wrote, so a re-run only does the rest."""
+    pytest.importorskip("psycopg")
+    from aec_intelligence.operational import embeddings as emb
+    from aec_intelligence.operational.db import Database
+
+    db = Database(DSN)
+    db.initialize()
+    project = f"P-reembed-chunk-{os.getpid()}"
+    doc = f"doc_reembed_chunk_{os.getpid()}"
+    oids = [f"obj_reembed_chunk_{os.getpid()}_{i:02d}" for i in range(10)]
+
+    def cleanup():
+        with db.connect() as conn:
+            conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s)", (oids,))
+            conn.execute("DELETE FROM aec.objects WHERE id = ANY(%s)", (oids,))
+            conn.execute("DELETE FROM aec.documents WHERE id=%s", (doc,))
+
+    cleanup()
+    with db.connect() as conn:
+        conn.execute("""INSERT INTO aec.documents(id, project_id, source_key, name)
+                        VALUES (%s,%s,%s,'chunk.dxf')""", (doc, project, doc))
+        for oid in oids:
+            conn.execute("""INSERT INTO aec.objects(id, project_id, document_id, revision, kind, label, search_text,
+                                                    payload)
+                            VALUES (%s,%s,%s,0,'Door','D','door','{}'::jsonb)""", (oid, project, doc))
+    settings = Settings(dsn=DSN, data_root=Path("."), import_roots=())
+    real = emb.EmbeddingService.embed_with_model
+    calls = {"n": 0}
+
+    def flaky(self, texts):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise emb.EmbeddingEndpointError("boom")
+        return real(self, texts)
+
+    seen = []
+    try:
+        monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", flaky)
+        with pytest.raises(emb.EmbeddingEndpointError):
+            emb.reindex_embeddings(db, settings, project, batch_size=1, progress=lambda d, t: seen.append((d, t)))
+        assert seen == [(8, 10)]
+        with db.connect() as conn:
+            kept = conn.execute("SELECT count(*) AS n FROM aec.embeddings WHERE object_id = ANY(%s)", (oids,)).fetchone()
+        assert kept["n"] == 8  # the first chunk was committed before the failure
+        monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", real)
+        rest = emb.reindex_embeddings(db, settings, project, batch_size=1)
+        assert rest["pending"] == 2 and rest["written"] == 2
+    finally:
+        cleanup()

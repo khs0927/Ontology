@@ -280,7 +280,7 @@ preflight → (선택) embeddings → census(--resume) → enqueue-census → ru
 | `ODAFileConverter is not configured` | `AEC_ODA_EXECUTABLE` 경로 확인, 또는 LibreDWG 설치 후 `AEC_DWG_CONVERTER=libredwg` |
 | LibreDWG 변환 실패/객체 누락 | 해당 파일만 ODA 가 있는 PC 에서 `AEC_DWG_CONVERTER=oda` 로 `--requeue-failed` 재처리 |
 | `embeddings not healthy` | `docker logs aec-embeddings` 확인(모델 다운로드 중이면 `-EmbeddingsTimeoutSec` 늘리기) |
-| `OCR_REQUIRED` 실패 (스캔 PDF) | `ocr` 큐/OCR 워커가 필요한 파일입니다. 일반 텍스트 PDF 는 cad 큐에서 처리됩니다 |
+| `OCR_REQUIRED` 경고 (스캔 PDF) | 워커에 OCR 엔진이 없습니다. `pip install -e ".[ocr]"` (RapidOCR, 한국어 PP-OCRv5, CPU) 후 재처리하세요. 모델은 `AEC_OCR_MODEL_DIR` (예: `D:\AECData\ocr-models`) 에 받습니다 |
 | 실패 작업 재시도 | 원인 해결 후 `enqueue-census <census> --requeue-failed` → `run-workers` |
 | `canceling statement due to statement timeout` | 대형 도면이면 `.env`의 `AEC_INGEST_STATEMENT_TIMEOUT_SECONDS`를 600 등으로 늘린 뒤 해당 작업을 재시도. 일반 검색 timeout은 그대로 30초 |
 | 한글이 `\uXXXX` 로 출력됨 | `$env:PYTHONUTF8='1'` 설정 (스크립트는 자동) |

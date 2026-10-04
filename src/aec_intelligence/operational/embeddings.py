@@ -29,6 +29,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from typing import Any
 
 from .config import Settings
@@ -260,13 +261,16 @@ _STALE_SCOPE = """FROM aec.embeddings e JOIN aec.objects o ON o.id = e.object_id
 
 
 def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *, batch_size: int | None = None,
-                       dry_run: bool = False, delete_stale: bool = False) -> dict[str, Any]:
+                       dry_run: bool = False, delete_stale: bool = False,
+                       progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
     """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback or a model change).
 
     Superseded hash-fallback vectors are removed only once the active model's vectors
     are written, so a failed run leaves the previous state intact. With ``delete_stale``
     rows of any other model are dropped, but only for objects that already have a vector
-    of the active model. ``dry_run`` only counts what would happen.
+    of the active model. ``dry_run`` only counts what would happen. Every chunk is committed
+    on its own, so progress survives an interruption and is visible to searches immediately;
+    ``progress(written, pending)`` is called after each chunk.
     """
     service = EmbeddingService(settings, batch_size=batch_size)
     target = service.active_model()
@@ -303,7 +307,10 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 if model != HASH_MODEL:  # drop superseded offline vectors only; never discard real ones
                     cur.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
                                 ([r["id"] for r in part], HASH_MODEL))
+            conn.commit()  # each chunk is durable: an interrupted run resumes where it stopped
             written += len(part)
+            if progress is not None:
+                progress(written, len(rows))
         if delete_stale:
             deleted = conn.execute(
                 "DELETE FROM aec.embeddings d USING (SELECT e.object_id, e.model " + _STALE_SCOPE + ") s "

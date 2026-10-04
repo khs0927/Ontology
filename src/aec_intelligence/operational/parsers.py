@@ -2,7 +2,9 @@
 import hashlib
 import json
 import math
+import os
 import re
+import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 from xml.etree import ElementTree
@@ -27,6 +29,33 @@ ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.I
 AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
 AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*\)?\Z', re.IGNORECASE)
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
+# Sheet numbers such as A-101, MC-008, T-18, E-03, S101, A-101-1 (one to three discipline letters).
+SHEET_NUMBER_RE = re.compile(r'([A-Z]{1,3}-?\d{2,4}(?:-\d{1,3})?)(?![A-Z0-9])')
+_ORDER_PREFIX_RE = re.compile(r'^(?:\d{1,3}[_.]\s*|\d{1,3}\s+-\s+(?=[A-Za-z]{1,3}-?\d))')
+
+
+def filename_sheet_fields(name):
+    """(sheet number, title) read from a drawing file name, the last-resort source when no title block names them.
+
+    A leading ordering prefix such as ``03_`` or ``12. `` is ignored; the number must start the remaining stem
+    ("M-357 - [ 2층 덕트 평면도 ]" -> ("M-357", "2층 덕트 평면도")), so free text that merely contains a
+    code-like token is never mistaken for a sheet number. A range stem ("S-101~132 ...") yields its first number.
+    """
+    stem = re.sub(r'\.(dwg|dxf|pdf)$', '', Path(str(name or '')).name, flags=re.IGNORECASE).strip()
+    stem = _ORDER_PREFIX_RE.sub('', stem, count=1).strip()
+    match = SHEET_NUMBER_RE.match(stem.upper())
+    if not match:
+        return None, (stem.strip(' -_[]') or None)
+    title = stem[match.end():]
+    title = re.sub(r'^\s*~\s*[A-Za-z]{0,3}-?\d{1,4}', '', title)  # rest of a "S-101~132" range
+    title = re.sub(r'[_\s\-\[\]]+', ' ', title).strip()
+    return match.group(1), (title or None)
+
+
+def layout_sheet_number(layout_name):
+    """A paper layout named after its sheet ("A-101", "S-002 구조평면도") carries that number; else None."""
+    match = SHEET_NUMBER_RE.match(str(layout_name or '').strip().upper())
+    return match.group(1) if match else None
 
 
 def _iter_nested_insert_texts(insert, max_depth=8):
@@ -84,6 +113,7 @@ class _DXFSemantics:
         self.block_layer_counts = Counter()
         self.metrics = Counter()
         self._relation_ids = set()
+        self.layouts = []
 
     # ----------------------------------------------------------------- helpers
     def relate(self, subject, predicate, target, state='OBSERVED', **evidence):
@@ -182,8 +212,14 @@ class _DXFSemantics:
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
         self.area_texts, self.text_spaces = [], []
         self.layout_objects = []
+        self.layout_drawn = 0  # entities other than the paper-space VIEWPORT itself
 
     def count_entity(self, entity):
+        if entity.dxftype() != 'VIEWPORT':
+            self.layout_drawn += 1
+        self._count_entity(entity)
+
+    def _count_entity(self, entity):
         self.layer_counts[decode_dxf_text(entity.dxf.get('layer', '0'))] += 1
         if entity.dxftype() == 'INSERT':
             name = str(entity.dxf.get('name', ''))
@@ -446,8 +482,40 @@ class _DXFSemantics:
             obj['properties'].setdefault('drawing_category', category)
             if storey and not obj.get('storey'):
                 obj['storey'] = storey['storey']
+        self.layouts.append({'view': view, 'name': sheet.name, 'paper': self.is_paper, 'drawn': self.layout_drawn,
+                             'regions': sheet_regions})
         self._link_area_texts()
         self._link_sections()
+
+    def _sheet_numbers_from_names(self):
+        """Give sheet views without a title-block number one from their layout name or the file name.
+
+        A paper layout named like a sheet number keeps that number. The file name only speaks for the
+        file's single sheet: the one paper layout with drawn content, else an unsplit model space.
+        """
+        number, title = filename_sheet_fields(self.name)
+        if number:
+            self.root['properties'].setdefault('file_sheet_number', number)
+        for row in self.layouts:
+            props = row['view']['properties']
+            found = layout_sheet_number(row['name']) if row['paper'] and not props.get('drawingNumber') else None
+            if found:
+                props['drawingNumber'], props['drawingNumber_source'] = found, 'layout_name'
+        paper = [row for row in self.layouts if row['paper'] and row['drawn']]
+        pool = paper or [row for row in self.layouts if not row['paper']]
+        if len(pool) != 1 or pool[0]['regions']:
+            return
+        view = pool[0]['view']
+        props = view['properties']
+        added = []
+        if number and not props.get('drawingNumber'):
+            props['drawingNumber'], props['drawingNumber_source'] = number, 'file_name'
+            added.append(number)
+        if title and not props.get('drawingTitle'):
+            props['drawingTitle'], props['drawingTitle_source'] = title, 'file_name'
+            added.append(title)
+        if added:
+            view['search_text'] = f"{view['search_text']} {' '.join(added)}"
 
     def _link_area_texts(self):
         """Attach a nearby standalone area label to a room-name Space using mutual nearest-neighbour evidence."""
@@ -510,6 +578,7 @@ class _DXFSemantics:
 
     # ----------------------------------------------------------------- document
     def finish(self):
+        self._sheet_numbers_from_names()
         for block_name, obj in self.blocks.items():
             obj['properties']['insert_count'] = self.insert_counts.get(block_name, 0)
         for obj in self.blocks.values():
@@ -796,7 +865,7 @@ def parse_source(source, doc, output, settings, source_name=None, source_hash=No
                         if 'OCR_REQUIRED' not in str(exc): raise
                         page_obj['properties']['ocr_required'] = True
                         warnings.append(f'OCR_REQUIRED: page {i+1} has no text layer; indexed page and vectors only '
-                                        '(run the ocr-worker profile with PaddleOCR for text).')
+                                        '(install rapidocr + onnxruntime on the worker for text).')
                         ocr_items = []
                     for obj in ocr_items: add(obj,page_obj)
                 # A scanned page has no title-block fields, so its OCR text is the last resort.
@@ -831,20 +900,73 @@ def parse_source(source, doc, output, settings, source_name=None, source_hash=No
     return result
 
 
+_OCR_ENGINES = {}
+_OCR_LOCK = threading.Lock()
+
+
+def _rapidocr_engine():
+    """RapidOCR (PP-OCR det + Korean PP-OCRv5 rec as ONNX on CPU); models live in AEC_OCR_MODEL_DIR."""
+    from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
+
+    params = {'Global.log_level': 'warning', 'Rec.lang_type': LangRec.KOREAN,
+              'Rec.ocr_version': OCRVersion.PPOCRV5, 'Rec.model_type': ModelType.MOBILE,
+              # Drawing sheets are large: the default 2000 px cap would shrink title-block text away.
+              'Global.max_side_len': int(os.getenv('AEC_OCR_MAX_SIDE', '4096'))}
+    if model_dir := os.getenv('AEC_OCR_MODEL_DIR', '').strip():
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        params['Global.model_root_dir'] = model_dir
+    if threads := os.getenv('AEC_OCR_THREADS', '').strip():
+        params['EngineConfig.onnxruntime.intra_op_num_threads'] = int(threads)
+    engine = RapidOCR(params=params)
+
+    def run(path):
+        out = engine(str(path))
+        boxes = out.boxes if out.boxes is not None else []
+        return [([list(map(float, point)) for point in box], str(text), float(score))
+                for box, text, score in zip(boxes, out.txts or (), out.scores or ())]
+    return run
+
+
+def _paddleocr_engine():
+    from paddleocr import PaddleOCR
+
+    engine = PaddleOCR(lang='korean', use_angle_cls=True, show_log=False)
+
+    def run(path):
+        pages = engine.ocr(str(path), cls=True)
+        return [(polygon, text, float(confidence)) for rows in (pages or []) for polygon, (text, confidence) in (rows or [])]
+    return run
+
+
+def _ocr_engine():
+    """The configured OCR engine, loaded once per process. AEC_OCR_ENGINE: auto (RapidOCR, then PaddleOCR),
+    rapidocr, paddleocr or off. Raises OCR_REQUIRED when none is usable."""
+    choice = os.getenv('AEC_OCR_ENGINE', 'auto').strip().lower() or 'auto'
+    with _OCR_LOCK:
+        if choice in _OCR_ENGINES:
+            return _OCR_ENGINES[choice]
+        loaders = {'rapidocr': [('RapidOCR', _rapidocr_engine)], 'paddleocr': [('PaddleOCR', _paddleocr_engine)],
+                   'auto': [('RapidOCR', _rapidocr_engine), ('PaddleOCR', _paddleocr_engine)]}.get(choice, [])
+        for method, loader in loaders:
+            try:
+                _OCR_ENGINES[choice] = (method, loader())
+                return _OCR_ENGINES[choice]
+            except ImportError:
+                continue
+    raise RuntimeError(f'OCR_REQUIRED: no OCR engine available (AEC_OCR_ENGINE={choice}); '
+                       'install rapidocr + onnxruntime on the worker')
+
+
 def ocr(source,doc,key,evidence):
-    try:
-        from paddleocr import PaddleOCR
-    except ImportError as exc:
-        raise RuntimeError('OCR_REQUIRED: run this job with the ocr-worker profile (PaddleOCR)') from exc
-    engine = PaddleOCR(lang='korean',use_angle_cls=True,show_log=False)
-    pages = engine.ocr(str(source),cls=True)
+    method, run = _ocr_engine()
+    scale = evidence.get('ocr_scale',1)
     objects = []
-    for p,rows in enumerate(pages or []):
-        for i,(polygon,(text,confidence)) in enumerate(rows or []):
-            scale = evidence.get('ocr_scale',1)
-            xs,ys = [v[0]/scale for v in polygon],[v[1]/scale for v in polygon]
-            bbox = [min(xs),min(ys),max(xs),max(ys)]
-            objects.append(observation(doc,f'{key}:ocr:{p}:{i}','Annotation',text,
-                {**evidence,'bbox':bbox,'ocr_confidence':float(confidence),'method':'PaddleOCR'},
-                dict(zip(('min_x','min_y','max_x','max_y'),bbox))))
+    for i,(polygon,text,confidence) in enumerate(run(source)):
+        if not str(text).strip():
+            continue
+        xs,ys = [v[0]/scale for v in polygon],[v[1]/scale for v in polygon]
+        bbox = [min(xs),min(ys),max(xs),max(ys)]
+        objects.append(observation(doc,f'{key}:ocr:0:{i}','Annotation',text,
+            {**evidence,'bbox':bbox,'ocr_confidence':round(float(confidence),4),'method':method},
+            dict(zip(('min_x','min_y','max_x','max_y'),bbox))))
     return objects

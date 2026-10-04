@@ -24,6 +24,36 @@ services:
       # A named volume, not a Windows bind mount: Docker Desktop's file sharing returns EINTR on
       # WAL writes and Postgres PANICs. Back up with `aec-ops backup` (pg_dump), not by copying files.
       - aec-pgdata:/var/lib/postgresql/data
+    # Memory/WAL tuning for a small VM on a slow (USB) data disk; override in .env, see
+    # docs/OPERATIONS.ko.md "aec-db 크래시와 복구 시간". shared_buffers is shared memory, so the host's
+    # page-cache reclaim (wsl-reclaim.ps1) cannot evict the hot HNSW/table pages any more.
+    # max_wal_size bounds crash-recovery redo; lz4 shrinks full-page images in the WAL.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=age
+      - -c
+      - shared_buffers=${AEC_PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - work_mem=${AEC_PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${AEC_PG_MAINTENANCE_WORK_MEM:-256MB}
+      - -c
+      - effective_cache_size=${AEC_PG_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - max_wal_size=${AEC_PG_MAX_WAL_SIZE:-512MB}
+      - -c
+      - checkpoint_timeout=${AEC_PG_CHECKPOINT_TIMEOUT:-5min}
+      - -c
+      - wal_compression=${AEC_PG_WAL_COMPRESSION:-lz4}
+      - -c
+      - log_checkpoints=on
+    # Parallel queries put their shared memory in /dev/shm (Docker default 64 MB was too small:
+    # "could not resize shared memory segment" in pg_restore and parallel scans).
+    shm_size: 256m
+    # A clean shutdown checkpoints first; on the USB disk that takes minutes. Docker's default 10 s
+    # SIGKILLs Postgres and turns every restart into crash recovery.
+    stop_grace_period: 10m
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aec -d aec"]

@@ -188,7 +188,10 @@ class KnowledgeGraphBuilder:
         self.requirements = load_requirements(rules_file or os.getenv("AEC_RULES_FILE"))
 
     # ------------------------------------------------------------------ public
-    def build(self, project_key: str | None = None, *, force: bool = False) -> dict[str, Any]:
+    def build(self, project_key: str | None = None, *, force: bool = False, gate=None) -> dict[str, Any]:
+        """``gate`` (an :class:`~aec_intelligence.operational.priority.InteractiveGate`) makes the
+        build yield to interactive queries before each project (a scheduled refresh runs in the
+        background next to the API)."""
         stats: dict[str, Any] = {"projects": 0, "skipped": 0, "nodes": 0, "edges": 0, "aliases": 0,
                                  "by_type": Counter(), "resolution": Counter()}
         with self.db.connect(statement_timeout_seconds=600) as conn:
@@ -214,6 +217,8 @@ class KnowledgeGraphBuilder:
                 if not force and state.get(key) == fp:
                     stats["skipped"] += 1
                     continue
+                if gate is not None:
+                    stats["yield_seconds"] = round(stats.get("yield_seconds", 0.0) + gate.wait_turn(conn), 1)
                 graph = self.project_graph(conn, key, docs)
                 self._write(conn, graph, fp)
                 stats["projects"] += 1

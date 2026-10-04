@@ -50,17 +50,19 @@ def _print(data) -> None:
 
 
 def cmd_kg_build(parsed, settings, db):
+    from ..priority import InteractiveGate
     from .kg import KnowledgeGraphBuilder
 
     db.initialize()
     result = KnowledgeGraphBuilder(db, steel_catalog_dir=parsed.steel_catalog, rules_file=parsed.rules).build(
-        parsed.project, force=parsed.force)
+        parsed.project, force=parsed.force, gate=InteractiveGate.from_env())
     _print(result)
     return result
 
 
 def cmd_kg_summarize(parsed, settings, db):
     from ..embeddings import EmbeddingService
+    from ..priority import InteractiveGate
     from . import communities
     from .llm import LocalLLM
 
@@ -71,7 +73,8 @@ def cmd_kg_summarize(parsed, settings, db):
     if llm is not None:
         result["summaries"] = communities.summarize(db, llm, embedder=EmbeddingService(settings),
                                                     project_key=parsed.project, limit=parsed.limit,
-                                                    max_level=parsed.max_level)
+                                                    max_level=parsed.max_level,
+                                                    gate=InteractiveGate.from_env())
     _print(result)
     return result
 

@@ -6,8 +6,11 @@
     \AEC\AEC-Reembed      reembed.ps1 at logon + every 30 min (IgnoreNew; exits at once when nothing is
                           pending, when the stop file exists, or when another re-embed holds the mutex)
     \AEC\AEC-WSL-Reclaim  wsl-reclaim.ps1 every 30 min (drops the VM page cache only when Windows is short of RAM)
+    \AEC\AEC-GraphRAG-Refresh  graphrag.ps1 refresh (incremental kg-build, kg-summarize incl. FAILED retries,
+                          kg-stats) 10 min after logon + every -GraphRagEveryHours h; IgnoreNew + a named mutex
+                          (no overlap), 3 h limit, low priority, yields to interactive queries
 .PARAMETER Only
-  Register just these tasks (Ollama, Reembed, WslReclaim). Default: all three.
+  Register just these tasks (Ollama, Reembed, WslReclaim, GraphRag). Default: all four.
   Re-registering AEC-Ollama restarts nothing by itself, but the next trigger starts the new action
   only after the running server exits; restart it with Stop-/Start-ScheduledTask when convenient.
 .EXAMPLE
@@ -15,10 +18,11 @@
   powershell -ExecutionPolicy Bypass -File scripts\ops\register-host-tasks.ps1 -OllamaHome C:\AECLocal\Ollama
 #>
 param(
-    [ValidateSet('Ollama', 'Reembed', 'WslReclaim')][string[]]$Only = @('Ollama', 'Reembed', 'WslReclaim'),
+    [ValidateSet('Ollama', 'Reembed', 'WslReclaim', 'GraphRag')][string[]]$Only = @('Ollama', 'Reembed', 'WslReclaim', 'GraphRag'),
     [string]$OllamaHome = 'C:\AECLocal\Ollama',
     [string]$OllamaLog = 'D:\AECData\ollama-logs\serve.log',
     [int]$ReembedEveryMin = 30,
+    [int]$GraphRagEveryHours = 2,
     [switch]$Start
 )
 $ErrorActionPreference = 'Stop'
@@ -62,6 +66,13 @@ if ($Only -contains 'WslReclaim') {
     $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
         -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew
     Register-AecTask 'AEC-WSL-Reclaim' 'wsl-reclaim.ps1' '' @(Repeating 30) $s
+}
+if ($Only -contains 'GraphRag') {
+    $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 3) -MultipleInstances IgnoreNew -Priority 7
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $logon.Delay = 'PT10M'  # let Ollama/Docker settle after logon
+    Register-AecTask 'AEC-GraphRAG-Refresh' 'graphrag.ps1' 'refresh' @($logon, (Repeating ($GraphRagEveryHours * 60))) $s
 }
 if ($Start) { foreach ($n in $registered) { Start-ScheduledTask -TaskPath '\AEC\' -TaskName $n } }
 Get-ScheduledTask -TaskPath '\AEC\' | Select-Object TaskName, State | Format-Table -AutoSize

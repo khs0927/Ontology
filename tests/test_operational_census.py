@@ -157,6 +157,55 @@ def test_restore_requires_confirmation(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------
+
+def test_census_exclude_by_name_glob_and_path_prefix(tmp_path):
+    root = _tree(tmp_path)
+    (root / "hillside_villa_export").mkdir()
+    (root / "hillside_villa_export" / "model.dxf").write_text("0\nEOF\n")
+    (root / "현장B" / ".git").mkdir()
+    (root / "현장B" / ".git" / "packed.dwg").write_bytes(b"AC1032 in git")
+    (root / "현장B" / "tower.skp").write_bytes(b"sketchup")
+    census.run_census([root], tmp_path / "out", exclude=["HILLSIDE_VILLA*", str(root / "현장A 오피스텔" / "구조")],
+                      inventory_extensions=[".skp"])
+    rows = {r["name"]: r for r in _rows(tmp_path / "out")}
+    assert rows["tower.skp"]["status"] == "inventory" and rows["tower.skp"]["sha256"] is None
+    assert "tower.skp" not in {j["name"] for j in census.plan_jobs(tmp_path / "out")}
+    names = set(rows)
+    assert "model.dxf" not in names and "packed.dwg" not in names  # name glob (case-insensitive) and SKIP_DIRS
+    assert "기초 구조도.dwg" not in names  # path prefix
+    assert "1층 평면도.dwg" in names
+
+
+def test_wait_for_disk_pauses_until_space_returns(monkeypatch):
+    import shutil
+    from collections import namedtuple
+
+    usage = namedtuple("usage", "total used free")
+    frees = iter([5, 8, 20])
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: usage(0, 0, next(frees) * 1024 ** 3))
+    logs, sleeps = [], []
+    waited = census.wait_for_disk({"C:/": 12}, logs.append, poll=60, sleep=sleeps.append)
+    assert waited == 120 and sleeps == [60, 60] and len(logs) == 1 and "C:/ 5.0 GB < 12 GB" in logs[0]
+    assert census.parse_min_free("C:\\=12; D:\\=50") == {"C:\\": 12.0, "D:\\": 50.0}
+    assert census.parse_min_free({"C:/": 3}) == {"C:/": 3.0} and census.parse_min_free(None) == {}
+
+
+def test_plan_jobs_project_depth_priority_and_newest_first(tmp_path):
+    root = _tree(tmp_path)
+    old = root / "현장A 오피스텔" / "구조" / "기초 구조도.dwg"
+    os.utime(old, (1_600_000_000, 1_600_000_000))
+    census.run_census([root], tmp_path / "out")
+    jobs = census.plan_jobs(tmp_path / "out", project_root=str(root / "현장A 오피스텔"), project_depth=1, priority=5)
+    by_name = {j["name"]: j for j in jobs}
+    assert by_name["기초 구조도.dwg"]["project_id"] == "P-구조"
+    assert by_name["1층 평면도.dwg"]["project_id"] == "P-건축"
+    assert by_name["배관.pdf"]["project_id"] == "P-현장B"  # outside project_root: census grouping
+    assert {j["priority"] for j in jobs} == {5}
+    assert jobs[-1]["name"] == "기초 구조도.dwg"  # oldest last
+    assert [j["mtime"] for j in jobs] == sorted((j["mtime"] for j in jobs), reverse=True)
+    deep = census.plan_jobs(tmp_path / "out", project_depth=2)
+    assert {j["project_id"] for j in deep if j["name"] == "1층 평면도.dwg"} == {"P-현장A-오피스텔-건축"}
+
 # Database-backed tests
 # ------------------------------------------------------------------------------------------
 
@@ -323,3 +372,64 @@ def test_worker_opens_source_through_long_path_helper():
     from aec_intelligence.operational import census, worker
 
     assert worker.long_path is census._fs
+
+
+@needs_db
+def test_claim_order_priority_then_newest(db):
+    from psycopg.types.json import Jsonb
+
+    queue = f"test-claim-{uuid.uuid4().hex[:8]}"
+    rows = [("low-new", 100, "2026-10-01T00:00:00+00:00"), ("high-old", 10, "2001-01-01T00:00:00+00:00"),
+            ("high-new", 10, "2026-09-30T00:00:00+00:00"), ("legacy", None, None)]
+    keys = [f"{queue}-{name}" for name, *_ in rows]
+    try:
+        with db.connect() as conn:
+            for (name, priority, mtime), key in zip(rows, keys):
+                payload = {"queue": queue, "name": name}
+                if priority is not None:
+                    payload.update(priority=priority, mtime=mtime)
+                conn.execute("INSERT INTO aec.jobs(id,dedup_key,payload) VALUES(%s,%s,%s)",
+                             (uuid.uuid4(), key, Jsonb(payload)))
+        order = [db.claim("t", queue=queue)["payload"]["name"] for _ in rows]
+        assert order == ["high-new", "high-old", "low-new", "legacy"]
+    finally:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM aec.jobs WHERE dedup_key = ANY(%s)", (keys,))
+
+
+
+@needs_db
+def test_bulk_census_enqueues_sources_in_order_and_is_rerunnable(tmp_path, db):
+    tag = uuid.uuid4().hex
+    root = _tree(tmp_path, tag)
+    queue = f"test-bulk-{tag[:8]}"
+    config = {
+        "out": str(tmp_path / "census-v3"), "queue": queue, "extensions": ".dwg,.dxf,.pdf",
+        "ingest_extensions": ".dwg,.dxf", "exclude": ["기계설비"],
+        "sources": [
+            {"name": "01-a", "roots": [str(root / "현장A 오피스텔")], "priority": 10,
+             "project_root": str(root), "prefix": f"P-T{tag[:6]}-"},
+            {"name": "02-rest", "roots": [str(root)], "priority": 50, "prefix": f"P-T{tag[:6]}-"},
+        ],
+    }
+    path = tmp_path / "sources.json"
+    path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    shas = set()
+    try:
+        logs = []
+        state = census.run_bulk_census(db, path, log=logs.append)
+        assert state["01-a"]["done"] and state["02-rest"]["done"]
+        assert state["01-a"]["enqueue"]["enqueued"] == 2
+        # the duplicate of 1층 평면도 and the root-level dxf; .pdf is census-only, 기계설비 is excluded
+        assert state["02-rest"]["enqueue"]["enqueued"] == 1 and state["02-rest"]["enqueue"]["already_present"] == 2
+        with db.connect() as conn:
+            rows = conn.execute("SELECT dedup_key, payload FROM aec.jobs WHERE payload->>'queue'=%s", (queue,)).fetchall()
+        shas = {r["dedup_key"] for r in rows}
+        assert {r["payload"]["priority"] for r in rows} == {10, 50}
+        assert {r["payload"]["project_id"] for r in rows if r["payload"]["priority"] == 10} == {f"P-T{tag[:6]}-현장A-오피스텔"}
+        again = census.run_bulk_census(db, path, log=logs.append, refresh=True)
+        assert again["01-a"]["enqueue"].get("enqueued", 0) == 0 and again["02-rest"]["enqueue"].get("enqueued", 0) == 0
+        assert census.bulk_import_roots(census.load_bulk_config(path)) == sorted(
+            {os.path.abspath(str(root)), os.path.abspath(str(root / "현장A 오피스텔"))})
+    finally:
+        _cleanup(db, shas=shas, queue=queue)

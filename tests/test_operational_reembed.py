@@ -73,7 +73,7 @@ def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):
             return False
 
         def execute(self, sql, params=None):
-            rows = self.rows
+            rows = [] if "aec.text_vectors" in sql else self.rows  # no text has a vector yet
 
             class R:
                 def fetchall(self_inner):
@@ -99,6 +99,9 @@ def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):
 
         def commit(self):
             self.commits += 1
+
+        def rollback(self):
+            pass
 
     conn = Conn()
 
@@ -159,9 +162,10 @@ def test_reindex_dry_run_and_delete_stale_postgres():
                         VALUES (%s,%s,%s,'reembed.dxf')""", (doc, project, doc))
         conn.execute("""INSERT INTO aec.objects(id, project_id, document_id, revision, kind, label, search_text, payload)
                         VALUES (%s,%s,%s,0,'Door','D1','door D1','{}'::jsonb)""", (oid, project, doc))
-        conn.execute("""INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
-                        VALUES (%s,'old-model',0,'x',%s::vector)""",
-                     (oid, emb.vector_literal([0.0] * emb.EMBEDDING_DIM)))
+        conn.execute("""INSERT INTO aec.text_vectors(model, content_hash, embedding) VALUES ('old-model','x',%s::halfvec)
+                        ON CONFLICT DO NOTHING""", (emb.vector_literal([0.5] * emb.EMBEDDING_DIM),))
+        conn.execute("""INSERT INTO aec.embeddings(object_id, model, revision, content_hash)
+                        VALUES (%s,'old-model',0,'x')""", (oid,))
     settings = Settings(dsn=DSN, data_root=Path("."), import_roots=())  # no URL -> hash target
     try:
         dry = emb.reindex_embeddings(db, settings, project, dry_run=True)
@@ -194,6 +198,8 @@ def test_reindex_commits_each_chunk_postgres(monkeypatch):
     def cleanup():
         with db.connect() as conn:
             conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s)", (oids,))
+            conn.execute("DELETE FROM aec.text_vectors WHERE content_hash = ANY(%s)",
+                         ([emb.text_hash(f"door {oid}") for oid in oids],))
             conn.execute("DELETE FROM aec.objects WHERE id = ANY(%s)", (oids,))
             conn.execute("DELETE FROM aec.documents WHERE id=%s", (doc,))
 
@@ -204,7 +210,8 @@ def test_reindex_commits_each_chunk_postgres(monkeypatch):
         for oid in oids:
             conn.execute("""INSERT INTO aec.objects(id, project_id, document_id, revision, kind, label, search_text,
                                                     payload)
-                            VALUES (%s,%s,%s,0,'Door','D','door','{}'::jsonb)""", (oid, project, doc))
+                            VALUES (%s,%s,%s,0,'Door','D',%s,'{}'::jsonb)""",
+                         (oid, project, doc, f"door {oid}"))  # distinct texts: one vector each
     settings = Settings(dsn=DSN, data_root=Path("."), import_roots=())
     real = emb.EmbeddingService.embed_with_model
     calls = {"n": 0}
@@ -227,5 +234,88 @@ def test_reindex_commits_each_chunk_postgres(monkeypatch):
         monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", real)
         rest = emb.reindex_embeddings(db, settings, project, batch_size=1)
         assert rest["pending"] == 2 and rest["written"] == 2
+    finally:
+        cleanup()
+
+
+@pytest.mark.skipif(not DSN, reason="AEC_TEST_DATABASE_URL not set")
+def test_identical_texts_share_one_vector_and_gc_postgres():
+    """Storage (0003): N objects with the same text -> N mappings, 1 halfvec; orphaned vectors are collected."""
+    pytest.importorskip("psycopg")
+    from aec_intelligence.operational import embeddings as emb
+    from aec_intelligence.operational.db import Database
+
+    db = Database(DSN)
+    db.initialize()
+    pid = os.getpid()
+    project, doc = f"P-dedup-{pid}", f"doc_dedup_{pid}"
+    oids = [f"obj_dedup_{pid}_{i}" for i in range(6)]
+    texts = [f"dedup room {pid}"] * 4 + [f"dedup stair {pid}"] * 2
+    hashes = sorted({emb.text_hash(t) for t in texts})
+
+    def cleanup():
+        with db.connect() as conn:
+            conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s)", (oids,))
+            conn.execute("DELETE FROM aec.text_vectors WHERE content_hash = ANY(%s)", (hashes,))
+            conn.execute("DELETE FROM aec.objects WHERE id = ANY(%s)", (oids,))
+            conn.execute("DELETE FROM aec.documents WHERE id=%s", (doc,))
+
+    cleanup()
+    with db.connect() as conn:
+        conn.execute("INSERT INTO aec.documents(id, project_id, source_key, name) VALUES (%s,%s,%s,'d.dxf')",
+                     (doc, project, doc))
+        for oid, text in zip(oids, texts):
+            conn.execute("""INSERT INTO aec.objects(id, project_id, document_id, revision, kind, label, search_text,
+                                                    payload) VALUES (%s,%s,%s,0,'Space','x',%s,'{}'::jsonb)""",
+                         (oid, project, doc, text))
+    settings = Settings(dsn=DSN, data_root=Path("."), import_roots=())
+    calls = []
+    real = emb.EmbeddingService.embed_with_model
+
+    def counting(self, batch):
+        calls.append(list(batch))
+        return real(self, batch)
+
+    try:
+        import pytest as _pytest
+        mp = _pytest.MonkeyPatch()
+        mp.setattr(emb.EmbeddingService, "embed_with_model", counting)
+        try:
+            dry = emb.reindex_embeddings(db, settings, project, dry_run=True)
+            assert dry["pending"] == 6 and dry["distinct_texts"] == 2 and dry["texts_to_embed"] == 2
+            out = emb.reindex_embeddings(db, settings, project)
+        finally:
+            mp.undo()
+        assert out["written"] == 6 and out["embedded_texts"] == 2 and sum(len(c) for c in calls) == 2
+        with db.connect() as conn:
+            n_vec = conn.execute("SELECT count(*) AS n FROM aec.text_vectors WHERE content_hash = ANY(%s)",
+                                 (hashes,)).fetchone()["n"]
+            n_map = conn.execute("SELECT count(DISTINCT content_hash) AS h, count(*) AS n FROM aec.embeddings "
+                                 "WHERE object_id = ANY(%s)", (oids,)).fetchone()
+            typ = conn.execute("SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute "
+                               "WHERE attrelid = 'aec.text_vectors'::regclass AND attname = 'embedding'").fetchone()["t"]
+        assert n_vec == 2 and n_map["n"] == 6 and n_map["h"] == 2 and typ == "halfvec(1024)"
+        # A second ingest of the same texts embeds nothing.
+        with db.connect() as conn:
+            snap = {"document_id": doc, "revision": 0,
+                    "objects": [{"id": o, "type": "Space", "search_text": t} for o, t in zip(oids, texts)]}
+            calls.clear()
+            mp = _pytest.MonkeyPatch()
+            mp.setattr(emb.EmbeddingService, "embed_with_model", counting)
+            try:
+                assert emb.index_snapshot_embeddings(conn, snap, settings) == 6
+            finally:
+                mp.undo()
+        assert calls == []
+        # Orphans: drop the stair objects' mappings -> their vector is collectable (min age 0).
+        with db.connect() as conn:
+            conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s)", (oids[4:],))
+        assert emb.vectors_gc(db, min_age_seconds=3600)["removed"] == 0  # too young
+        gc = emb.vectors_gc(db, min_age_seconds=0)
+        assert gc["removed"] >= 1 and gc["error"] is None
+        with db.connect() as conn:
+            left = conn.execute("SELECT count(*) AS n FROM aec.text_vectors WHERE content_hash = ANY(%s)",
+                                (hashes,)).fetchone()["n"]
+        assert left == 1
     finally:
         cleanup()

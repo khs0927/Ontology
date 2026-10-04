@@ -256,7 +256,7 @@ class SearchRouter:
                 match_clauses.append("word_similarity(%s, o.search_text) > 0.3")
                 match_params: list[Any] = [like_pattern(t) for t in terms] + [" ".join(terms)]
                 if vec_str is not None:
-                    match_clauses.append("(e.embedding IS NOT NULL AND (e.embedding <=> %s::vector) < 0.6)")
+                    match_clauses.append("(tv.embedding IS NOT NULL AND (tv.embedding <=> %s::halfvec) < 0.6)")
                     match_params.append(vec_str)
                 match_sql = "(" + " OR ".join(match_clauses) + ")"
                 lexical_weight = 0.6
@@ -273,8 +273,9 @@ class SearchRouter:
             if query_model is None:
                 vector_select, embedding_join, vector_params = "0.0 as vector_score", "", []
             else:
-                vector_select = "COALESCE(1.0 - (e.embedding <=> %s::vector), 0.0) as vector_score"
-                embedding_join = "LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s"
+                vector_select = "COALESCE(1.0 - (tv.embedding <=> %s::halfvec), 0.0) as vector_score"
+                embedding_join = ("LEFT JOIN aec.embeddings e ON o.id = e.object_id AND e.model = %s "
+                                  "LEFT JOIN aec.text_vectors tv ON tv.model = e.model AND tv.content_hash = e.content_hash")
                 vector_params = [vec_str, query_model]
 
             # Candidate generation keeps the scoring below off a full table scan: index-backed lexical
@@ -295,11 +296,17 @@ class SearchRouter:
                     if project_id:
                         parts.append(f"""(WITH p AS MATERIALIZED (SELECT id FROM aec.objects WHERE project_id = %s)
                                           SELECT e.object_id FROM aec.embeddings e JOIN p ON p.id = e.object_id
-                                          WHERE e.model = %s ORDER BY e.embedding <=> %s::vector LIMIT {limit})""")
+                                          JOIN aec.text_vectors tv ON tv.model = e.model AND tv.content_hash = e.content_hash
+                                          WHERE e.model = %s ORDER BY tv.embedding <=> %s::halfvec LIMIT {limit})""")
                         cparams += [project_id, query_model, vec_str]
                     else:
-                        parts.append(f"""(SELECT e.object_id FROM aec.embeddings e WHERE e.model = %s
-                                          ORDER BY e.embedding <=> %s::vector LIMIT {limit})""")
+                        # Nearest distinct texts (HNSW over aec.text_vectors), then the objects that carry them.
+                        # A common text maps to many objects; they all share its vector score.
+                        parts.append(f"""(SELECT e.object_id FROM (
+                                              SELECT tv.model, tv.content_hash FROM aec.text_vectors tv WHERE tv.model = %s
+                                              ORDER BY tv.embedding <=> %s::halfvec LIMIT {limit}) nn
+                                          JOIN aec.embeddings e ON e.model = nn.model AND e.content_hash = nn.content_hash
+                                          LIMIT {limit * 4})""")
                         cparams += [query_model, vec_str]
                 candidate_sql = " AND o.id IN (" + " UNION ".join(parts) + ")"
                 candidate_params = cparams

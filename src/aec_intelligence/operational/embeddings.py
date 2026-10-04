@@ -30,6 +30,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -227,9 +228,82 @@ def _embeddable(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [obj for obj in objects if obj.get("search_text") and obj.get("type") not in ("CADEntity",)]
 
 
+def text_hash(text: str) -> str:
+    """Key of a text vector: sha256 of the exact text that was embedded (aec.embeddings.content_hash)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# Storage layout (migration 0003): one halfvec per distinct (model, text) in aec.text_vectors; aec.embeddings
+# maps each object to the text vector it uses. Identical texts (CAD labels repeat on every sheet) are
+# embedded and stored once; fp16 keeps bge-m3 cosine ranking while halving the bytes.
+def known_text_hashes(conn, model: str, hashes: list[str]) -> set[str]:
+    if not hashes:
+        return set()
+    rows = conn.execute("SELECT content_hash FROM aec.text_vectors WHERE model = %s AND content_hash = ANY(%s)",
+                        (model, list(hashes))).fetchall()
+    return {r["content_hash"] if isinstance(r, dict) else r[0] for r in rows}
+
+
+def write_text_vectors(conn, model: str, vectors: dict[str, list[float]]) -> None:
+    if not vectors:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO aec.text_vectors(model, content_hash, embedding) VALUES (%s, %s, %s::halfvec)
+               ON CONFLICT (model, content_hash) DO NOTHING""",
+            [(model, h, vector_literal(v)) for h, v in vectors.items()],
+        )
+
+
+def write_mappings(conn, model: str, rows: list[tuple[str, int, str]]) -> None:
+    """rows: (object_id, revision, content_hash); the text vectors must already exist."""
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO aec.embeddings(object_id, model, revision, content_hash) VALUES (%s, %s, %s, %s)
+               ON CONFLICT (object_id, model) DO UPDATE
+               SET revision = EXCLUDED.revision, content_hash = EXCLUDED.content_hash""",
+            [(oid, model, rev, h) for oid, rev, h in rows],
+        )
+
+
+def embed_missing_texts(conn, service: "EmbeddingService", texts: dict[str, str], vector_conn=None) -> tuple[str, int]:
+    """Embed only the texts (hash -> text) that have no vector of the active model yet; returns (model, n_embedded).
+
+    A remote failure raises EmbeddingEndpointError before anything is written for these texts. Vectors
+    go through ``vector_conn`` when given (an autocommit connection: content-addressed rows are safe to
+    commit early, and two workers holding uncommitted inserts of the same texts in different orders
+    would otherwise deadlock), else through ``conn``.
+    """
+    model = service.active_model()
+    known = known_text_hashes(conn, model, sorted(texts))
+    missing = {h: texts[h] for h in sorted(texts) if h not in known}
+    if not missing:
+        return model, 0
+    hashes = list(missing)
+    model, vectors = service.embed_with_model([missing[h] for h in hashes])
+    write_text_vectors(vector_conn if vector_conn is not None else conn, model, dict(zip(hashes, vectors)))
+    return model, len(hashes)
+
+
+@contextmanager
+def _autocommit_connection(settings: Settings):
+    """A short-lived autocommit connection to the same database (None when no DSN is configured)."""
+    dsn = getattr(settings, "dsn", "") or ""
+    if not dsn:
+        yield None
+        return
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=10) as side:
+        yield side
+
+
 def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings,
                               service: EmbeddingService | None = None) -> int:
-    """Computes and stores pgvector embeddings for the meaningful objects of a snapshot."""
+    """Stores the text vectors (deduplicated) and object mappings for the meaningful objects of a snapshot."""
     doc_id = snapshot["document_id"]
     rev = snapshot["revision"]
     service = service or EmbeddingService(settings)
@@ -240,28 +314,18 @@ def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings
 
     models: set[str] = set()
     count = 0
-    # Chunk per DB round to bound request size. A remote failure propagates and fails the job;
-    # chunks are never relabelled to the hash model mid-run.
+    # Chunk per DB round to bound request size. A remote failure propagates (the worker stores the
+    # objects as pending); chunks are never relabelled to the hash model mid-run.
     chunk = max(service.batch_size * 8, 1)
-    for start in range(0, len(objects), chunk):
-        part = objects[start:start + chunk]
-        model, vectors = service.embed_with_model([obj["search_text"] for obj in part])
-        models.add(model)
-        rows = []
-        for obj, vec in zip(part, vectors):
-            content_hash = hashlib.sha256(obj["search_text"].encode("utf-8")).hexdigest()
-            rows.append((obj["id"], model, rev, content_hash, vector_literal(vec)))
-        with conn.cursor() as cur:
-            cur.executemany(
-                """INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
-                   VALUES (%s, %s, %s, %s, %s::vector)
-                   ON CONFLICT(object_id, model) DO UPDATE
-                   SET revision = EXCLUDED.revision,
-                       content_hash = EXCLUDED.content_hash,
-                       embedding = EXCLUDED.embedding""",
-                rows,
-            )
-        count += len(rows)
+    with _autocommit_connection(settings) as side:
+        for start in range(0, len(objects), chunk):
+            part = objects[start:start + chunk]
+            hashes = [text_hash(obj["search_text"]) for obj in part]
+            model, _ = embed_missing_texts(conn, service, dict(zip(hashes, (obj["search_text"] for obj in part))),
+                                           vector_conn=side)
+            models.add(model)
+            write_mappings(conn, model, sorted((obj["id"], rev, h) for obj, h in zip(part, hashes)))
+            count += len(part)
 
     conn.execute(
         """UPDATE aec.index_state
@@ -283,14 +347,16 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                        max_backoff: float = 300.0, pause: float = 0.0, timeout: float | None = None,
                        sleep: Callable[[float], None] = time.sleep,
                        on_retry: Callable[[int, float, str], None] | None = None) -> dict[str, Any]:
-    """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback or a model change).
+    """Give every embeddable object a vector of the active model (after a hash fallback, a model change or
+    an ingest that ran while the endpoint was down).
 
-    Superseded hash-fallback vectors are removed only once the active model's vectors
-    are written, so a failed run leaves the previous state intact. With ``delete_stale``
-    rows of any other model are dropped, but only for objects that already have a vector
-    of the active model. ``dry_run`` only counts what would happen. Every chunk is committed
-    on its own, so progress survives an interruption and is visible to searches immediately;
-    ``progress(written, pending)`` is called after each chunk.
+    Pending objects are grouped by text: each distinct text is embedded once (and not at all when a vector
+    for it already exists), then every object with that text is mapped to it. Superseded hash-fallback
+    mappings are removed only once the active model's mapping is written, so a failed run leaves the
+    previous state intact. With ``delete_stale`` mappings of any other model are dropped, but only for
+    objects that already have one of the active model. ``dry_run`` only counts what would happen. Every
+    chunk is committed on its own, so progress survives an interruption and is visible to searches
+    immediately; ``progress(written, pending)`` is called after each chunk (counted in objects).
 
     ``chunk_retries`` > 0 makes a long run survive a busy or restarting endpoint (Ollama shared with
     the ingest workers, a model reload, a PC under memory pressure): a failed chunk is retried after
@@ -301,7 +367,7 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     """
     service = EmbeddingService(settings, batch_size=batch_size, timeout=timeout)
     target = service.active_model()
-    written, skipped, deleted, retried = 0, 0, 0, 0
+    written, skipped, deleted, retried, embedded = 0, 0, 0, 0, 0
     failure: str | None = None
     params = {"p": project_id, "m": target}
     with db.connect() as conn:
@@ -312,22 +378,32 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                ORDER BY o.id""",
             params,
         ).fetchall()
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            groups.setdefault(text_hash(r["search_text"]), []).append(r)
         if dry_run:
             stale = conn.execute("SELECT e.model, count(*) AS n " + _STALE_SCOPE + " GROUP BY e.model", params).fetchall()
-            return {"model": target, "dry_run": True, "pending": len(rows),
+            known = 0
+            hashes = list(groups)
+            for start in range(0, len(hashes), 5000):
+                known += len(known_text_hashes(conn, target, hashes[start:start + 5000]))
+            return {"model": target, "dry_run": True, "pending": len(rows), "distinct_texts": len(groups),
+                    "texts_to_embed": len(groups) - known,
                     "stale_by_model": {r["model"]: r["n"] for r in stale}, "written": 0, "skipped": 0, "deleted": 0,
                     "error": None}
+        hashes = list(groups)
         step = service.batch_size * 8
-        for start in range(0, len(rows), step):
-            part = rows[start:start + step]
+        for start in range(0, len(hashes), step):
+            part = hashes[start:start + step]
             if start and pause > 0:
                 sleep(pause)
             failures = 0
             while True:
                 try:
-                    model, vectors = service.embed_with_model([r["search_text"] for r in part])
+                    model, n = embed_missing_texts(conn, service, {h: groups[h][0]["search_text"] for h in part})
                     break
                 except EmbeddingEndpointError as exc:
+                    conn.rollback()
                     failures += 1
                     if failures > chunk_retries:
                         if chunk_retries <= 0:
@@ -343,27 +419,54 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
             if failure:
                 break
             if model != target:
-                skipped += len(rows) - start
+                skipped += sum(len(groups[h]) for h in hashes[start:])
                 break
-            with conn.cursor() as cur:
-                cur.executemany(
-                    """INSERT INTO aec.embeddings(object_id, model, revision, content_hash, embedding)
-                       VALUES (%s,%s,%s,%s,%s::vector) ON CONFLICT(object_id, model) DO UPDATE
-                       SET revision=EXCLUDED.revision, content_hash=EXCLUDED.content_hash, embedding=EXCLUDED.embedding""",
-                    [(r["id"], model, r["revision"], hashlib.sha256(r["search_text"].encode("utf-8")).hexdigest(),
-                      vector_literal(v)) for r, v in zip(part, vectors)],
-                )
-                if model != HASH_MODEL:  # drop superseded offline vectors only; never discard real ones
-                    cur.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
-                                ([r["id"] for r in part], HASH_MODEL))
+            objs = [r for h in part for r in groups[h]]
+            write_mappings(conn, model, [(r["id"], r["revision"], text_hash(r["search_text"])) for r in objs])
+            if model != HASH_MODEL:  # drop superseded offline mappings only; never discard real ones
+                conn.execute("DELETE FROM aec.embeddings WHERE object_id = ANY(%s) AND model = %s",
+                             ([r["id"] for r in objs], HASH_MODEL))
             conn.commit()  # each chunk is durable: an interrupted run resumes where it stopped
-            written += len(part)
+            embedded += n
+            written += len(objs)
             if progress is not None:
                 progress(written, len(rows))
         if delete_stale:
             deleted = conn.execute(
                 "DELETE FROM aec.embeddings d USING (SELECT e.object_id, e.model " + _STALE_SCOPE + ") s "
                 "WHERE d.object_id = s.object_id AND d.model = s.model", params).rowcount
-    return {"model": target, "dry_run": False, "pending": len(rows), "written": written, "skipped": skipped,
+            conn.commit()
+    return {"model": target, "dry_run": False, "pending": len(rows), "distinct_texts": len(groups),
+            "embedded_texts": embedded, "written": written, "skipped": skipped,
             "deleted": deleted, "retried_chunks": retried, "complete": failure is None and not skipped,
             "error": failure or service.last_error}
+
+
+def vectors_gc(db, *, batch: int = 5000, max_batches: int = 1000, min_age_seconds: float = 3600) -> dict[str, Any]:
+    """Delete text vectors that no object maps to any more (re-ingested or deleted drawings, replaced
+    hash-fallback vectors). Vectors younger than ``min_age_seconds`` are kept: an ingest writes its vectors
+    before its mappings commit. Batched; a batch that races a concurrent ingest (foreign-key violation) is
+    rolled back and the run stops, to be repeated later."""
+    removed, error = 0, None
+    with db.connect() as conn:
+        for _ in range(max_batches):
+            try:
+                n = conn.execute(
+                    """DELETE FROM aec.text_vectors tv USING (
+                           SELECT t.model, t.content_hash FROM aec.text_vectors t
+                           WHERE t.created_at < now() - make_interval(secs => %s)
+                             AND NOT EXISTS (SELECT 1 FROM aec.embeddings e
+                                             WHERE e.model = t.model AND e.content_hash = t.content_hash)
+                           LIMIT %s) dead
+                       WHERE tv.model = dead.model AND tv.content_hash = dead.content_hash""",
+                    (min_age_seconds, batch)).rowcount
+                conn.commit()
+            except Exception as exc:  # psycopg.errors.ForeignKeyViolation: a mapping was added meanwhile
+                conn.rollback()
+                error = f"{type(exc).__name__}: {exc}"
+                break
+            removed += n
+            if n < batch:
+                break
+        left = conn.execute("SELECT count(*) AS n FROM aec.text_vectors").fetchone()
+    return {"removed": removed, "text_vectors": left["n"] if isinstance(left, dict) else left[0], "error": error}

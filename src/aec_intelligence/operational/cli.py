@@ -221,6 +221,13 @@ def _add_batch_commands(subparsers):
     p.add_argument("--pg-restore", default=None)
     p.add_argument("--no-clean", action="store_true", help="Do not drop existing objects first")
 
+    p = subparsers.add_parser("vectors-gc", help="Delete text vectors no object maps to any more")
+    p.add_argument("--batch", type=int, default=5000)
+    p.add_argument("--min-age-seconds", type=float, default=3600.0,
+                   help="Keep vectors younger than this (an ingest writes vectors before its mappings commit)")
+
+    p = subparsers.add_parser("storage-report", help="Bytes per table/index and per document (embeddings vs the rest)")
+
     p = subparsers.add_parser("reembed", help="Re-embed objects lacking a vector of AEC_EMBEDDING_MODEL")
     p.add_argument("--project", default=None, help="Limit to one project id")
     p.add_argument("--batch-size", type=int, default=None, help="Embedding request batch size")
@@ -355,6 +362,43 @@ def _cmd_reembed(parsed, settings, db):
     return result
 
 
+def _cmd_vectors_gc(parsed, settings, db):
+    from .embeddings import vectors_gc
+
+    result = vectors_gc(db, batch=parsed.batch, min_age_seconds=parsed.min_age_seconds)
+    _emit(result)
+    return result
+
+
+STORAGE_TABLES = ("objects", "relations", "embeddings", "text_vectors", "documents", "jobs", "metrics",
+                  "kg_nodes", "kg_edges", "kg_aliases", "kg_communities")
+
+
+def _cmd_storage_report(parsed, settings, db):
+    """pg_total_relation_size of the aec tables plus database size and bytes per document."""
+    with db.connect() as conn:
+        tables = {}
+        for name in STORAGE_TABLES:
+            row = conn.execute("SELECT to_regclass(%s) AS r", (f"aec.{name}",)).fetchone()
+            if row["r"] is None:
+                continue
+            size = conn.execute("""SELECT pg_total_relation_size(%s::regclass) AS total,
+                                          pg_relation_size(%s::regclass) AS heap,
+                                          pg_indexes_size(%s::regclass) AS indexes""",
+                                (f"aec.{name}",) * 3).fetchone()
+            rows = conn.execute(f"SELECT count(*) AS n FROM aec.{name}").fetchone()["n"]
+            tables[name] = {"rows": rows, "total_bytes": size["total"], "heap_bytes": size["heap"],
+                            "index_bytes": size["indexes"]}
+        db_bytes = conn.execute("SELECT pg_database_size(current_database()) AS b").fetchone()["b"]
+        docs = conn.execute("SELECT count(*) AS n FROM aec.documents").fetchone()["n"]
+    vec = sum(tables.get(t, {}).get("total_bytes", 0) for t in ("embeddings", "text_vectors"))
+    result = {"database_bytes": db_bytes, "documents": docs, "tables": tables, "vector_bytes": vec,
+              "bytes_per_document": round(db_bytes / docs) if docs else None,
+              "vector_bytes_per_document": round(vec / docs) if docs else None}
+    _emit(result)
+    return result
+
+
 def _iter_dwg_sources(parsed):
     seen = set()
     if parsed.census:
@@ -416,6 +460,7 @@ BATCH_COMMANDS = {
     "bulk-census": _cmd_bulk_census,
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
     "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
+    "vectors-gc": _cmd_vectors_gc, "storage-report": _cmd_storage_report,
 }
 
 

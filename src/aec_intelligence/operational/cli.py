@@ -162,6 +162,8 @@ def _add_batch_commands(subparsers):
                    help="Scan only <root>/<folder> (repeatable); project grouping stays relative to the root")
     p.add_argument("--skip-placeholders", action="store_true",
                    help="Do not hash cloud-only placeholder files (avoids downloading them)")
+    p.add_argument("--hash-workers", type=int, default=1,
+                   help="Parallel hashing threads (cloud drives: ~6 is much faster than 1)")
     p.add_argument("--exclude", action="append", default=[],
                    help="Skip a folder/file: a path prefix (has a separator) or a name glob (repeatable)")
 
@@ -240,7 +242,8 @@ def _cmd_census(parsed, settings, db):
     result = run_census([*parsed.roots, *parsed.root], parsed.out,
                         _split(parsed.extensions) or DEFAULT_EXTENSIONS, resume=parsed.resume,
                         flush_every=parsed.flush_every, hash_placeholders=not parsed.skip_placeholders,
-                        progress=progress, only_folders=parsed.only_folder, exclude=parsed.exclude)
+                        progress=progress, only_folders=parsed.only_folder, exclude=parsed.exclude,
+                        hash_workers=parsed.hash_workers)
     summary = {k: v for k, v in result.summary.items() if k not in ("duplicates", "walk_errors")}
     summary["duplicate_groups"] = result.summary["duplicates"]["groups"]
     summary["outputs"] = [str(result.out / n) for n in ("census.jsonl", "census.csv", "summary.json", "summary.md")]

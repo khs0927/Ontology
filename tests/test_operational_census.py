@@ -433,3 +433,14 @@ def test_bulk_census_enqueues_sources_in_order_and_is_rerunnable(tmp_path, db):
             {os.path.abspath(str(root)), os.path.abspath(str(root / "현장A 오피스텔"))})
     finally:
         _cleanup(db, shas=shas, queue=queue)
+
+
+def test_parallel_hashing_records_the_same_rows(tmp_path):
+    root = _tree(tmp_path)
+    census.run_census([root], tmp_path / "one")
+    census.run_census([root], tmp_path / "many", hash_workers=4, flush_every=1)
+
+    def key(out):
+        return sorted((r["path"], r["sha256"], r["status"], r["dwg_version"]) for r in _rows(out))
+    assert key(tmp_path / "one") == key(tmp_path / "many")
+    assert census.plan_jobs(tmp_path / "many") == census.plan_jobs(tmp_path / "one")

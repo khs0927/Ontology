@@ -210,8 +210,11 @@ def refresh(db, project_key: str | None = None, *, leiden: bool = False, model: 
 
 
 def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: int | None = None,
-              max_level: int = 1) -> dict[str, Any]:
+              max_level: int = 1, gate=None) -> dict[str, Any]:
     """Summarise PENDING/FAILED communities with the local LLM (resumable: one commit per community).
+
+    ``gate`` (an ``InteractiveGate``) is consulted before every LLM call, so a background refresh
+    leaves the single local LLM slot to ``/v1/ask`` while users are asking.
 
     The model is loaded once up front (``llm.warm()``, long timeout). Two consecutive LLM endpoint
     failures end the run (``aborted``) instead of marking every remaining community FAILED one
@@ -224,6 +227,7 @@ def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: 
     warm_seconds = None
     aborted = None
     endpoint_failures = 0
+    yield_seconds = 0.0
     with db.connect(statement_timeout_seconds=120) as conn:
         sql = ("SELECT id, title, facts FROM aec.kg_communities WHERE status <> 'DONE' AND level <= %s"
                + (" AND project_key = %s" if project_key else "") + " ORDER BY level, project_key, id")
@@ -237,6 +241,8 @@ def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: 
                         "aborted": str(exc)[:300]}
         for row in rows[:limit] if limit else rows:
             facts = row["facts"] if isinstance(row["facts"], list) else json.loads(row["facts"])
+            if gate is not None:
+                yield_seconds += gate.wait_turn(conn)
             user = f"제목: {row['title']}\n사실:\n" + "\n".join(f"- {f}" for f in facts) + "\n\n위 사실만으로 요약하라."
             try:
                 res = llm.chat(SUMMARY_SYSTEM, user, max_tokens=450)
@@ -273,6 +279,8 @@ def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: 
     out = {"summarized": done, "failed": failed, "llm_seconds": round(seconds, 1)}
     if warm_seconds is not None:
         out["warm_seconds"] = warm_seconds
+    if yield_seconds:
+        out["yield_seconds"] = round(yield_seconds, 1)
     if aborted:
         out["aborted"] = aborted
     return out

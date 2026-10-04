@@ -163,6 +163,38 @@ def test_communities_are_cached_and_resumable(seeded):
     assert communities.summarize(db, llm, project_key=key)["summarized"] == 0  # cached by input_hash
 
 
+class CountingGate:
+    """Stands in for priority.InteractiveGate: records every yield point, pretends to wait 1 s."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def wait_turn(self, conn):
+        self.calls += 1
+        conn.execute("SELECT 1")  # the connection is usable at the yield point (no open txn issue)
+        return 1.0
+
+
+def test_background_refresh_yields_before_each_project_and_llm_call(seeded):
+    from aec_intelligence.operational.graphrag import communities
+    from aec_intelligence.operational.graphrag.kg import KnowledgeGraphBuilder
+
+    db, key, _ = seeded
+    gate = CountingGate()
+    stats = KnowledgeGraphBuilder(db).build(key, force=True, gate=gate)
+    assert stats["projects"] == 1 and gate.calls == 1 and stats["yield_seconds"] == 1.0
+    new = communities.refresh(db, key).get("new", 0)
+    with db.connect() as conn:
+        conn.execute("UPDATE aec.kg_communities SET status='FAILED', error='x' WHERE project_key=%s", (key,))
+        conn.commit()
+    gate = CountingGate()
+    llm = FakeLLM("요약입니다.")
+    out = communities.summarize(db, llm, project_key=key, gate=gate)
+    assert out["summarized"] == llm.calls == gate.calls >= max(new, 1)  # FAILED rows are retried
+    assert out["yield_seconds"] == float(gate.calls)
+    assert KnowledgeGraphBuilder(db).build(key, gate=CountingGate())["skipped"] == 1
+
+
 def test_mcp_gateway_graph_rag_query_and_explain_path(seeded, tmp_path, monkeypatch):
     from aec_intelligence.mcp_gateway import MCPGateway
     from aec_intelligence.operational.graphrag.kg import KnowledgeGraphBuilder

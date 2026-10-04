@@ -76,9 +76,9 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 | AEC-Bulk-Census-Refresh | 새/변경 도면 탐색 | 매일 03:00 | 〃 |
 | AEC-Ollama | `ollama-serve.ps1` → `C:\AECLocal\Ollama\ollama.exe serve` (이미 응답 중이면 즉시 종료 = 감시, 시작 시 로그 200 MB 넘으면 회전) | 로그온 + 5분마다 감시 | `register-host-tasks.ps1` |
 | AEC-Reembed | `reembed.ps1` (대기 중 벡터 채우기, 청크 단위 커밋) | 로그온 + 30분마다 | 〃 |
-| AEC-WSL-Reclaim | `wsl-reclaim.ps1` (Windows 가용 RAM < 750 MB일 때만 VM 페이지 캐시 비움) | 30분마다 | 〃 |
+| AEC-WSL-Reclaim | `wsl-reclaim.ps1` (Windows 가용 RAM < 750 MB일 때만, 최대 2시간에 1번, VM dirty 페이지 ≤ 64 MB일 때만 깨끗한 페이지 캐시 비움; `sync` 안 함) | 30분마다 | 〃 |
+| AEC-GraphRAG-Refresh | `graphrag.ps1 refresh`: 바뀐 프로젝트만 kg-build → kg-summarize(FAILED 커뮤니티 재시도) → kg-stats. 대화형 질의에 양보, 뮤텍스로 중복 방지, 3시간 제한, 로그 `D:\AECData\bulk\logs\graphrag-yyyyMMdd.log`(14일 지나면 삭제) | 로그온 10분 후 + 2시간마다 | `register-host-tasks.ps1 -Only GraphRag` |
 | `\AEC-DB-Backup` | `backup.ps1 -Keep 7 -Target D:\AECData\backups` | 매일 04:30 | `register-backup-task.ps1` |
-| (선택) AEC-GraphRAG-Refresh | KG 재구성 + 커뮤니티 요약 | N시간마다 | `register-graphrag-task.ps1` |
 
 - 모든 작업은 `MultipleInstances=IgnoreNew` + 스크립트 내부 뮤텍스 → 반복 트리거가 와도 중복 실행되지 않습니다.
 - 감시 트리거가 있으므로 프로세스가 조용히 죽어도 5–30분 안에 다시 뜹니다. 긴 작업은 **절대 임시 셸에서 띄우지 말고** 작업 스케줄러로 실행합니다.
@@ -106,6 +106,30 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 - 공간 점검: `docker system df`, `Get-PSDrive C,D`.
 - **백업도 D:에 있습니다**(DB와 같은 USB 디스크). 디스크 고장 시 둘 다 잃으므로, 중요한 시점에는 덤프를 다른 디스크/Drive로
   복사하세요([DRIVE-CHECKPOINT.ko.md](DRIVE-CHECKPOINT.ko.md)).
+
+### aec-db 크래시와 복구 시간 (2026-10-04 22:01 사건)
+
+- 증상: `server process (PID …) exited with exit code 2` → postmaster가 모든 연결을 끊고 크래시 복구,
+  WAL redo 366 MB에 **489 s**(USB에서 캐시가 빈 상태의 무작위 읽기). reembed가 죽고 API가 8분간 응답 불가.
+- 확인한 것: VM 커널 로그(`wsl -d docker-desktop -e dmesg`)에 OOM/segfault 없음, VM 가용 메모리 3.9 GB,
+  Postgres 로그에 해당 PID의 ERROR/PANIC 없음. 종료 코드 2는 Postgres 백엔드의 비상 종료 핸들러
+  (SIGQUIT → `_exit(2)`) 형태이며 보낸 쪽은 로그로 특정할 수 없었습니다(근본 원인 미확정).
+- 같은 순간의 사건: AEC-WSL-Reclaim의 `docker run --privileged alpine sh -c "sync; echo 1 > drop_caches"`
+  (22:00:46–22:01:10, 커널 로그 `drop_caches: 1`)가 6분짜리 체크포인트(write 254 s, sync 93 s) 도중에
+  VM 전체 dirty 페이지를 USB로 강제 flush.
+- 완화(코드에 반영):
+  1. `wsl-reclaim.ps1`: `sync` 제거, dirty+writeback > 64 MB면 건너뜀, 최대 2시간에 1번.
+  2. `docker-compose.yml` db: `shared_buffers=512MB`(공유 메모리라 drop_caches가 못 비움 → 재시작 후에도 핫 페이지 유지),
+     `work_mem=16MB`, `maintenance_work_mem=256MB`, `effective_cache_size=2GB`, `max_wal_size=512MB`(redo 상한 ≈ 절반),
+     `wal_compression=lz4`(full-page image 축소 → USB 쓰기 감소), `log_checkpoints=on`, `shm_size=256m`
+     (병렬 쿼리의 `could not resize shared memory segment` 해결), `stop_grace_period=10m`(기본 10 s면 종료 체크포인트 중
+     SIGKILL → 매 재시작이 크래시 복구). 값은 `.env`의 `AEC_PG_*`로 바꿀 수 있습니다.
+  3. VM 메모리 예산(6 GB): Postgres 공유 512 MB + 백엔드 ~10×16 MB + 다른 컨테이너 ~1.5 GB → 여유 충분.
+- db 설정 적용 = 컨테이너 재생성(재시작). 순서: `stop-workers.ps1` 로 워커·reembed 비우기 →
+  `docker exec aec-db psql -U aec -d aec -c CHECKPOINT` (종료 체크포인트를 짧게) → `docker stop -t 600 aec-db` →
+  `docker compose up -d --no-deps db` → healthy 확인 → `stop-workers.ps1 -Resume`.
+- 확인: `docker exec aec-db psql -U aec -d aec -Atc "show shared_buffers"`; 크래시가 다시 나면
+  `docker logs aec-db --since <UTC>` 와 `wsl -d docker-desktop -e dmesg` 를 함께 보고, `wsl-reclaim.log`의 시각과 대조합니다.
 
 ## 6. 백업 / 복원 / 복원 훈련
 
@@ -197,7 +221,7 @@ python -m aec_intelligence.operational.cli storage-report   # 테이블/인덱�
 | 적재 작업이 몇 분씩 걸림, 로그에 `embeddings pending ... timed out` | Ollama 로드 실패. `ollama ps`, serve.log의 `watchdog`/`Load failed`/`Vulkan` 확인 → §4 재시작. 대기 벡터는 AEC-Reembed가 채움 |
 | 적재가 느리고 `pg_stat_activity`에 `DataFileRead` 대기 | USB D:에서 캐시 미스. 무거운 작업(복원 훈련, 대량 평가) 동시 실행 피하기, AEC-WSL-Reclaim 임계값 확인 |
 | 워커가 아무것도 안 함 | `D:\AECData\bulk\STOP-WORKERS` 남아 있음 → `stop-workers.ps1 -Resume`; 또는 디스크 가드(§7) |
-| `could not resize shared memory segment` | 컨테이너 `/dev/shm` 64 MB. 병렬 인덱스 빌드 끄기(`max_parallel_maintenance_workers=0`, 스크립트에 반영됨) |
+| `could not resize shared memory segment` | 컨테이너 `/dev/shm` (이제 compose `shm_size: 256m`). 병렬 인덱스 빌드 끄기(`max_parallel_maintenance_workers=0`, 스크립트에 반영됨) |
 | 호스트 연결마다 10초 지연 | DSN `localhost` → `127.0.0.1` |
 | PC 메모리 부족(가용 < 0.5 GB) | qwen3는 10분 유휴 후 내려감. 사용자 앱(브라우저 등) 정리, `workers` 1로 |
 | Docker 재시작 후 일부 컨테이너 없음 | restart 정책 없는 사용자 컨테이너를 `docker start` |

@@ -7,17 +7,19 @@
     AEC_DATABASE_URL) and AEC_API_TOKEN are generated.
   - .env present  -> only an empty/missing AEC_API_TOKEN is generated. Existing values are never
     changed (rotating AEC_DB_PASSWORD would lock you out of an initialised Postgres volume).
-  - -PowerCadEnv <path> also writes POWERCAD_ONTOLOGY_TOKEN=<same token> into that file
-    (created if missing, existing other lines kept, previous file backed up to *.bak-<time>).
+  - -SetUserEnv also stores POWERCAD_ONTOLOGY_TOKEN=<same token> as a Windows *user* environment
+    variable. power-cad-mcp has no .env file: MCP clients (Claude Desktop, Cursor, ...) start it with
+    their own environment, which inherits user variables after the client is restarted.
+    Alternatively put the value into the client's MCP server "env" block yourself.
   Secrets are never printed; .env is gitignored.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\ops\init-env.ps1
-  powershell -ExecutionPolicy Bypass -File scripts\ops\init-env.ps1 -PowerCadEnv C:\CODE\power-cad-mcp\.env
+  powershell -ExecutionPolicy Bypass -File scripts\ops\init-env.ps1 -SetUserEnv
 #>
 param(
     [string]$EnvPath,
-    [string]$PowerCadEnv,
+    [switch]$SetUserEnv,
     [switch]$RotateToken
 )
 $ErrorActionPreference = 'Stop'
@@ -80,12 +82,7 @@ if (-not $token -or $RotateToken) {
 }
 [System.IO.File]::WriteAllLines($EnvPath, $lines, $utf8)
 
-if ($PowerCadEnv) {
-    $pcLines = Read-Lines $PowerCadEnv
-    if (Test-Path -LiteralPath $PowerCadEnv) {
-        Copy-Item -LiteralPath $PowerCadEnv -Destination ("$PowerCadEnv.bak-" + (Get-Date -Format 'yyyyMMddHHmmss'))
-    }
-    Set-Value $pcLines 'POWERCAD_ONTOLOGY_TOKEN' $token
-    [System.IO.File]::WriteAllLines($PowerCadEnv, $pcLines, $utf8)
-    Write-Host "Wrote POWERCAD_ONTOLOGY_TOKEN (= AEC_API_TOKEN) to $PowerCadEnv."
+if ($SetUserEnv) {
+    [Environment]::SetEnvironmentVariable('POWERCAD_ONTOLOGY_TOKEN', $token, 'User')
+    Write-Host "Set user environment variable POWERCAD_ONTOLOGY_TOKEN (= AEC_API_TOKEN). Restart the MCP client."
 }

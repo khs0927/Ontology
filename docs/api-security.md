@@ -29,7 +29,7 @@ docker-compose는 `.env`의 `AEC_API_TOKEN`, `AEC_CORS_ORIGINS`를 api 컨테이
 - **설치 시 생성, `.env`에 저장**: `scripts/ops/init-env.ps1`이 `.env`가 없으면 `.env.example`에서 만들고
   `AEC_API_TOKEN`(32바이트 URL-safe 난수)과 `AEC_DB_PASSWORD`를 생성합니다. 이미 있는 값은 바꾸지 않습니다
   (DB 비밀번호를 바꾸면 초기화된 Postgres 볼륨에 접속할 수 없음). `.env`는 gitignore 대상이며 값은 출력하지 않습니다.
-- **power-cad-mcp에 같은 값 전달**: `-PowerCadEnv C:\CODE\power-cad-mcp\.env`로 `POWERCAD_ONTOLOGY_TOKEN`을 같이 씁니다(기존 파일은 `.bak-<시각>`으로 백업).
+- **power-cad-mcp에 같은 값 전달**: `-SetUserEnv`를 주면 `POWERCAD_ONTOLOGY_TOKEN`을 Windows 사용자 환경 변수로 저장합니다. power-cad-mcp는 `.env`를 읽지 않고 MCP 클라이언트가 넘겨주는 환경을 쓰므로, 클라이언트를 재시작하거나 클라이언트 MCP 설정의 `env`에 같은 값을 넣으세요.
 - **교체**: `-RotateToken`으로 새 토큰을 만들고 Ontology API와 power-cad-mcp를 재시작합니다.
 - 코드 기본값(미설정 = 인증 없음)은 기존 배포 호환을 위해 유지하지만, 새 설치는 위 스크립트로 항상 토큰을 켭니다.
 - Linux/macOS: `python -c "import secrets; print(secrets.token_urlsafe(32))"` 값을 `.env`의 `AEC_API_TOKEN=`에 넣습니다.

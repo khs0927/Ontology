@@ -85,7 +85,9 @@ class LocalLLM:
                                      headers={"Content-Type": "application/json"})
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+            # No proxy handler: a system/env HTTP proxy must never see drawing text bound for the local LLM.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=self.config.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             raise LLMError(f"LLM endpoint failed: {exc}") from exc

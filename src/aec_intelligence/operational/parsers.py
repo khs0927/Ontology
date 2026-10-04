@@ -351,7 +351,7 @@ class _DXFSemantics:
             number = str(fields.get('drawingNumber') or '').strip()
             drawing_title = str(fields.get('drawingTitle') or '').strip()
             category = drawing_category(('title_block', drawing_title), ('layout_name', self.sheet.name))
-            storey = storey_from_text(drawing_title)
+            storey = storey_from(('title_block', drawing_title)).get('storey')
             props = {
                 'view_kind': 'sheet_region',
                 'layout': self.sheet.name,

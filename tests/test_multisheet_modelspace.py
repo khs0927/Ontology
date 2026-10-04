@@ -55,7 +55,7 @@ def test_modelspace_title_blocks_create_independent_sheet_regions(tmp_path: Path
     ]
     assert len(regions) == 2
     assert {r["properties"]["drawingNumber"] for r in regions} == {"A-101", "A-102"}
-    assert {r["properties"]["storey"] for r in regions} == {"1층", "2층"}
+    assert {r["properties"]["storey"] for r in regions} == {"1F", "2F"}
 
     parent = next(
         o for o in result["objects"]
@@ -66,9 +66,9 @@ def test_modelspace_title_blocks_create_independent_sheet_regions(tmp_path: Path
     assert "title_block" not in parent["properties"]
 
     spaces = {o["properties"]["roomNameNormalized"]: o for o in result["objects"] if o["type"] == "Space"}
-    assert spaces["침실1"]["properties"]["storey"] == "1층"
+    assert spaces["침실1"]["properties"]["storey"] == "1F"
     assert spaces["침실1"]["properties"]["drawingNumber"] == "A-101"
-    assert spaces["침실2"]["properties"]["storey"] == "2층"
+    assert spaces["침실2"]["properties"]["storey"] == "2F"
     assert spaces["침실2"]["properties"]["drawingNumber"] == "A-102"
 
     depicts = [r for r in result["relations"] if r["predicate"] == "depicts"]

@@ -44,7 +44,7 @@ def test_nested_block_room_and_area_text_are_extracted_in_wcs(tmp_path: Path):
     spaces = [o for o in result["objects"] if o["type"] == "Space"]
     living = next(o for o in spaces if o["properties"].get("roomName") == "거실")
     assert living["properties"]["area"] == pytest.approx(25.5)
-    assert living["properties"]["storey"] == "1층"
+    assert living["storey"] == "1F"
 
     nested = [
         o for o in result["objects"]
@@ -85,4 +85,4 @@ def test_nested_block_attribute_room_name_becomes_space(tmp_path: Path):
     bedroom = next(o for o in spaces if o["properties"].get("roomNameNormalized") == "침실2")
     assert bedroom["properties"]["roomName"] == "침실 2"
     assert {"침실2", "침실 2"} <= set(bedroom["properties"]["roomNameAliases"])
-    assert bedroom["properties"]["storey"] == "2층"
+    assert bedroom["storey"] == "2F"

@@ -14,3 +14,6 @@ projects/
 .coverage
 
 .env
+
+# Host-side ops logs (scripts/ops/*.ps1 write here; may name private drawing paths)
+logs/

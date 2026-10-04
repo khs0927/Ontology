@@ -24,6 +24,8 @@ COPY . .
 # the host .env nor rewrite host scripts that the scheduled tasks run.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin aec
 USER aec
+# No home directory: point caches (ezdxf font cache) at a writable tmp path instead of a warning per run.
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 EXPOSE 8000
 CMD ["uvicorn", "aec_intelligence.operational.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

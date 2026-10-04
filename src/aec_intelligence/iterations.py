@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from .cair import CAIRSnapshot, utc_now
+from .cair import utc_now
 
 
 def _read_json(path: Path) -> dict[str, Any]:

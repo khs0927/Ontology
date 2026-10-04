@@ -23,7 +23,8 @@ def project_law_evidence(metadata, *, response_bytes=None):
     if kind not in ('mock-fixture', 'official-api-response'):
         raise ValueError('unknown verification kind')
     try:
-        effective = date.fromisoformat(metadata['effective_from'])
+        date.fromisoformat(  # validates effective_from
+            metadata['effective_from'])
         observed = datetime.fromisoformat(metadata['observed_at'].replace('Z', '+00:00'))
         if observed.tzinfo is None:
             raise ValueError('observation needs timezone')

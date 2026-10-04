@@ -31,7 +31,7 @@ def main(args=None):
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     # init-db
-    init_parser = subparsers.add_parser("init-db", help="Initialize PostgreSQL schema and extensions")
+    subparsers.add_parser("init-db", help="Initialize PostgreSQL schema and extensions")
 
     # worker
     worker_parser = subparsers.add_parser("worker", help="Run background ingestion worker")

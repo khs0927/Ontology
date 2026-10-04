@@ -28,7 +28,7 @@ from .formats import GISParser, IFCParser
 from .graph import write_graph_exports
 from .ontology import write_turtle
 from .pipeline import DXFIngestionPipeline
-from .query import HybridQueryRouter, LocalObjectIndex
+from .query import HybridQueryRouter
 from .registry import ArtifactRegistry
 from .rebuild import rebuild_runtime_from_repository
 from .rebuild import rebuild_global_indexes_from_projects

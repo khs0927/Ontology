@@ -760,10 +760,10 @@ def parse_source(source, doc, output, settings, source_name=None):
                 except Exception as exc:
                     warnings.append(f'Page {i+1}: vector analysis failed: {exc}')
                     analysis = {'title_block':None,'dimensions':[],'grids':[],'walls':[]}
-                def make(key, kind, text, bbox, state, props, extra, _page=page_obj, _i=i):
+                def make(key, kind, text, bbox, state, props, extra, _page=page_obj, _i=i, _vectors=vectors_path):
                     return observation(doc,f'page:{_i+1}:{key}',kind,f'{text} {ALIASES.get(kind,kind)}',
                         {**_page['evidence'],'bbox':[bbox['min_x'],bbox['min_y'],bbox['max_x'],bbox['max_y']],
-                         'vectors_path':_safe_relative(vectors_path, settings.data_root),**extra},
+                         'vectors_path':_safe_relative(_vectors, settings.data_root),**extra},
                         bbox,state=state,properties=props)
                 title = None
                 for obj in page_objects(analysis, i+1, name, make, warnings):

@@ -10,7 +10,7 @@ import mimetypes
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Iterable, Protocol
+from typing import Any, Protocol
 
 
 SECURITY_CLASSIFICATIONS = {"PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"}

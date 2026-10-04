@@ -368,7 +368,6 @@ class GISParser:
         features: list[NormalizedGISFeature] = []
         for index, row in frame.iterrows():
             geometry = row.geometry.__geo_interface__ if row.geometry is not None else None
-            points = _coordinate_points((geometry or {}).get("coordinates"))
             bbox = [float(value) for value in row.geometry.bounds] if row.geometry is not None else None
             properties = {str(key): value for key, value in row.drop(labels=["geometry"]).items() if value is not None}
             features.append(NormalizedGISFeature(str(index), (geometry or {}).get("type"), geometry, properties, bbox))

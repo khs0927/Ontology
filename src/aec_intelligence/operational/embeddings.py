@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import struct
 import threading
 import time
 import urllib.error
@@ -81,20 +82,40 @@ def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIM) -> list[floa
     return vec
 
 
+def _halfvec_roundtrip(values: list[float]) -> list[float]:
+    """The values as they read back from the fp16 (halfvec) storage column."""
+    halves: list[float] = []
+    for value in values:
+        try:
+            halves.append(struct.unpack("<e", struct.pack("<e", value))[0])
+        except (OverflowError, struct.error) as exc:
+            raise EmbeddingEndpointError(f"component {value!r} does not fit the fp16 storage column") from exc
+    return halves
+
+
 def _validate_remote_vector(vec: list[Any]) -> list[float]:
-    """Coerce one remote vector to float and reject what a vector column cannot hold.
+    """Coerce one remote vector to float and reject what the storage column cannot hold.
 
     Magnitude is left alone: ``aec.embeddings`` is indexed with
     ``vector_cosine_ops`` and every query uses the cosine operator, so a
     non-unit vector is comparable and rescaling it would be a silent transform.
     A zero vector and any non-finite component are rejected, because cosine
     distance against them is undefined and the row would poison the index.
+
+    The check runs on the fp16 round trip as well, because ``aec.text_vectors.embedding``
+    is a ``halfvec``: a vector small enough to round to zeros there would be stored as
+    exactly the zero vector this function exists to refuse.
     """
     values = [float(v) for v in vec]
     if not all(math.isfinite(v) for v in values):
         raise EmbeddingEndpointError("model returned a non-finite component (NaN/Inf)")
     if math.sqrt(sum(v * v for v in values)) <= 1e-9:
         raise EmbeddingEndpointError("model returned a zero vector; cosine distance is undefined")
+    halves = _halfvec_roundtrip(values)
+    if not all(math.isfinite(h) for h in halves):
+        raise EmbeddingEndpointError("model returned a component that overflows fp16 storage")
+    if math.sqrt(sum(h * h for h in halves)) <= 1e-9:
+        raise EmbeddingEndpointError("vector rounds to zero in fp16 storage; cosine distance is undefined")
     return values
 
 

@@ -210,3 +210,29 @@ def test_local_endpoints_bypass_proxies():
     assert not netguard.is_local_endpoint("http://8.8.8.8/v1/embeddings")
     direct = netguard.opener_for("http://127.0.0.1:11434")
     assert not any(type(h).__name__ == "ProxyHandler" and h.proxies for h in direct.handlers)
+
+
+def test_vector_that_rounds_to_fp16_zeros_is_rejected(monkeypatch, tmp_path):
+    # float32 norm is ~3e-7, so every component rounds to 0 in halfvec: the row would
+    # be stored as the zero vector this guard exists to refuse.
+    tiny = [1e-8] * emb.EMBEDDING_DIM
+    install(monkeypatch, lambda i, body: openai_body([tiny]))
+    service = emb.EmbeddingService(make_settings(tmp_path, url=ENDPOINT))
+    with pytest.raises(emb.EmbeddingEndpointError, match="fp16"):
+        service.embed_with_model(["x"])
+
+
+def test_component_that_overflows_fp16_is_rejected(monkeypatch, tmp_path):
+    big = [0.0] * emb.EMBEDDING_DIM
+    big[0] = 70000.0  # above the fp16 maximum of 65504
+    install(monkeypatch, lambda i, body: openai_body([big]))
+    service = emb.EmbeddingService(make_settings(tmp_path, url=ENDPOINT))
+    with pytest.raises(emb.EmbeddingEndpointError, match="fp16"):
+        service.embed_with_model(["x"])
+
+
+def test_ordinary_vector_survives_the_fp16_roundtrip():
+    values = [0.5, -0.25, 1.0, 1e-3] + [0.0] * (emb.EMBEDDING_DIM - 4)
+    halves = emb._halfvec_roundtrip(values)
+    assert halves[:4] == pytest.approx(values[:4], rel=1e-3)
+    assert sum(h * h for h in halves) > 0

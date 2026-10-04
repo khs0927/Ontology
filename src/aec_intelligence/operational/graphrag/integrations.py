@@ -273,19 +273,20 @@ def load_section_handoffs(directory: str | Path | None) -> dict[str, dict[str, A
 
 def match_section(designation: str, catalog: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, str | None]:
     """Catalog entry for a canonical drawing designation and how it matched:
-    ``exact``; ``nominal`` (``H-350x350`` -> the single ``H-350x350x..`` entry; ambiguous -> no match);
+    ``exact``; ``nominal`` (``H-350x350`` / ``H-300x150x6.5`` -> the single catalog entry extending the written
+    dimensions; ambiguous -> no match);
     ``computed`` (plates/flat bars ``PL-t x w`` / ``FB-t x w``: weight from 7.85 t/m3, no catalog row)."""
     if not designation:
         return None, None
     if designation in catalog:
         return catalog[designation], "exact"
-    m = re.match(r"^(H|BH|C|T)-(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$", designation)
-    if m:
+    if re.match(r"^(H|BH|C|T|L|SHS|RHS)-\d+(?:\.\d+)?(?:x\d+(?:\.\d+)?)+$", designation):
+        # Drawings often omit trailing thicknesses (H-300x150, H-300x150x6.5): a unique catalog entry that
+        # extends the written dimensions is the section; two or more candidates are left unmatched.
         prefix = f"{designation}x"
         hits = [k for k in catalog if k.startswith(prefix)]
         if len(hits) == 1:
             return catalog[hits[0]], "nominal"
-        return None, None
     m = re.match(r"^(PL|FB)-(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$", designation)
     if m:
         t, w = float(m.group(2)), float(m.group(3))

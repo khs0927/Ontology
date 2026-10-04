@@ -46,6 +46,8 @@ def test_match_section_exact_nominal_computed_and_ambiguous():
     entry, how = match_section("H-350x350", cat)
     assert how == "nominal" and entry["spec"] == "H350x350x12x19"
     assert match_section("H-400x200", cat) == (None, None)  # two candidates -> never guess
+    assert match_section("H-400x200x8", cat)[0]["spec"] == "a"  # flange thickness omitted, unique
+    assert match_section("H-350", cat) == (None, None)  # a single dimension is never a section
     plate, how = match_section("PL-20x300", cat)
     assert how == "computed" and plate["unit_weight_kg_m"] == pytest.approx(47.1)
     assert match_section("PIPE-50", cat) == (None, None)  # nominal pipe size: no OD -> no match

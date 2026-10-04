@@ -254,6 +254,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return kg_stats(db)
 
+    @app.get("/v1/kg/projects/{project_key}/facts")
+    def kg_project_facts(project_key: str) -> dict[str, Any]:
+        """``aec-facts-export/1``: rule facts + ArchOntos subject refs for one canonical project."""
+        from .graphrag.integrations import project_facts
+
+        result = project_facts(db, project_key)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return json.loads(json.dumps(result, ensure_ascii=False, default=str))
+
     @app.get("/v1/kg/nodes/{node_id:path}")
     def kg_node(node_id: str, limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
         """One knowledge-graph node with its outgoing and incoming edges (explain a graph path)."""

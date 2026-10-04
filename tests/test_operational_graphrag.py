@@ -133,8 +133,8 @@ def test_ask_routes_cites_and_refuses(seeded):
     assert cited["document_ids"][0] == cited["document_id"]
 
     # _0626 supersedes _0611: the older revision's 2 doors are not counted next to the newer drawing's 1.
-    res = rag.ask(f"그래프시험{RUN} 문은 몇 개야?", project=key, generate=False)
-    assert res["route"] == "graph:elements"
+    res = rag.ask(f"그래프시험{RUN} 문은 몇 개야?", project=key)  # LLM skipped for graph aggregates
+    assert res["route"] == "graph:elements" and res["answer_mode"] == "extractive" and res["citations"]
     first = res["answer"].splitlines()[0]
     assert "한 도면 최대 1개" in first and "도면 1건" in first and "_0611" not in first, first
 

@@ -32,6 +32,9 @@ PARTICLES = ("에서는", "에서", "에는", "으로", "까지", "부터", "이
              "만", "과", "와", "로", "나")
 MAX_CONTEXT = 12
 SEMANTIC_MIN_SCORE = 0.35
+# Routes whose answer is an aggregate computed by the graph template itself: the LLM is skipped so numbers are
+# never re-summed or rounded by the model (the context line already states per-drawing and max counts).
+EXTRACTIVE_ROUTES = {"graph:elements"}
 
 ANSWER_SYSTEM = (
     "너는 건축 도면 지식그래프 기반 질의응답 도우미다.\n"
@@ -649,7 +652,9 @@ class GraphRAG:
                           warnings=[gate or "no grounded context"])
             return result
         answer, mode, llm_ms, model = None, "extractive", 0, None
-        if generate and self.llm is not None:
+        if generate and self.llm is not None and ret["route"] in EXTRACTIVE_ROUTES:
+            warnings.append(f"{ret['route']}: counts answered from the graph aggregate (no LLM)")
+        elif generate and self.llm is not None:
             prompt = "[자료]\n" + "\n".join(f"[{i.cid}] {i.text}" for i in items) + f"\n\n[질문]\n{question}"
             try:
                 res = self.llm.chat(ANSWER_SYSTEM, prompt, max_tokens=600)

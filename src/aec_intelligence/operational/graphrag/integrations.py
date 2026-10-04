@@ -127,6 +127,7 @@ def load_rules(path: str | Path | None) -> tuple[list[dict[str, Any]], list[str]
         rules.append({"id": str(rid), "version_label": raw.get("version_label"),
                       "title": str(raw.get("title") or rid)[:200], "text": raw.get("text"),
                       "source": raw.get("source"), "logic_expr": raw.get("logic_expr"),
+                      "outcome": raw.get("outcome") if raw.get("outcome") in ("PASS", "FAIL", "REVIEW") else None,
                       "space_uses": sorted({u for u in (canonical_room(x) for x in uses) if u}),
                       "subjects": subjects})
     if len(raw_rules) > MAX_RULES:

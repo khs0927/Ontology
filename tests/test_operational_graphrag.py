@@ -193,7 +193,7 @@ def test_archontos_rules_link_by_subject_ref_and_facts_export(seeded, tmp_path):
     beam = f"obs_gr_{RUN}_3_2"
     pid_b = docs[2][1]
     rules = {"schema": "archontos-rule-export/1", "rules": [
-        {"rule_id": "R-stair", "version_label": "v1", "title": "직통계단 2개소",
+        {"rule_id": "R-stair", "version_label": "v1", "title": "직통계단 2개소", "outcome": "REVIEW",
          "applies_to": [{"schema": "archontos-aec-subject-ref/1", "project_id": pid_b}]},
         {"rule_id": "R-beam", "title": "보 내화",
          "applies_to": [{"project_id": pid_b, "object_id": beam, "source_id": h_old,
@@ -207,6 +207,9 @@ def test_archontos_rules_link_by_subject_ref_and_facts_export(seeded, tmp_path):
         reqs = {r["name"]: r for r in conn.execute(
             "SELECT id, name FROM aec.kg_nodes WHERE project_key=%s AND type='Requirement'", (key,))}
         assert set(reqs) == {"직통계단 2개소", "보 내화", "회의실 배연"}  # unknown project never linked
+        outcome = conn.execute("SELECT props->>'outcome' AS o FROM aec.kg_nodes WHERE id=%s",
+                               (reqs["직통계단 2개소"]["id"],)).fetchone()["o"]
+        assert outcome == "REVIEW"
         edges = {(r["name"], r["src"]): r["evidence"] for r in conn.execute(
             """SELECT n.name, e.src, e.evidence FROM aec.kg_edges e JOIN aec.kg_nodes n ON n.id = e.dst
                WHERE e.project_key=%s AND e.predicate='subjectTo'""", (key,))}

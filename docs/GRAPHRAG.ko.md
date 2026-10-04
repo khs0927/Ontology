@@ -24,9 +24,10 @@ aec.documents / objects / relations ──kg-build──▶ aec.kg_nodes / kg_ed
 | Drawing / Sheet | 문서 1건 / 시트(레이아웃·페이지) | `hasSheet`, `depictsStorey`, `depictsSpace`, `hasElements`, `usesSection` |
 | DrawingSeries | 같은 도면의 사본·개정(`_0611/_0626` 등) | `hasRevision`; Drawing `supersedes` Drawing(새 → 옛) |
 | Storey | 프로젝트별 층(1F/B1/RF 정규화) | `hasSpace`, `hasElements` |
-| Space | 프로젝트+층별 실(표기 차이 통합, 별칭 보관) | (Requirement는 규칙 파일 지정 시) |
+| Space | 프로젝트+층별 실(표기 차이 통합, 별칭 보관) | `subjectTo` Requirement (규칙 파일 지정 시) |
 | ElementGroup | 도면 × 객체 종류(문·창·기둥·계단·벽…) 개수 | `hasSection` |
-| SteelSection | 철골 단면(hs-steel 카탈로그로 정규화) | |
+| SteelSection | 철골 단면(hs-steel 카탈로그로 정규화, `catalog_match` = exact/nominal/computed) | |
+| Requirement | ArchOntos 규칙(규칙 파일 지정 시). `outcome`, `stale_links` 보관 | Project/Drawing/Space/ElementGroup `subjectTo` Requirement |
 
 중복 파일(같은 sha256)은 census v3에서 이미 하나의 문서 + 별칭이므로 노드가 늘지 않습니다.
 `kg-build`는 프로젝트 단위로 원자적(삭제+삽입 한 트랜잭션)이고, 문서 지문이 같으면 건너뜁니다.
@@ -96,6 +97,24 @@ Invoke-RestMethod "http://127.0.0.1:58000/v1/kg/nodes/kg:p:<project_key>" -Heade
   `AEC_DATABASE_URL`이 필요합니다.
 - power-cad-mcp: `ontology_ask(question, project_id?, top_k?, generate?)` → 인용의 `object_ids`를
   `ontology_locate`에 넘겨 열린 AutoCAD 도면에서 위치를 확인합니다. 제한시간 `POWERCAD_ONTOLOGY_ASK_TIMEOUT`.
+
+### 다른 저장소와의 연결 (ArchOntos · hs-steel-cad)
+
+- **ArchOntos 법규 규칙**: `aec operational kg-facts <project_key> --out facts.json`
+  (또는 `GET /v1/kg/projects/{key}/facts`)이 `aec-facts-export/1`을 냅니다. 내용은 규칙 엔진용 사실
+  (`building.floor_count`, `building.basement_count`, `building.storeys`, `space.uses`, `steel.sections`), 근거 노드,
+  `archontos-aec-subject-ref/1` 주체 참조입니다. ArchOntos `python -m archontos.integration.ontology`가 이 파일로
+  규칙을 평가하고 `archontos-rule-export/1` 링크 파일을 만듭니다. 그 파일을 `kg-build --rules`(또는
+  `AEC_RULES_FILE`)로 주면 `subjectTo` 엣지가 생깁니다. 도면 해시가 바뀐 참조는 `stale: true`로 연결됩니다.
+  도면에서 확인할 수 없는 사실(직통계단 수, 용도, 연면적)은 내보내지 않습니다. 그래서 그런 규칙은 ArchOntos에서
+  `REVIEW`가 됩니다. 자세한 내용은 ArchOntos `docs/ONTOLOGY-INTEGRATION.md`에 있습니다.
+- **hs-steel-cad 단면**: `AEC_STEEL_CATALOG_DIR`의 `hs-steel-section-catalog/1` 핸드오프 JSON
+  (hs-steel MCP `SectionCatalogHandoff`, 검증 PASS + 원본 sha256 필수)과 기존 `attributes/*.dat`를 읽습니다.
+  `[`(채널)·`ㅁ`(각관)·`Φ`(강관)·`F`(평강) 표기는 도면 쪽 표기(`C-`, `SHS-/RHS-`, `PIPE-`, `FB-`)로 맞춥니다.
+  일치 방식은 세 가지입니다. `exact`(그대로 일치), `nominal`(도면이 두께를 생략한 경우 후보가 하나뿐일 때만,
+  예: `H-300x150x6.5` → `H-300x150x6.5x9`), `computed`(카탈로그에 없는 판재·평강의 단위중량을 7.85 t/m³로 계산).
+  2026-10-04 실데이터에서 고유 단면 72종 중 44종(61%)이 연결됐습니다(이전 exact만 25종). 나머지는 카탈로그에 없는
+  규격이거나 파서가 잘못 읽은 표기입니다.
 
 ## 4. 평가 (골든셋은 PC에만)
 

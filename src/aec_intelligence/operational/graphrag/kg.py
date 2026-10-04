@@ -520,6 +520,7 @@ class KnowledgeGraphBuilder:
             rid = f"kg:req:{key}:{short_hash(str(req['id']), str(req.get('version_label') or ''), n=12)}"
             node = g.node(rid, "Requirement", req["title"], rule_id=req["id"], version_label=req.get("version_label"),
                           text=req.get("text"), source=req.get("source"), has_logic=bool(req.get("logic_expr")),
+                          outcome=req.get("outcome"),
                           stale_links=sum(1 for e in links.values() if e.get("stale")))
             docs_seen: list[str] = []
             for target, evidence in sorted(links.items()):

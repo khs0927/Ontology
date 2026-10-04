@@ -65,8 +65,8 @@ def test_oda_converter_tolerates_undecodable_console_output(tmp_path: Path):
     fake = tmp_path / "fake_oda.py"
     fake.write_text(
         "import sys, pathlib\n"
-        "out = pathlib.Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)\n"
-        "(out / 'plan.dxf').write_bytes(b'dxf')\n"
+        "src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)\n"
+        "[(out / (p.stem + '.dxf')).write_bytes(b'dxf') for p in src.glob('*.dwg')]\n"
         "sys.stdout.buffer.write(b'\\xb5\\xb5\\xb8\\xe9 \\xff ok\\n')\n",
         encoding="utf-8",
     )

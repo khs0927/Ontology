@@ -36,3 +36,11 @@ aec_intelligence = ["resources/*.json", "resources/*.ttl", "operational/migratio
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Correctness-only gate (CI): syntax errors, pyflakes, mutable/call defaults, late-binding closures.
+select = ["E9", "F", "B006", "B008", "B023"]

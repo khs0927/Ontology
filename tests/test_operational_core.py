@@ -1,6 +1,5 @@
 """Comprehensive test suite for operational AEC intelligence components."""
 
-import json
 from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +7,6 @@ from fastapi.testclient import TestClient
 from aec_intelligence.operational.config import Settings
 from aec_intelligence.operational.embeddings import (
     EmbeddingService,
-    _deterministic_hash_vector,
     EMBEDDING_DIM,
 )
 from aec_intelligence.operational.parsers import (

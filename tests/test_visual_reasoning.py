@@ -1,4 +1,3 @@
-import io
 import json
 
 from aec_intelligence.visual_reasoning import NvidiaCosmosVision, parse_final_json, prepare_visual_input

@@ -3,7 +3,6 @@ from pathlib import Path
 import shutil
 
 from aec_intelligence.mcp_gateway import MCPGateway
-from aec_intelligence.pipeline import DXFIngestionPipeline
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"

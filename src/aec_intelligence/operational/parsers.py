@@ -565,7 +565,7 @@ def _safe_relative(path: Path, root: Path) -> str:
         return str(path)
 
 
-def parse_source(source, doc, output, settings, source_name=None):
+def parse_source(source, doc, output, settings, source_name=None, source_hash=None):
     output.mkdir(parents=True,exist_ok=True)
     name = source_name or source.name
     base = {'source_hash':source.parent.name,'source_path':_safe_relative(source, settings.data_root),
@@ -580,11 +580,14 @@ def parse_source(source, doc, output, settings, source_name=None):
         relations.append(relation(parent['id'],'contains',obj['id'],source_hash=base['source_hash']))
     suffix = source.suffix.lower()
     if suffix == '.dwg':
-        from ..dwg import select_dwg_converter
+        from ..dwg import convert_dwg_cached, select_dwg_converter
         converter = select_dwg_converter(getattr(settings,'dwg_converter','auto'),
                                          settings.oda_executable or None,
-                                         getattr(settings,'libredwg_executable','') or None)
-        converted = converter.convert_to_dxf(source,output/'converted')
+                                         getattr(settings,'libredwg_executable','') or None,
+                                         getattr(settings,'oda_timeout_seconds',900))
+        cache = settings.dxf_cache() if hasattr(settings,'dxf_cache') else None
+        converted = convert_dwg_cached(converter,source,output/'converted',cache,source_hash)
+        result['metrics']['dxf_cache'] = (converted.checks or {}).get('cache','off')
         (output/'conversion.json').write_text(json.dumps(converted.to_dict(),ensure_ascii=False),encoding='utf-8')
         if converted.status != 'SUCCESS':
             raise ValueError('; '.join(converted.errors))

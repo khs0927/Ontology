@@ -390,17 +390,26 @@ class SearchRouter:
         # 1. Apache AGE: db.cypher declares a single agtype column, so the row is returned as one map.
         g_name = graph_name(project_id)
         try:
-            query = (f"MATCH (a:Entity)-[r:Rel]-(b:Entity) WHERE a.id = {json.dumps(object_id, ensure_ascii=False)} "
-                     "RETURN {target: b.id, target_kind: b.kind, predicate: r.kind, "
-                     "outgoing: id(startNode(r)) = id(a)} LIMIT 20")
-            with conn.transaction():
-                cypher_res = self.db.cypher(conn, g_name, query)
+            # Two directed patterns instead of one undirected (a)-[r]-(b): AGE plans the undirected form
+            # as a join over every edge label and took ~50 s per hit on a 40k-edge graph, while each
+            # directed form uses the label indexes (Database.ensure_graph_indexes) and takes a few ms.
+            # The {id: ...} property map compiles to `properties @> ...`, which the GIN index serves.
+            anchor = json.dumps(object_id, ensure_ascii=False)
             rels = []
-            for row in cypher_res:
-                edge = json.loads(str(row["value"]))
-                subject, obj = (object_id, edge["target"]) if edge["outgoing"] else (edge["target"], object_id)
-                rels.append({"subject": subject, "predicate": edge["predicate"], "object": obj,
-                             "target_kind": edge["target_kind"], "state": "OBSERVED", "source": "AGE"})
+            for outgoing, pattern in ((True, "(a:Entity {id: %s})-[r:Rel]->(b:Entity)"),
+                                      (False, "(a:Entity {id: %s})<-[r:Rel]-(b:Entity)")):
+                remaining = 20 - len(rels)
+                if remaining <= 0:
+                    break
+                query = (f"MATCH {pattern % anchor} "
+                         f"RETURN {{target: b.id, target_kind: b.kind, predicate: coalesce(r.kind, label(r))}} LIMIT {remaining}")
+                with conn.transaction():
+                    cypher_res = self.db.cypher(conn, g_name, query)
+                for row in cypher_res:
+                    edge = json.loads(str(row["value"]))
+                    subject, obj = (object_id, edge["target"]) if outgoing else (edge["target"], object_id)
+                    rels.append({"subject": subject, "predicate": edge["predicate"], "object": obj,
+                                 "target_kind": edge["target_kind"], "state": "OBSERVED", "source": "AGE"})
             if rels:
                 return rels
         except Exception:

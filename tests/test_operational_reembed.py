@@ -130,7 +130,9 @@ def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):
     # chunks of 8 rows -> one chunk of 5; batch_size=1 makes step 8: single chunk retried twice
     assert out["written"] == 5 and out["retried_chunks"] == 2 and out["complete"] and out["error"] is None
     assert retries == [(1, 5.0), (2, 7)] and waits == [5.0, 7]
-    assert state_updates == [("bge-m3", {"document_ids": ["doc1"]})]
+    # the processed chunk reconciles its own document, and the completed run then reconciles the whole
+    # project (documents embedded by an earlier run never appear in a chunk)
+    assert state_updates == [("bge-m3", {"document_ids": ["doc1"]}), ("bge-m3", {"project_id": None})]
     calls["n"] = 0
     conn.written.clear()
 
@@ -138,9 +140,10 @@ def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):
         raise emb.EmbeddingEndpointError("connection refused")
 
     monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", down)
+    before_failure = len(state_updates)
     out = emb.reindex_embeddings(DB(), settings, batch_size=1, chunk_retries=2, sleep=lambda s: None)
     assert out["written"] == 0 and not out["complete"] and "3 failed attempts" in out["error"]
-    assert len(state_updates) == 1  # failed chunks never advertise readiness
+    assert len(state_updates) == before_failure  # failed chunks never advertise readiness
     with pytest.raises(emb.EmbeddingEndpointError):
         emb.reindex_embeddings(DB(), settings, batch_size=1, sleep=lambda s: None)
     conn.rows.clear()

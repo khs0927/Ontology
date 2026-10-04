@@ -144,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Dump D:\
 - **API**
   ```powershell
   $h = @{ Authorization = "Bearer $env:POWERCAD_ONTOLOGY_TOKEN" }
-  $body = @{ question = '주례동 315-4 2층 창호 개수는?'; top_k = 8 } | ConvertTo-Json
+  $body = @{ question = '<프로젝트명> 2층 창호 개수는?'; top_k = 8 } | ConvertTo-Json
   Invoke-RestMethod -Method Post http://127.0.0.1:58000/v1/ask -Headers $h `
     -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
   ```

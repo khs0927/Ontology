@@ -66,7 +66,7 @@ cd C:\CODE\Ontology
 # 변경된 프로젝트만 KG 재구성 후 요약 갱신 (중단해도 다시 실행하면 이어서 진행)
 powershell -ExecutionPolicy Bypass -File scripts\ops\graphrag.ps1 refresh
 powershell -ExecutionPolicy Bypass -File scripts\ops\graphrag.ps1 stats
-powershell -ExecutionPolicy Bypass -File scripts\ops\graphrag.ps1 ask -Question '주례동 315-4 3F 실 목록 알려줘'
+powershell -ExecutionPolicy Bypass -File scripts\ops\graphrag.ps1 ask -Question '<프로젝트명> 3F 실 목록 알려줘'
 powershell -ExecutionPolicy Bypass -File scripts\ops\graphrag.ps1 ask -Question '2층 문 몇 개야?' -NoLlm
 # 수집이 진행되는 동안 2시간마다 자동 갱신 (관리자 권한 불필요)
 powershell -ExecutionPolicy Bypass -File scripts\ops\register-graphrag-task.ps1 -EveryHours 2

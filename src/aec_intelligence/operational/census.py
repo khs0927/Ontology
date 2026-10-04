@@ -720,8 +720,28 @@ def pending_jobs(db, queue: str, max_attempts: int) -> int:
             ((state='QUEUED' AND attempts<%s) OR state='RUNNING')""", (queue, max_attempts)).fetchone()["n"]
 
 
+def worker_stop_file(settings) -> Path:
+    """Drain switch for host workers: while this file exists, workers finish their current job and exit, and
+    ``run-workers`` / ``bulk-run.ps1 -Role workers`` do not start new ones (scripts/ops/stop-workers.ps1)."""
+    return Path(os.getenv("AEC_WORKER_STOP_FILE") or (Path(settings.data_root) / "bulk" / "STOP-WORKERS"))
+
+
+def worker_stop_reason(settings) -> str | None:
+    """Why a worker should exit before claiming another job (None = keep going).
+
+    Stopping the scheduled task kills only the ``run-workers`` parent; spawn children used to keep claiming
+    jobs with the old code (seen on the PC after a deploy). A child now exits once its parent is gone."""
+    if worker_stop_file(settings).exists():
+        return "stop file present"
+    parent = mp.parent_process()
+    if parent is not None and not parent.is_alive():
+        return "parent process exited"
+    return None
+
+
 def worker_process(settings, queue: str, poll: float, index: int) -> int:
-    """Top-level (picklable) target for spawn: drain the queue, exit when nothing is left."""
+    """Top-level (picklable) target for spawn: drain the queue, exit when nothing is left, when the stop file
+    appears or when the parent ``run-workers`` process is gone (checked between jobs, never mid-job)."""
     import logging
 
     from .db import Database
@@ -734,6 +754,10 @@ def worker_process(settings, queue: str, poll: float, index: int) -> int:
     min_free = parse_min_free(os.getenv("AEC_MIN_FREE_GB"))
     processed = 0
     while True:
+        reason = worker_stop_reason(settings)
+        if reason:
+            logging.getLogger(__name__).warning("worker %s exiting after %d jobs: %s", index, processed, reason)
+            return processed
         if min_free:
             wait_for_disk(min_free, logging.getLogger(__name__).warning)
         try:
@@ -780,9 +804,11 @@ def run_workers(settings, processes: int = 2, queue: str = "cad", poll: float = 
     from .db import Database
 
     db = Database(settings.dsn)
-    ensure_project_graphs(db, queue)
     with db.connect() as conn:
         started = conn.execute("SELECT now() AS t").fetchone()["t"]
+    if worker_stop_file(settings).exists():
+        return {**queue_summary(db, queue, since=started), "stopped": "stop file present"}
+    ensure_project_graphs(db, queue)
     context = mp.get_context("spawn")
     workers = [context.Process(target=worker_process, args=(settings, queue, poll, i), daemon=False)
                for i in range(max(1, processes))]

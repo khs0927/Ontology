@@ -6,7 +6,8 @@
 .PARAMETER Role
   census  - 'bulk-census' over every source in sources.json (resumable; enqueues as it goes).
             With -Refresh, finished sources are walked again so new or changed drawings are picked up.
-  workers - 'run-workers' in a loop: drain the queue, sleep -IdleSleepSec, repeat. Never exits.
+  workers - 'run-workers' in a loop: drain the queue, sleep -IdleSleepSec, repeat. Exits only when the
+            stop file exists (scripts/ops/stop-workers.ps1: graceful drain for deploys).
 .PARAMETER Config
   sources.json (private: it names the drawing folders). See load_bulk_config in census.py.
 .NOTES
@@ -69,7 +70,11 @@ if ($Role -eq 'census') {
     $code = Invoke-Logged $cliArgs
     exit $code
 }
+# Drain switch shared with the Python workers (census.worker_stop_file): scripts/ops/stop-workers.ps1.
+$stopFile = if ($env:AEC_WORKER_STOP_FILE) { $env:AEC_WORKER_STOP_FILE } else {
+    Join-Path $(if ($env:AEC_DATA_ROOT) { $env:AEC_DATA_ROOT } else { 'D:\AECData' }) 'bulk\STOP-WORKERS' }
 while ($true) {
+    if (Test-Path -LiteralPath $stopFile) { Write-BulkLog "stop file $stopFile present: exiting"; exit 0 }
     [void](Invoke-Logged @('run-workers', '--processes', "$Workers", '--queue', ($(if ($cfg.queue) { $cfg.queue } else { 'cad' }))))
     Start-Sleep -Seconds $IdleSleepSec
 }

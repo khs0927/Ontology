@@ -126,7 +126,8 @@ $restStructure = @(Get-Structure $Scratch)
 $structureDiff = @(Compare-Object -ReferenceObject (@('sentinel') + $liveStructure) -DifferenceObject (@('sentinel') + $restStructure))
 $key = 'aec.documents', 'aec.objects', 'aec.relations', 'aec.embeddings', 'aec.jobs', 'aec.kg_nodes', 'aec.kg_edges', 'aec.kg_aliases', 'ag_catalog.ag_graph', 'ag_catalog.ag_label'
 $summary = [ordered]@{
-    dump = $Dump; scratch = $Scratch; restore_seconds = [int]$t.TotalSeconds; restore_exit = $restoreExit
+    dump = $Dump; dump_sha256 = (Get-FileHash -LiteralPath $Dump -Algorithm SHA256).Hash.ToLowerInvariant()
+    scratch = $Scratch; restore_seconds = [int]$t.TotalSeconds; restore_exit = $restoreExit
     restore_error_lines = $errs.Count; tables_live = $live.Count; tables_restored = $rest.Count
     rows_live = ($live.Values | Measure-Object -Sum).Sum; rows_restored = ($rest.Values | Measure-Object -Sum).Sum
     indexes_live = $liveIdx.Count; indexes_restored = $restIdx.Count; missing_indexes = $missingIdx

@@ -1,5 +1,11 @@
 # AEC-INTELLIGENCE Database Backup & Restore Guide (`aec-db`)
 
+> 2026-10-04 운영 보강: 아래 스트리밍 명령의 성공은 업로드된 바이트의 해시나 복원 성공을
+> 증명하지 않습니다. PC 이동용 체크포인트는 [Drive 체크포인트 절차](DRIVE-CHECKPOINT.ko.md)의
+> 원격 읽기 검증 및 동일 dump SHA-256 복원 보고서를 사용하세요. 로컬 D 드라이브 staging은
+> 교체 가능한 임시 상태이고 Google Drive가 내구 보관 대상입니다. 실행 중인 DB 파일·WAL·VHDX는
+> Drive에 동기화하지 않습니다. 이전 스트리밍 방식은 디스크 여유가 없을 때의 대안입니다.
+
 본 문서는 **AEC-INTELLIGENCE** 시스템의 운영 데이터베이스인 `aec-db` (PostgreSQL 16 + Apache AGE)의 무중단·무디스크(Zero-Disk) 백업 및 재해 복구(DR) 절차를 규정합니다.
 
 ---

@@ -11,6 +11,8 @@
 -- vector first (ON CONFLICT DO NOTHING) and the mapping second; the foreign key keeps a mapping from
 -- pointing at a vector that `vectors-gc` removed concurrently.
 SET LOCAL maintenance_work_mem = '512MB';
+-- DISTINCT ON over every vector sorts ~1 GB at 300k objects; keep it mostly in memory.
+SET LOCAL work_mem = '256MB';
 -- Parallel index builds need /dev/shm, which is 64 MB in the default container.
 SET LOCAL max_parallel_maintenance_workers = 0;
 

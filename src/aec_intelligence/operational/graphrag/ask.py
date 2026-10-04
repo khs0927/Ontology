@@ -175,7 +175,8 @@ def _dedupe(items: list[ContextItem]) -> list[ContextItem]:
 
 
 def choose_route(linked: Linked) -> str:
-    if "summary" in linked.intents and not (linked.rooms or linked.sections or linked.sheet_numbers):
+    if ("summary" in linked.intents and "find_drawing" not in linked.intents
+            and not (linked.rooms or linked.sections or linked.sheet_numbers)):
         return "summary"
     if linked.sections:
         return "graph:section"

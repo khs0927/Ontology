@@ -67,6 +67,7 @@ def test_canonical_room_ignores_spacing_and_case():
     ("배치도 최신 버전은?", "graph:revision"),
     ("방수 상세 마감은 어떻게 되어 있나", "semantic"),
     ("옥상층평면도 관련 도면을 찾아줘", "graph:drawings"),
+    ("용도변경개요 관련 도면을 찾아줘", "graph:drawings"),
 ])
 def test_router(q, route):
     assert choose_route(link_static(q)) == route

@@ -53,7 +53,7 @@ def test_reembed_cli_passes_options(monkeypatch):
     cli.main(["reembed", "--project", "P-1", "--batch-size", "4", "--dry-run", "--delete-stale"])
     assert callable(seen.pop("progress")) and callable(seen.pop("on_retry"))
     assert seen == {"project": "P-1", "batch_size": 4, "dry_run": True, "delete_stale": True,
-                    "chunk_retries": 8, "max_backoff": 300.0, "pause": 0.0, "timeout": None}
+                    "chunk_retries": 8, "max_backoff": 300.0, "pause": 0.0, "timeout": None, "hours": None}
 
 
 def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):

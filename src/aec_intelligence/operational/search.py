@@ -11,6 +11,7 @@ from ..classifier import normalize_storey, storey_tokens
 from .config import Settings
 from .db import Database, graph_name
 from .embeddings import HASH_MODEL, EmbeddingEndpointError, EmbeddingService, vector_literal
+from .query_expansion import expand_query
 
 # Storey recognition is canonicalized in aec_intelligence.classifier (PR #19).
 # This helper only renders one already-normalized storey ID as a PostgreSQL regex,
@@ -179,6 +180,7 @@ class SearchRouter:
         kind: str | None = None,
         top_k: int = 10,
         expand_graph: bool = True,
+        timeout_ms: int | None = None,
     ) -> SearchResult:
         """Executes multi-stage hybrid search:
         1. Exact code & pg_trgm lexical match
@@ -186,6 +188,11 @@ class SearchRouter:
         3. Reciprocal Rank Fusion / Weighted Scoring
         4. Apache AGE graph relation expansion
         5. Citation & provenance extraction
+
+        ``timeout_ms`` bounds the hybrid SQL (statement_timeout, transaction-local). When it fires, the
+        query is retried as a plain index-backed lexical match under the same bound; if that is still
+        too slow the result is empty with a warning. Callers with a latency budget (Graph RAG's
+        semantic leg) get an answer or a fast refusal instead of a 30 s wait on a cold vector index.
         """
         warnings: list[str] = []
         unresolved: list[dict[str, Any]] = []
@@ -193,8 +200,10 @@ class SearchRouter:
         # Only vectors produced by the same model as the query vector are comparable.
         query_model: str | None = None
         vec_str: str | None = None
+        expansion = expand_query(query)
+        embed_text = expansion.embed_text if expansion else query
         try:
-            query_model, query_vecs = self.embedding_service.embed_with_model([query])
+            query_model, vec_str = self._query_vector(embed_text)
         except EmbeddingEndpointError as exc:
             warnings.append(f"Embedding endpoint unavailable ({exc}); searching without the vector stage")
         else:
@@ -203,11 +212,11 @@ class SearchRouter:
                     "AEC_EMBEDDING_URL is not configured, so query vectors would come from the offline "
                     "hash model; searching without the vector stage"
                 )
-                query_model = None
-            else:
-                vec_str = vector_literal(query_vecs[0])
+                query_model, vec_str = None, None
 
-        parsed = parse_query(query)
+        parsed = parse_query(expansion.lexical_text if expansion else query)
+        if expansion:
+            warnings.append(f"query expanded ({expansion.method}): {expansion.lexical_text}")
         effective_kind = kind or parsed.kind
         storey_level = normalize_storey(storey) if storey else parsed.storey
 
@@ -336,6 +345,8 @@ class SearchRouter:
                     conn.execute("SELECT set_config('pg_trgm.word_similarity_threshold', '0.3', true), "
                                  "set_config('hnsw.iterative_scan', 'relaxed_order', true), "
                                  "set_config('hnsw.ef_search', '200', true)")
+                    if timeout_ms:
+                        conn.execute("SELECT set_config('statement_timeout', %s, true)", (f"{int(timeout_ms)}ms",))
                     rows = conn.execute(sql_query, full_params).fetchall()
             except Exception as exc:
                 # If vector extension or age is absent in light test DB, fallback to simple ILIKE.
@@ -356,10 +367,20 @@ class SearchRouter:
                     WHERE {where_sql} AND {fallback_match}
                     LIMIT %s
                 """
-                rows = conn.execute(
-                    fallback_sql, [*params, *fallback_match_params, top_k]
-                ).fetchall()
-                warnings.append(f"Semantic vector search fell back to lexical search: {exc}")
+                try:
+                    with conn.transaction():
+                        if timeout_ms:
+                            conn.execute("SELECT set_config('statement_timeout', %s, true)",
+                                         (f"{int(timeout_ms)}ms",))
+                        rows = conn.execute(
+                            fallback_sql, [*params, *fallback_match_params, top_k]
+                        ).fetchall()
+                    warnings.append(f"Semantic vector search fell back to lexical search: {exc}")
+                except Exception as exc2:  # noqa: BLE001 - only reachable with a latency budget
+                    if not timeout_ms:
+                        raise
+                    rows = []
+                    warnings.append(f"search exceeded its {int(timeout_ms)} ms budget: {type(exc2).__name__}")
 
             hits: list[SearchHit] = []
             for row in rows[:top_k]:
@@ -425,6 +446,17 @@ class SearchRouter:
             warnings=warnings,
             unresolved_candidates=unresolved,
         )
+
+    def _query_vector(self, text: str) -> tuple[str, str | None]:
+        """(model, halfvec literal) for a query text; cached per router (Graph RAG searches one question in
+        several projects, and each embedding call queues behind re-embed batches on the shared GPU)."""
+        cache = self.__dict__.setdefault("_qvec_cache", {})
+        if text not in cache:
+            model, vecs = self.embedding_service.embed_with_model([text])
+            cache[text] = (model, vector_literal(vecs[0]) if vecs and model != HASH_MODEL else None)
+            if len(cache) > 64:
+                cache.pop(next(iter(cache)))
+        return cache[text]
 
     def _get_relations(self, conn, project_id: str, object_id: str) -> list[dict[str, Any]]:
         """Expands relations using Apache AGE graph where possible, falling back to SQL relations table.

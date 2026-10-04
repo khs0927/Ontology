@@ -99,3 +99,24 @@ def test_josa():
     from aec_intelligence.operational.graphrag.evaluate import josa
 
     assert josa("데크") == "데크는" and josa("화장실") == "화장실은" and josa("문", "이가") == "문이"
+
+
+@pytest.mark.parametrize("q", ["오늘 부산 날씨 어때?", "주식 시장 전망을 알려줘"])
+def test_out_of_scope_questions_are_gated_before_retrieval(q):
+    from aec_intelligence.operational.graphrag.ask import unsupported_reason
+    assert unsupported_reason(q, link_static(q)) is not None
+
+
+@pytest.mark.parametrize("q", ["2층 회의실 면적이 얼마야?", "H-300x300 단면은 어느 도면에 쓰였어?", "A-101 도면은 뭐야?"])
+def test_in_scope_questions_pass_the_static_gate(q):
+    from aec_intelligence.operational.graphrag.ask import unsupported_reason
+    assert unsupported_reason(q, link_static(q)) is None
+
+
+def test_unsupported_attribute_needs_evidence_in_context():
+    from aec_intelligence.operational.graphrag.ask import unsupported_by_context
+    q = "학장동 카페 건축주의 전화번호를 알려줘"
+    assert unsupported_by_context(q, ["프로젝트 학장동 카페 1F: 실 3개"]) is not None
+    assert unsupported_by_context(q, ["건축주 홍길동 TEL 051-123-4567"]) is None
+    assert unsupported_by_context("총 공사비는 얼마야?", ["실 '회의실': 면적 12.5㎡"]) is not None
+    assert unsupported_by_context("회의실 면적이 얼마야?", ["실 '회의실': 면적 12.5㎡"]) is None

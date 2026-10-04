@@ -130,6 +130,7 @@ def test_ask_routes_cites_and_refuses(seeded):
     assert res["route"] == "graph:section" and res["answer_mode"] == "extractive"
     cited = res["citations"][0]
     assert cited["bbox"] and cited["object_ids"] and cited["document_id"] == docs[2][0]
+    assert cited["document_ids"][0] == cited["document_id"]
 
     uncited = GraphRAG(db, settings=None, llm=FakeLLM("회의실이 있습니다."))
     res = uncited.ask(f"그래프시험{RUN} 1층 실 목록 알려줘")

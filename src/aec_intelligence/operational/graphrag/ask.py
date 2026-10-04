@@ -50,6 +50,22 @@ _LOCATION_RE = re.compile(r"(어느\s*층|몇\s*층에|어디에|어디\s*있|�
 _LIST_RE = re.compile(r"(목록|리스트|어떤\s*\S*\s*있|무엇이 있|뭐가 있|알려줘|보여줘|나열)")
 _FIND_DRAWING_RE = re.compile(r"(관련\s*도면|도면(을|은|이)?\s*(찾아|알려|보여|뭐|무엇|어디)|도면\s*목록|어떤\s*도면(이|들)?\s*있)")
 _DRAWING_WORDS = re.compile(r"(도면|시트|도곽|평면도|입면도|단면도|배치도|상세도|시방서|계획도|설비도)")
+# Questions with no AEC anchor at all (no project, storey, room, element, section, sheet, drawing word) are
+# out of scope for the drawing graph and are refused before any retrieval.
+_DOMAIN_RE = re.compile(
+    r"(도면|시트|도곽|층|실|벽|기둥|보|슬래브|창호|창문|문|계단|구조|건축|설비|전기|기계|소방|면적|치수|단면|평면|입면|배치|"
+    r"프로젝트|현장|주차|철골|철근|콘크리트|마감|지붕|옥상|방수|단열|레이어|블록|도곽|리비전|개정|강재|부재|"
+    r"cad|dwg|dxf|pdf|ifc)", re.IGNORECASE)
+# Attributes the drawing database does not model. The question is only answered when the retrieved context
+# itself carries matching evidence (e.g. a title block with a phone number); otherwise it is refused.
+_UNSUPPORTED = (
+    (re.compile(r"(공사비|공사\s*금액|사업비|비용|금액|가격|단가|견적)"),
+     re.compile(r"(공사비|금액|비용|단가|견적|[0-9,]+\s*(원|만원|억))")),
+    (re.compile(r"(전화번호|연락처|휴대폰|핸드폰|이메일|e-?mail)", re.IGNORECASE),
+     re.compile(r"(TEL|전화|연락처|FAX|@|\d{2,3}-\d{3,4}-\d{4})", re.IGNORECASE)),
+    (re.compile(r"(수상|받은\s*상|상\s*이름|어워드|award)", re.IGNORECASE), re.compile(r"(수상|award)", re.IGNORECASE)),
+    (re.compile(r"(날씨|기온|주식|주가|환율|뉴스|코인|로또)"), None),
+)
 
 
 @dataclass
@@ -123,6 +139,26 @@ def link_static(question: str) -> Linked:
             linked.rooms.append(r)
     linked.intents = classify_intents(question)
     return linked
+
+
+def unsupported_reason(question: str, linked: Linked | None = None) -> str | None:
+    """Static scope gate: a reason string when the question cannot be answered from drawing data."""
+    for ask_rx, evidence_rx in _UNSUPPORTED:
+        if ask_rx.search(question) and evidence_rx is None:
+            return "out of scope (not drawing data)"
+    if linked is not None and not (linked.projects or linked.storeys or linked.kinds or linked.rooms
+                                   or linked.sections or linked.sheet_numbers) and not _DOMAIN_RE.search(question):
+        return "out of scope (no drawing/project anchor)"
+    return None
+
+
+def unsupported_by_context(question: str, texts: list[str]) -> str | None:
+    """An asked-for attribute (cost, phone, award...) that no retrieved context item supports."""
+    joined = "\n".join(texts)
+    for ask_rx, evidence_rx in _UNSUPPORTED:
+        if ask_rx.search(question) and (evidence_rx is None or not evidence_rx.search(joined)):
+            return f"asked attribute not in context: {ask_rx.search(question).group(0)}"
+    return None
 
 
 def _dedupe(items: list[ContextItem]) -> list[ContextItem]:
@@ -217,6 +253,10 @@ class GraphRAG:
             keys = [p["key"] for p in linked.projects] or None
             items: list[ContextItem] = []
             cypher: list[str] = []
+            gate = unsupported_reason(question, linked)
+            if gate:
+                return {"linked": linked, "route": "refuse", "items": [], "cypher": [], "gate": gate,
+                        "retrieval_ms": round((time.monotonic() - started) * 1000)}
             if route == "summary":
                 items += self._summary(conn, question, keys, linked)
             elif route == "graph:section":
@@ -542,18 +582,21 @@ class GraphRAG:
                                                  (list(doc_ids),)).fetchall()]
 
     def _resolve_citations(self, conn, items: list[ContextItem]) -> None:
-        doc_ids = {d for i in items for d in i.document_ids}
         obj_ids = {o for i in items for o in i.object_ids}
-        docs = {r["id"]: r for r in conn.execute(
-            "SELECT id, name, revision, project_id FROM aec.documents WHERE id = ANY(%s)", (list(doc_ids),)).fetchall()}
         objs = {r["id"]: r for r in conn.execute(
             """SELECT id, document_id, kind, payload->'bbox' AS bbox, payload->'evidence'->>'layout' AS layout,
                       payload->'evidence'->>'page' AS page, payload->'evidence'->>'handle' AS handle,
                       payload->'evidence'->>'coordinate_system' AS cs
                FROM aec.objects WHERE id = ANY(%s)""", (list(obj_ids),)).fetchall()}
+        doc_ids = {d for i in items for d in i.document_ids} | {o["document_id"] for o in objs.values()}
+        docs = {r["id"]: r for r in conn.execute(
+            "SELECT id, name, revision, project_id FROM aec.documents WHERE id = ANY(%s)", (list(doc_ids),)).fetchall()}
         for item in items:
             item.document_ids = [d for d in item.document_ids if d in docs]
-            item.object_ids = [o for o in item.object_ids if o in objs]
+            item.object_ids = [o for o in item.object_ids if o in objs and objs[o]["document_id"] in docs]
+            # A citation always lists the documents of the objects it cites (first), then the node's documents.
+            item.document_ids = list(dict.fromkeys([objs[o]["document_id"] for o in item.object_ids]
+                                                   + item.document_ids))
             primary_obj = next((objs[o] for o in item.object_ids if (objs[o]["bbox"] or {}).get("min_x") is not None),
                                objs[item.object_ids[0]] if item.object_ids else None)
             doc_id = primary_obj["document_id"] if primary_obj else (item.document_ids[0] if item.document_ids else None)
@@ -585,9 +628,10 @@ class GraphRAG:
             "contexts": [{"id": i.cid, "source": i.source, "score": round(i.score, 3), "text": i.text,
                           "kg_node_id": i.node_id} for i in items],
         }
-        if not items:
+        gate = ret.get("gate") or (unsupported_by_context(question, [i.text for i in items]) if items else None)
+        if not items or gate:
             result.update(answer=REFUSAL, refused=True, citations=[], answer_mode="refusal", llm_ms=0,
-                          warnings=["no grounded context"])
+                          warnings=[gate or "no grounded context"])
             return result
         answer, mode, llm_ms, model = None, "extractive", 0, None
         if generate and self.llm is not None:

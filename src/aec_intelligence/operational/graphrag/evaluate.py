@@ -89,6 +89,22 @@ def make_eval_set(db, out: str | Path, *, projects: int = 3, total: int = 50, se
                 qs.append({"type": "count", "route": "graph:elements",
                            "q": f"{name} 도면 전체에 {josa(KIND_KO[eg['kind']])} 몇 개야?", "gold": list(eg["ids"])[:20],
                            "expect": [str(eg["n"])]})
+            # element counts on one storey
+            for eg in nodes("""SELECT props->>'kind' AS kind, props->>'storey' AS storey,
+                                      sum((props->>'count')::int) AS n, array_agg(id) AS ids
+                               FROM aec.kg_nodes WHERE project_key=%s AND type='ElementGroup'
+                               AND props->>'storey' IS NOT NULL
+                               AND props->>'kind' IN ('Door','Window','Column','Stair','Wall') GROUP BY 1, 2
+                               ORDER BY 3 DESC LIMIT 2""", (key,)):
+                qs.append({"type": "storey_count", "route": "graph:elements",
+                           "q": f"{name} {eg['storey']} {KIND_KO[eg['kind']]} 개수는?", "gold": list(eg["ids"])[:20],
+                           "expect": [str(eg["n"])]})
+            # room area
+            for sp in nodes("""SELECT id, name, props->'areas'->>0 AS area FROM aec.kg_nodes WHERE project_key=%s
+                               AND type='Space' AND jsonb_array_length(coalesce(props->'areas','[]')) > 0
+                               ORDER BY (props->>'occurrences')::int DESC, name LIMIT 2""", (key,)):
+                qs.append({"type": "room_area", "route": "graph:room", "q": f"{name}의 {sp['name']} 면적이 얼마야?",
+                           "gold": [sp["id"]], "expect": [str(sp["area"])]})
             # sheet numbers
             for d in nodes("""SELECT id, props->>'sheet_number' AS no, document_ids FROM aec.kg_nodes
                               WHERE project_key=%s AND type='Drawing' AND props->>'sheet_number' IS NOT NULL

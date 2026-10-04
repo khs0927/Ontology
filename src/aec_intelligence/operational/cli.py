@@ -297,7 +297,9 @@ def _cmd_reembed(parsed, settings, db):
         print("WARNING: AEC_EMBEDDING_URL is not set; the target model is the hash fallback.", file=sys.stderr)
     try:
         result = reindex_embeddings(db, settings, parsed.project, batch_size=parsed.batch_size,
-                                    dry_run=parsed.dry_run, delete_stale=parsed.delete_stale)
+                                    dry_run=parsed.dry_run, delete_stale=parsed.delete_stale,
+                                    progress=lambda done, total: print(f"[reembed] {done}/{total}",
+                                                                       file=sys.stderr, flush=True))
     except EmbeddingEndpointError as exc:
         print(f"ERROR: embedding endpoint failed: {exc}", file=sys.stderr)
         sys.exit(3)

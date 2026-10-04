@@ -27,6 +27,33 @@ ROOM_NUMBER_TAG_RE = re.compile(r'ROOM_?NO|RM_?NO|NUMBER|실번호|호수', re.I
 AREA_TAG_RE = re.compile(r'AREA|면적', re.IGNORECASE)
 AREA_TEXT_RE = re.compile(r'^\(?\s*(\d{1,5}(?:[.,]\d{1,3})?)\s*(?:㎡|m2|m²|sqm)\s*\)?\Z', re.IGNORECASE)
 SECTION_TAG_RE = re.compile(r'SIZE|SECTION|PROFILE|MEMBER|규격|부재|단면', re.IGNORECASE)
+# Sheet numbers such as A-101, MC-008, T-18, E-03, S101, A-101-1 (one to three discipline letters).
+SHEET_NUMBER_RE = re.compile(r'([A-Z]{1,3}-?\d{2,4}(?:-\d{1,3})?)(?![A-Z0-9])')
+_ORDER_PREFIX_RE = re.compile(r'^(?:\d{1,3}[_.]\s*|\d{1,3}\s+-\s+(?=[A-Za-z]{1,3}-?\d))')
+
+
+def filename_sheet_fields(name):
+    """(sheet number, title) read from a drawing file name, the last-resort source when no title block names them.
+
+    A leading ordering prefix such as ``03_`` or ``12. `` is ignored; the number must start the remaining stem
+    ("M-357 - [ 2층 덕트 평면도 ]" -> ("M-357", "2층 덕트 평면도")), so free text that merely contains a
+    code-like token is never mistaken for a sheet number. A range stem ("S-101~132 ...") yields its first number.
+    """
+    stem = re.sub(r'\.(dwg|dxf|pdf)$', '', Path(str(name or '')).name, flags=re.IGNORECASE).strip()
+    stem = _ORDER_PREFIX_RE.sub('', stem, count=1).strip()
+    match = SHEET_NUMBER_RE.match(stem.upper())
+    if not match:
+        return None, (stem.strip(' -_[]') or None)
+    title = stem[match.end():]
+    title = re.sub(r'^\s*~\s*[A-Za-z]{0,3}-?\d{1,4}', '', title)  # rest of a "S-101~132" range
+    title = re.sub(r'[_\s\-\[\]]+', ' ', title).strip()
+    return match.group(1), (title or None)
+
+
+def layout_sheet_number(layout_name):
+    """A paper layout named after its sheet ("A-101", "S-002 구조평면도") carries that number; else None."""
+    match = SHEET_NUMBER_RE.match(str(layout_name or '').strip().upper())
+    return match.group(1) if match else None
 
 
 def _iter_nested_insert_texts(insert, max_depth=8):
@@ -84,6 +111,7 @@ class _DXFSemantics:
         self.block_layer_counts = Counter()
         self.metrics = Counter()
         self._relation_ids = set()
+        self.layouts = []
 
     # ----------------------------------------------------------------- helpers
     def relate(self, subject, predicate, target, state='OBSERVED', **evidence):
@@ -182,8 +210,14 @@ class _DXFSemantics:
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
         self.area_texts, self.text_spaces = [], []
         self.layout_objects = []
+        self.layout_drawn = 0  # entities other than the paper-space VIEWPORT itself
 
     def count_entity(self, entity):
+        if entity.dxftype() != 'VIEWPORT':
+            self.layout_drawn += 1
+        self._count_entity(entity)
+
+    def _count_entity(self, entity):
         self.layer_counts[decode_dxf_text(entity.dxf.get('layer', '0'))] += 1
         if entity.dxftype() == 'INSERT':
             name = str(entity.dxf.get('name', ''))
@@ -446,8 +480,40 @@ class _DXFSemantics:
             obj['properties'].setdefault('drawing_category', category)
             if storey and not obj.get('storey'):
                 obj['storey'] = storey['storey']
+        self.layouts.append({'view': view, 'name': sheet.name, 'paper': self.is_paper, 'drawn': self.layout_drawn,
+                             'regions': sheet_regions})
         self._link_area_texts()
         self._link_sections()
+
+    def _sheet_numbers_from_names(self):
+        """Give sheet views without a title-block number one from their layout name or the file name.
+
+        A paper layout named like a sheet number keeps that number. The file name only speaks for the
+        file's single sheet: the one paper layout with drawn content, else an unsplit model space.
+        """
+        number, title = filename_sheet_fields(self.name)
+        if number:
+            self.root['properties'].setdefault('file_sheet_number', number)
+        for row in self.layouts:
+            props = row['view']['properties']
+            found = layout_sheet_number(row['name']) if row['paper'] and not props.get('drawingNumber') else None
+            if found:
+                props['drawingNumber'], props['drawingNumber_source'] = found, 'layout_name'
+        paper = [row for row in self.layouts if row['paper'] and row['drawn']]
+        pool = paper or [row for row in self.layouts if not row['paper']]
+        if len(pool) != 1 or pool[0]['regions']:
+            return
+        view = pool[0]['view']
+        props = view['properties']
+        added = []
+        if number and not props.get('drawingNumber'):
+            props['drawingNumber'], props['drawingNumber_source'] = number, 'file_name'
+            added.append(number)
+        if title and not props.get('drawingTitle'):
+            props['drawingTitle'], props['drawingTitle_source'] = title, 'file_name'
+            added.append(title)
+        if added:
+            view['search_text'] = f"{view['search_text']} {' '.join(added)}"
 
     def _link_area_texts(self):
         """Attach a nearby standalone area label to a room-name Space using mutual nearest-neighbour evidence."""
@@ -510,6 +576,7 @@ class _DXFSemantics:
 
     # ----------------------------------------------------------------- document
     def finish(self):
+        self._sheet_numbers_from_names()
         for block_name, obj in self.blocks.items():
             obj['properties']['insert_count'] = self.insert_counts.get(block_name, 0)
         for obj in self.blocks.values():

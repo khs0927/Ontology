@@ -225,6 +225,8 @@ def _add_batch_commands(subparsers):
     p.add_argument("--batch", type=int, default=5000)
     p.add_argument("--min-age-seconds", type=float, default=3600.0,
                    help="Keep vectors younger than this (an ingest writes vectors before its mappings commit)")
+    p.add_argument("--yes", action="store_true",
+                   help="Actually delete; without this flag the command only reports what it would remove")
 
     p = subparsers.add_parser("storage-report", help="Bytes per table/index and per document (embeddings vs the rest)")
 
@@ -387,8 +389,15 @@ def _cmd_reembed(parsed, settings, db):
 def _cmd_vectors_gc(parsed, settings, db):
     from .embeddings import vectors_gc
 
-    result = vectors_gc(db, batch=parsed.batch, min_age_seconds=parsed.min_age_seconds)
+    # Deleting vectors is irreversible, so the command previews by default and needs --yes to act.
+    result = vectors_gc(db, batch=parsed.batch, min_age_seconds=parsed.min_age_seconds,
+                        dry_run=not parsed.yes)
+    if not parsed.yes:
+        result = {**result, "dry_run": True, "hint": "re-run with --yes to delete these vectors"}
     _emit(result)
+    if result.get("error"):
+        print(f"ERROR: vectors-gc stopped: {result['error']}", file=sys.stderr)
+        sys.exit(3)
     return result
 
 

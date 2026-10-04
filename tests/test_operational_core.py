@@ -167,10 +167,13 @@ def test_fastapi_app_endpoints(tmp_path: Path):
     app = create_app(settings)
     client = TestClient(app)
 
-    # Health check
+    # Health check: liveness plus the embedding stage's own state (no embedding endpoint here)
     res = client.get("/healthz")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok"}
+    health = res.json()
+    assert health["status"] == "ok"
+    assert health["embeddings"] == {"configured": False, "model": "hash-sha256-1024-v1",
+                                    "circuit_open": False, "degraded": True}
 
     # Ingestion invalid path
     res = client.post("/v1/ingestions", json={"path": str(tmp_path / "nonexistent.dxf")})

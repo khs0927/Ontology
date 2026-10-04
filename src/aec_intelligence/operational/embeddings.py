@@ -170,6 +170,12 @@ class EmbeddingService:
         with _CIRCUIT_LOCK:
             return _CIRCUIT.get(self.endpoint, 0.0) > time.monotonic()
 
+    def reset_circuit(self) -> None:
+        """Forget recent failures of this endpoint (a caller that backs off itself retries at once)."""
+        with _CIRCUIT_LOCK:
+            _CIRCUIT.pop(self.endpoint, None)
+        self.last_error = None
+
     def _trip_circuit(self) -> None:
         with _CIRCUIT_LOCK:
             _CIRCUIT[self.endpoint] = time.monotonic() + CIRCUIT_COOLDOWN_SECONDS
@@ -273,7 +279,10 @@ _STALE_SCOPE = """FROM aec.embeddings e JOIN aec.objects o ON o.id = e.object_id
 
 def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *, batch_size: int | None = None,
                        dry_run: bool = False, delete_stale: bool = False,
-                       progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
+                       progress: Callable[[int, int], None] | None = None, chunk_retries: int = 0,
+                       max_backoff: float = 300.0, pause: float = 0.0, timeout: float | None = None,
+                       sleep: Callable[[float], None] = time.sleep,
+                       on_retry: Callable[[int, float, str], None] | None = None) -> dict[str, Any]:
     """Re-embed objects that lack a vector from the active model (e.g. after a hash fallback or a model change).
 
     Superseded hash-fallback vectors are removed only once the active model's vectors
@@ -282,10 +291,18 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     of the active model. ``dry_run`` only counts what would happen. Every chunk is committed
     on its own, so progress survives an interruption and is visible to searches immediately;
     ``progress(written, pending)`` is called after each chunk.
+
+    ``chunk_retries`` > 0 makes a long run survive a busy or restarting endpoint (Ollama shared with
+    the ingest workers, a model reload, a PC under memory pressure): a failed chunk is retried after
+    an exponential backoff (5 s, 10 s, ... capped at ``max_backoff``), the endpoint circuit is reset
+    first, and only ``chunk_retries`` consecutive failures end the run with ``error`` set (the
+    chunks written so far stay committed). ``pause`` sleeps between chunks to leave the GPU/CPU to
+    interactive work. With the default 0 the first failure raises ``EmbeddingEndpointError``.
     """
-    service = EmbeddingService(settings, batch_size=batch_size)
+    service = EmbeddingService(settings, batch_size=batch_size, timeout=timeout)
     target = service.active_model()
-    written, skipped, deleted = 0, 0, 0
+    written, skipped, deleted, retried = 0, 0, 0, 0
+    failure: str | None = None
     params = {"p": project_id, "m": target}
     with db.connect() as conn:
         rows = conn.execute(
@@ -303,7 +320,28 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
         step = service.batch_size * 8
         for start in range(0, len(rows), step):
             part = rows[start:start + step]
-            model, vectors = service.embed_with_model([r["search_text"] for r in part])
+            if start and pause > 0:
+                sleep(pause)
+            failures = 0
+            while True:
+                try:
+                    model, vectors = service.embed_with_model([r["search_text"] for r in part])
+                    break
+                except EmbeddingEndpointError as exc:
+                    failures += 1
+                    if failures > chunk_retries:
+                        if chunk_retries <= 0:
+                            raise
+                        failure = f"stopped after {failures} failed attempts on one chunk: {exc}"
+                        break
+                    retried += 1
+                    wait = min(max_backoff, 5.0 * (2 ** (failures - 1)))
+                    if on_retry is not None:
+                        on_retry(failures, wait, str(exc))
+                    sleep(wait)
+                    service.reset_circuit()
+            if failure:
+                break
             if model != target:
                 skipped += len(rows) - start
                 break
@@ -327,4 +365,5 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 "DELETE FROM aec.embeddings d USING (SELECT e.object_id, e.model " + _STALE_SCOPE + ") s "
                 "WHERE d.object_id = s.object_id AND d.model = s.model", params).rowcount
     return {"model": target, "dry_run": False, "pending": len(rows), "written": written, "skipped": skipped,
-            "deleted": deleted, "error": service.last_error}
+            "deleted": deleted, "retried_chunks": retried, "complete": failure is None and not skipped,
+            "error": failure or service.last_error}

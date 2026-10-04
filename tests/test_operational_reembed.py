@@ -51,8 +51,89 @@ def test_reembed_cli_passes_options(monkeypatch):
     monkeypatch.setattr(embeddings, "reindex_embeddings", fake)
     monkeypatch.setattr(cli, "Database", lambda dsn: object())
     cli.main(["reembed", "--project", "P-1", "--batch-size", "4", "--dry-run", "--delete-stale"])
-    assert callable(seen.pop("progress"))
-    assert seen == {"project": "P-1", "batch_size": 4, "dry_run": True, "delete_stale": True}
+    assert callable(seen.pop("progress")) and callable(seen.pop("on_retry"))
+    assert seen == {"project": "P-1", "batch_size": 4, "dry_run": True, "delete_stale": True,
+                    "chunk_retries": 8, "max_backoff": 300.0, "pause": 0.0, "timeout": None}
+
+
+def test_reindex_retries_failed_chunk_with_backoff(monkeypatch):
+    """A busy endpoint (Ollama shared with the workers) no longer ends a 100k-object run."""
+    from aec_intelligence.operational import embeddings as emb
+
+    class Conn:
+        def __init__(self):
+            self.rows = [{"id": f"o{i}", "revision": 0, "type": "Door", "search_text": f"door {i}"} for i in range(5)]
+            self.written = []
+            self.commits = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            rows = self.rows
+
+            class R:
+                def fetchall(self_inner):
+                    return rows
+            return R()
+
+        def cursor(self):
+            conn = self
+
+            class Cur:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *exc):
+                    return False
+
+                def executemany(self_inner, sql, seq):
+                    conn.written.extend(seq)
+
+                def execute(self_inner, sql, params=None):
+                    pass
+            return Cur()
+
+        def commit(self):
+            self.commits += 1
+
+    conn = Conn()
+
+    class DB:
+        def connect(self):
+            return conn
+
+    settings = Settings(dsn="x", data_root=Path("."), import_roots=(), embedding_url="http://127.0.0.1:9",
+                        embedding_model="bge-m3")
+    calls = {"n": 0}
+
+    def flaky(self, texts):
+        calls["n"] += 1
+        if calls["n"] in (1, 2):
+            raise emb.EmbeddingEndpointError("timed out")
+        return "bge-m3", [[0.0] * emb.EMBEDDING_DIM for _ in texts]
+
+    monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", flaky)
+    waits, retries = [], []
+    out = emb.reindex_embeddings(DB(), settings, batch_size=1, chunk_retries=3, max_backoff=7, pause=0.5,
+                                 sleep=waits.append, on_retry=lambda n, w, e: retries.append((n, w)))
+    # chunks of 8 rows -> one chunk of 5; batch_size=1 makes step 8: single chunk retried twice
+    assert out["written"] == 5 and out["retried_chunks"] == 2 and out["complete"] and out["error"] is None
+    assert retries == [(1, 5.0), (2, 7)] and waits == [5.0, 7]
+    calls["n"] = 0
+    conn.written.clear()
+
+    def down(self, texts):
+        raise emb.EmbeddingEndpointError("connection refused")
+
+    monkeypatch.setattr(emb.EmbeddingService, "embed_with_model", down)
+    out = emb.reindex_embeddings(DB(), settings, batch_size=1, chunk_retries=2, sleep=lambda s: None)
+    assert out["written"] == 0 and not out["complete"] and "3 failed attempts" in out["error"]
+    with pytest.raises(emb.EmbeddingEndpointError):
+        emb.reindex_embeddings(DB(), settings, batch_size=1, sleep=lambda s: None)
 
 
 DSN = os.getenv("AEC_TEST_DATABASE_URL")

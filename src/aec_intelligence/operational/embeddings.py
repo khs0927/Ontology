@@ -373,6 +373,15 @@ def _refresh_embedding_state(conn, model: str, *, document_ids: list[str] | None
     )
 
 
+def _retriable_db_error(exc: Exception) -> bool:
+    """A statement timeout, lock timeout or deadlock: the connection survives a rollback; retry the chunk."""
+    try:
+        from psycopg import errors
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(exc, (errors.QueryCanceled, errors.LockNotAvailable, errors.DeadlockDetected))
+
+
 def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *, batch_size: int | None = None,
                        dry_run: bool = False, delete_stale: bool = False,
                        progress: Callable[[int, int], None] | None = None, chunk_retries: int = 0,
@@ -392,7 +401,8 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
     chunk is committed on its own, so progress survives an interruption and is visible to searches
     immediately; ``progress(written, pending)`` is called after each chunk (counted in objects).
 
-    ``chunk_retries`` > 0 makes a long run survive a busy or restarting endpoint (Ollama shared with
+    ``chunk_retries`` > 0 makes a long run survive a statement timeout or deadlock on the vector insert (the
+    session uses the ingest statement timeout, 300 s) and a busy or restarting endpoint (Ollama shared with
     the ingest workers, a model reload, a PC under memory pressure): a failed chunk is retried after
     an exponential backoff (5 s, 10 s, ... capped at ``max_backoff``), the endpoint circuit is reset
     first, and only ``chunk_retries`` consecutive failures end the run with ``error`` set (the
@@ -419,6 +429,9 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 "stopped": f"outside the re-embed hours {hours[0]:02d}-{hours[1]:02d}; the next run resumes",
                 "yielded_seconds": 0.0, "yields": 0}
     with db.connect() as conn:
+        # Vector inserts go into an HNSW index; on a slow disk (cold cache, a checkpoint, a concurrent
+        # ingest) one chunk can exceed the 30 s interactive default. Batch headroom like ingest.
+        conn.execute(f"SET statement_timeout = '{int(getattr(settings, 'ingest_statement_timeout_seconds', 300) or 0)}s'")
         rows = conn.execute(
             """SELECT o.id, o.document_id, o.revision, o.kind AS type, o.search_text FROM aec.objects o
                WHERE (%(p)s::text IS NULL OR o.project_id = %(p)s) AND o.kind <> 'CADEntity' AND o.search_text <> ''
@@ -456,7 +469,9 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
                 try:
                     model, n = embed_missing_texts(conn, service, {h: groups[h][0]["search_text"] for h in part})
                     break
-                except EmbeddingEndpointError as exc:
+                except Exception as exc:  # noqa: BLE001 - only endpoint errors and DB timeouts are retried
+                    if not isinstance(exc, EmbeddingEndpointError) and not _retriable_db_error(exc):
+                        raise
                     conn.rollback()
                     failures += 1
                     if failures > chunk_retries:

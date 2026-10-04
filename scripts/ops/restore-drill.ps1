@@ -9,6 +9,9 @@
   drain the workers first (stop-workers.ps1 -Drain) or accept that jobs/objects/embeddings drift.
   -Backup takes a fresh dump with backup.ps1 into -Target first.
   Needs free space inside the Docker VM roughly equal to the live DB size (SELECT pg_database_size('aec')).
+  pg_restore runs with max_parallel_maintenance_workers=0: parallel index builds (pgvector HNSW, btree)
+  allocate dynamic shared memory in the container's /dev/shm (Docker default 64 MB) and fail with
+  "could not resize shared memory segment" on a DB of this size. Index definitions are compared too.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Backup -Target D:\AECData\backups
   powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Dump D:\AECData\backups\aec-db-20261004T051140Z.dump
@@ -42,6 +45,17 @@ WHERE t.table_type = 'BASE TABLE'
   AND (t.table_schema IN ('aec', 'ag_catalog') OR t.table_schema LIKE 'aec\_%')
 ORDER BY 1
 "@
+$indexSql = @"
+SELECT schemaname || '.' || tablename || '.' || indexname
+FROM pg_indexes
+WHERE schemaname IN ('aec', 'ag_catalog') OR schemaname LIKE 'aec\_%'
+ORDER BY 1
+"@
+function Get-Indexes([string]$db) {
+    $rows = & docker exec $Container psql -U aec -d $db -At -v ON_ERROR_STOP=1 -c $indexSql
+    if ($LASTEXITCODE -ne 0) { throw "index query failed on $db" }
+    @($rows)
+}
 function Get-Counts([string]$db) {
     $rows = & docker exec $Container psql -U aec -d $db -At -v ON_ERROR_STOP=1 -c $countSql
     if ($LASTEXITCODE -ne 0) { throw "count query failed on $db" }
@@ -60,7 +74,7 @@ $restoreErr = Join-Path $env:TEMP "restore-drill-$PID.err"
 & docker cp $Dump "${Container}:/tmp/restore-drill.dump" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'docker cp of the dump failed' }
 $t = Measure-Command {
-    & docker exec $Container pg_restore -U aec -d $Scratch --no-owner /tmp/restore-drill.dump 2> $restoreErr
+    & docker exec -e 'PGOPTIONS=-c max_parallel_maintenance_workers=0' $Container pg_restore -U aec -d $Scratch --no-owner /tmp/restore-drill.dump 2> $restoreErr
 }
 $restoreExit = $LASTEXITCODE
 $errs = @(Get-Content -LiteralPath $restoreErr -ErrorAction SilentlyContinue | Where-Object { $_ -match 'error' })
@@ -74,12 +88,17 @@ foreach ($k in (@($live.Keys) + @($rest.Keys) | Sort-Object -Unique)) {
     $a = $live[$k]; $b = $rest[$k]
     if ($a -ne $b) { $diff += [pscustomobject]@{ table = $k; live = $a; restored = $b } }
 }
+$liveIdx = Get-Indexes 'aec'
+$restIdx = Get-Indexes $Scratch
+$missingIdx = @($liveIdx | Where-Object { $restIdx -notcontains $_ })
 $key = 'aec.documents', 'aec.objects', 'aec.relations', 'aec.embeddings', 'aec.jobs', 'aec.kg_nodes', 'aec.kg_edges', 'aec.kg_aliases', 'ag_catalog.ag_graph', 'ag_catalog.ag_label'
 $summary = [ordered]@{
     dump = $Dump; scratch = $Scratch; restore_seconds = [int]$t.TotalSeconds; restore_exit = $restoreExit
     restore_error_lines = $errs.Count; tables_live = $live.Count; tables_restored = $rest.Count
     rows_live = ($live.Values | Measure-Object -Sum).Sum; rows_restored = ($rest.Values | Measure-Object -Sum).Sum
-    key_tables = [ordered]@{}; differing_tables = $diff; result = $(if ($diff.Count -eq 0 -and $errs.Count -eq 0) { 'MATCH' } else { 'DIFF' })
+    indexes_live = $liveIdx.Count; indexes_restored = $restIdx.Count; missing_indexes = $missingIdx
+    key_tables = [ordered]@{}; differing_tables = $diff
+    result = $(if ($diff.Count -eq 0 -and $errs.Count -eq 0 -and $missingIdx.Count -eq 0) { 'MATCH' } else { 'DIFF' })
     finished = (Get-Date -Format s)
 }
 foreach ($k in $key) { $summary.key_tables[$k] = "$($live[$k]) / $($rest[$k])" }

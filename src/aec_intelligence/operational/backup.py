@@ -103,6 +103,25 @@ def run_backup(dsn: str, target: str | Path, keep: int = 14, prefix: str = DEFAU
             "kept": [str(p) for p in list_backups(folder, prefix)]}
 
 
+# Parallel index builds (pgvector HNSW, btree) allocate dynamic shared memory in /dev/shm; Docker's
+# default 64 MB is too small at ~1 GB DB size ("could not resize shared memory segment"), and with
+# --exit-on-error the whole restore fails. Serial builds are slower but need no shared memory.
+RESTORE_PGOPTIONS = "-c max_parallel_maintenance_workers=0"
+
+
+def restore_command(dsn: str, dump: Path, docker_container: str | None, executable: str | None,
+                    docker: str = "docker", clean: bool = True) -> tuple[list[str], dict | None]:
+    """The pg_restore argv plus the environment for a local run (None = inherit, docker passes -e)."""
+    flags = ["--no-owner", "--exit-on-error"] + (["--clean", "--if-exists"] if clean else [])
+    if executable:
+        env = dict(os.environ)
+        env["PGOPTIONS"] = (env.get("PGOPTIONS", "") + " " + RESTORE_PGOPTIONS).strip()
+        return [executable, *flags, "--dbname", dsn, str(dump)], env
+    parts = _dsn_parts(dsn)
+    return [docker, "exec", "-i", "-e", f"PGOPTIONS={RESTORE_PGOPTIONS}", docker_container or "",
+            "pg_restore", "-U", parts["user"], "-d", parts["dbname"], *flags], None
+
+
 def run_restore(dsn: str, dump: str | Path, yes: bool = False, docker_container: str | None = None,
                 pg_restore: str | None = None, docker: str = "docker", clean: bool = True) -> dict:
     if not yes:
@@ -110,17 +129,13 @@ def run_restore(dsn: str, dump: str | Path, yes: bool = False, docker_container:
     dump = Path(dump)
     if not dump.is_file():
         raise FileNotFoundError(dump)
-    flags = ["--no-owner", "--exit-on-error"] + (["--clean", "--if-exists"] if clean else [])
     executable = None if docker_container else _tool("pg_restore", pg_restore)
+    if not executable and not docker_container:
+        raise RuntimeError("pg_restore not found on PATH; pass --docker-container aec-db")
+    command, env = restore_command(dsn, dump, docker_container, executable, docker=docker, clean=clean)
     if executable:
-        command = [executable, *flags, "--dbname", dsn, str(dump)]
-        proc = subprocess.run(command, stderr=subprocess.PIPE)
+        proc = subprocess.run(command, stderr=subprocess.PIPE, env=env)
     else:
-        if not docker_container:
-            raise RuntimeError("pg_restore not found on PATH; pass --docker-container aec-db")
-        parts = _dsn_parts(dsn)
-        command = [docker, "exec", "-i", docker_container, "pg_restore", "-U", parts["user"],
-                   "-d", parts["dbname"], *flags]
         with open(dump, "rb") as source:
             proc = subprocess.run(command, stdin=source, stderr=subprocess.PIPE)
     if proc.returncode != 0:

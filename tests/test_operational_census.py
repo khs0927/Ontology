@@ -156,6 +156,18 @@ def test_restore_requires_confirmation(tmp_path):
         backup.run_restore("postgresql://nobody@/none", dump, yes=False)
 
 
+def test_restore_disables_parallel_index_builds(tmp_path):
+    # Parallel HNSW/btree builds need /dev/shm (64 MB in Docker) -> pg_restore --exit-on-error died.
+    dump = tmp_path / "x.dump"
+    dsn = "postgresql://aec:pw@127.0.0.1:55432/aec_scratch"
+    command, env = backup.restore_command(dsn, dump, "aec-db", None)
+    assert command[:5] == ["docker", "exec", "-i", "-e", "PGOPTIONS=-c max_parallel_maintenance_workers=0"]
+    assert command[5:7] == ["aec-db", "pg_restore"] and "aec_scratch" in command and env is None
+    command, env = backup.restore_command(dsn, dump, None, "pg_restore", clean=False)
+    assert command[0] == "pg_restore" and "--clean" not in command
+    assert "max_parallel_maintenance_workers=0" in env["PGOPTIONS"]
+
+
 # ------------------------------------------------------------------------------------------
 
 def test_census_exclude_by_name_glob_and_path_prefix(tmp_path):

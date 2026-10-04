@@ -211,14 +211,30 @@ def refresh(db, project_key: str | None = None, *, leiden: bool = False, model: 
 
 def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: int | None = None,
               max_level: int = 1) -> dict[str, Any]:
-    """Summarise PENDING/FAILED communities with the local LLM (resumable: one commit per community)."""
+    """Summarise PENDING/FAILED communities with the local LLM (resumable: one commit per community).
+
+    The model is loaded once up front (``llm.warm()``, long timeout). Two consecutive LLM endpoint
+    failures end the run (``aborted``) instead of marking every remaining community FAILED one
+    timeout at a time; the rest stay PENDING for the next run.
+    """
+    from .llm import LLMError
+
     done = failed = 0
     seconds = 0.0
+    warm_seconds = None
+    aborted = None
+    endpoint_failures = 0
     with db.connect(statement_timeout_seconds=120) as conn:
         sql = ("SELECT id, title, facts FROM aec.kg_communities WHERE status <> 'DONE' AND level <= %s"
                + (" AND project_key = %s" if project_key else "") + " ORDER BY level, project_key, id")
         params: list[Any] = [max_level] + ([project_key] if project_key else [])
         rows = conn.execute(sql, params).fetchall()
+        if rows and hasattr(llm, "warm"):
+            try:
+                warm_seconds = llm.warm()
+            except LLMError as exc:
+                return {"summarized": 0, "failed": 0, "llm_seconds": 0.0, "pending": len(rows),
+                        "aborted": str(exc)[:300]}
         for row in rows[:limit] if limit else rows:
             facts = row["facts"] if isinstance(row["facts"], list) else json.loads(row["facts"])
             user = f"제목: {row['title']}\n사실:\n" + "\n".join(f"- {f}" for f in facts) + "\n\n위 사실만으로 요약하라."
@@ -241,11 +257,22 @@ def summarize(db, llm, *, embedder=None, project_key: str | None = None, limit: 
                     (text, res["model"], vec, vec_model, row["id"]))
                 conn.commit()  # one commit per community: an interrupted run keeps what it finished
                 done += 1
+                endpoint_failures = 0
                 seconds += res["seconds"]
             except Exception as exc:  # noqa: BLE001 - recorded per community, the run continues
                 conn.rollback()
+                if isinstance(exc, LLMError):
+                    endpoint_failures += 1
+                    if endpoint_failures >= 2:
+                        aborted = str(exc)[:300]
+                        break  # this community stays PENDING/FAILED as before; the rest are untouched
                 conn.execute("UPDATE aec.kg_communities SET status='FAILED', error=%s, updated_at=now() "
                              "WHERE id=%s", (str(exc)[:500], row["id"]))
                 conn.commit()
                 failed += 1
-    return {"summarized": done, "failed": failed, "llm_seconds": round(seconds, 1)}
+    out = {"summarized": done, "failed": failed, "llm_seconds": round(seconds, 1)}
+    if warm_seconds is not None:
+        out["warm_seconds"] = warm_seconds
+    if aborted:
+        out["aborted"] = aborted
+    return out

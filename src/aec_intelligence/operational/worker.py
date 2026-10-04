@@ -46,6 +46,21 @@ def quiet_noisy_loggers() -> None:
             lg.addFilter(_OncePerMessage())
 
 
+def host_source_path(source: str, data_root: Path) -> str:
+    """Map a container path from POST /v1/ingestions (``/data/...``) onto the host data root.
+
+    The API runs in a container and validates paths under its own mount (``AEC_HOST_DATA_ROOT`` is
+    mounted at ``/data``), but the ingest workers run on the Windows host and cannot open
+    ``/data/...``. Only a path that does not exist as given and starts with the container data root
+    (``AEC_CONTAINER_DATA_ROOT``, default ``/data``) is rewritten, so in-container workers are unaffected.
+    """
+    root = (os.getenv("AEC_CONTAINER_DATA_ROOT") or "/data").rstrip("/")
+    norm = source.replace("\\", "/")
+    if not norm.startswith(root + "/") or Path(source).is_file():
+        return source
+    return str(Path(data_root).joinpath(*[part for part in norm[len(root) + 1:].split("/") if part]))
+
+
 def source_sha256(source_path: Path, payload: dict[str, Any] | None = None, chunk_size: int = 1 << 20) -> str:
     """Return the source hash, preferring the census-provided ``sha256`` in the job payload.
 
@@ -181,6 +196,7 @@ class IngestionWorker:
 
         # Long-path prefix on Windows: census hashes >260-char paths with it, so the worker must too.
         # source_key keeps the plain resolved path; only OS access uses the prefixed one.
+        source_path_str = host_source_path(source_path_str, self.settings.data_root)
         resolved_path = Path(source_path_str).resolve()
         source_path = Path(long_path(str(resolved_path)))
         if not source_path.is_file():

@@ -28,7 +28,8 @@ from .resolve import (
 )
 
 REFUSAL = "제공된 도면 데이터에서 근거를 찾을 수 없습니다."
-PARTICLES = "은는이가을를의에도만과와로으로에서까지부터이랑나"
+PARTICLES = ("에서는", "에서", "에는", "으로", "까지", "부터", "이랑", "은", "는", "이", "가", "을", "를", "의", "에", "도",
+             "만", "과", "와", "로", "나")
 MAX_CONTEXT = 12
 SEMANTIC_MIN_SCORE = 0.35
 
@@ -85,7 +86,8 @@ def _word_present(word: str, text: str) -> bool:
     """Korean single-syllable words (보, 문, 창) only count as a whole token, optionally with a particle."""
     if len(word) >= 3 or re.search(r"[a-z]", word):
         return re.search(rf"(?<![0-9A-Za-z가-힣]){re.escape(word)}", text, re.IGNORECASE) is not None
-    return re.search(rf"(?<![0-9A-Za-z가-힣]){re.escape(word)}(?:[{PARTICLES}]{{0,2}})(?![0-9A-Za-z가-힣])", text) is not None
+    particles = "|".join(PARTICLES)
+    return re.search(rf"(?<![0-9A-Za-z가-힣]){re.escape(word)}(?:{particles})?(?![0-9A-Za-z가-힣])", text) is not None
 
 
 def classify_intents(question: str) -> list[str]:

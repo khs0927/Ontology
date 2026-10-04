@@ -47,11 +47,14 @@ class LLMConfig:
     model: str = DEFAULT_MODEL
     timeout: float = 120.0
     allow_remote: bool = False
+    # One fixed context size for every call: Ollama reloads the model when num_ctx changes.
+    num_ctx: int = 6144
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
         return cls(url=os.getenv("AEC_LLM_URL") or DEFAULT_URL, model=os.getenv("AEC_LLM_MODEL") or DEFAULT_MODEL,
                    timeout=float(os.getenv("AEC_LLM_TIMEOUT_SECONDS") or 120),
+                   num_ctx=int(os.getenv("AEC_LLM_NUM_CTX") or 6144),
                    allow_remote=os.getenv("AEC_LLM_ALLOW_REMOTE", "").strip().lower() in {"1", "true", "yes"})
 
 
@@ -69,13 +72,12 @@ class LocalLLM:
     def model(self) -> str:
         return self.config.model
 
-    def chat(self, system: str, user: str, *, max_tokens: int = 700, temperature: float = 0.0,
-             num_ctx: int = 8192) -> dict:
+    def chat(self, system: str, user: str, *, max_tokens: int = 700, temperature: float = 0.0) -> dict:
         """One non-streaming chat turn; returns {"text", "model", "seconds", "eval_count"}."""
         body = {
             "model": self.config.model, "stream": False, "think": False,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": num_ctx, "seed": 7},
+            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": self.config.num_ctx, "seed": 7},
             "keep_alive": "30m",
         }
         req = urllib.request.Request(self.config.url.rstrip("/") + "/api/chat",

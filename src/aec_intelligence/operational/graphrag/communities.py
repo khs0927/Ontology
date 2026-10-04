@@ -185,7 +185,7 @@ def refresh(db, project_key: str | None = None, *, leiden: bool = False, model: 
                     "SELECT id, input_hash, status FROM aec.kg_communities WHERE project_key=%s", (key,)).fetchall()}
                 keep = set()
                 for c in found:
-                    h = short_hash(PROMPT_VERSION, model, json.dumps(c["facts"], ensure_ascii=False), n=32)
+                    h = short_hash(PROMPT_VERSION, json.dumps(c["facts"], ensure_ascii=False), n=32)
                     keep.add(c["id"])
                     old = existing.get(c["id"])
                     if old and old["input_hash"] == h:

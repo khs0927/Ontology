@@ -77,16 +77,36 @@ def _is_phase(name: str) -> bool:
     return any(clean == word or clean.startswith(word) and len(clean) <= len(word) + 3 for word in PHASE_WORDS)
 
 
-def canonical_project(project_id: str, top_folder: str | None = None) -> dict[str, str]:
+def _parts(top_folder: str) -> list[str]:
+    return [p for p in re.split(r"[\\/]+", str(top_folder)) if p.strip()]
+
+
+def container_folders(top_folders) -> set[str]:
+    """First-level folders that group several projects: two or more second-level children that are not
+    phase folders ("계획/화목동698-14", "계획/..."; "용변/남천동", "용변/주례동"). A folder whose children are
+    only phases ("학장동 574-29/#허가", "/#사용승인") stays one project."""
+    children: dict[str, set[str]] = {}
+    for top in top_folders:
+        if not top:
+            continue
+        parts = _parts(top)
+        if len(parts) >= 2 and not _is_phase(parts[1]):
+            children.setdefault(parts[0], set()).add(parts[1])
+    return {first for first, kids in children.items() if len(kids) >= 2}
+
+
+def canonical_project(project_id: str, top_folder: str | None = None,
+                      containers: set[str] | frozenset[str] = frozenset()) -> dict[str, str]:
     """Canonical project for a document: ``{"key", "name", "phase"}``.
 
     ``top_folder`` is the census' first two folder levels under an import root. Without it (manual
-    imports, eval sets) the stored ``project_id`` is the project.
+    imports, eval sets) the stored ``project_id`` is the project. ``containers`` comes from
+    ``container_folders`` over the whole corpus.
     """
     if top_folder:
-        parts = [p for p in re.split(r"[\\/]+", str(top_folder)) if p.strip()]
+        parts = _parts(top_folder)
         phase = ""
-        if len(parts) >= 2 and _is_container(parts[0]):
+        if len(parts) >= 2 and (_is_container(parts[0]) or parts[0] in containers):
             name = parts[1]
             if len(parts) >= 3 and _is_phase(parts[2]):
                 phase = _clean_folder(parts[2])

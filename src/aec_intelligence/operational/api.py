@@ -125,11 +125,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Distinct embedded texts (migration 0003); objects with the same text share one vector.
             text_vectors = conn.execute("SELECT count(*) AS c FROM aec.text_vectors").fetchone()["c"]
             active = EmbeddingService(current_settings).active_model()
-            # Objects `aec operational reembed` would embed: no vector from the active model yet
-            # (endpoint was down during ingest, or the rows still carry offline hash vectors).
+            # Match reembed eligibility: a vector must use both the active model and current object revision.
             pending = conn.execute(
                 """SELECT count(*) AS c FROM aec.objects o WHERE o.kind <> 'CADEntity' AND o.search_text <> ''
-                   AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id AND e.model = %s)""",
+                   AND NOT EXISTS (SELECT 1 FROM aec.embeddings e WHERE e.object_id = o.id
+                                   AND e.model = %s AND e.revision = o.revision)""",
                 (active,)).fetchone()["c"]
         return {
             "documents": docs_count,

@@ -92,8 +92,9 @@ def run_backup(dsn: str, target: str | Path, keep: int = 14, prefix: str = DEFAU
             proc = subprocess.run(command, stdout=sink, stderr=subprocess.PIPE)
         if proc.returncode != 0:
             raise RuntimeError(f"pg_dump failed ({proc.returncode}): {proc.stderr.decode(errors='replace')[-2000:]}")
-        if partial.stat().st_size < 5 or partial.read_bytes()[:5] != b"PGDMP":
-            raise RuntimeError("pg_dump produced no custom-format archive")
+        with partial.open("rb") as archive:
+            if archive.read(5) != b"PGDMP":
+                raise RuntimeError("pg_dump produced no custom-format archive")
         os.replace(partial, final)
     finally:
         if partial.exists():

@@ -22,6 +22,7 @@ documents makes re-runs skip unchanged projects.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -36,6 +37,7 @@ from .integrations import (
     load_rules,
     load_section_handoffs,
     match_section,
+    parser_revision_id,
     subject_ref,
 )
 from .resolve import (
@@ -127,7 +129,7 @@ def load_documents(conn) -> dict[str, list[dict[str, Any]]]:
 
 
 def fingerprint(docs: list[dict[str, Any]], extra: str = "") -> str:
-    parts = sorted(f"{d['id']}:{d['revision']}:{d['updated_at']}" for d in docs)
+    parts = sorted(f"{d['id']}:{d['revision']}:{d.get('source_hash') or ''}:{d['updated_at']}" for d in docs)
     return short_hash(extra, *parts, n=32)
 
 
@@ -149,9 +151,11 @@ def load_steel_catalog(directory: str | os.PathLike | None) -> dict[str, dict[st
     files = sorted(root.glob("*.dat")) + sorted((root / "attributes").glob("*.dat"))
     for path in files:
         try:
-            text = path.read_bytes().decode("cp949", errors="replace")
+            raw = path.read_bytes()
+            text = raw.decode("cp949", errors="replace")
         except OSError:
             continue
+        source_sha256 = hashlib.sha256(raw).hexdigest()
         for line in text.replace("\r", "").split("\n")[1:]:
             fields = line.split()
             if len(fields) < 11:
@@ -164,7 +168,8 @@ def load_steel_catalog(directory: str | os.PathLike | None) -> dict[str, dict[st
             key = catalog_spec_key(fields[0], fields[1], path.stem)
             if key and key not in catalog:
                 catalog[key] = {"spec": fields[0], "family": path.stem, "shape": fields[1], "dims_mm": dims,
-                                "unit_weight_kg_m": weight, "paint_area_m2_m": paint, "source": "hs-steel-cad"}
+                                "unit_weight_kg_m": weight, "paint_area_m2_m": paint, "source": "hs-steel-cad",
+                                "source_sha256": source_sha256}
     return catalog
 
 
@@ -191,7 +196,7 @@ class KnowledgeGraphBuilder:
             state = {r["project_key"]: r["fingerprint"] for r in
                      conn.execute("SELECT project_key, fingerprint FROM aec.kg_build_state").fetchall()}
             # Catalog/rules content (not just their sizes) is part of every project's fingerprint.
-            extra = short_hash(json.dumps(sorted(self.catalog), ensure_ascii=False),
+            extra = short_hash(json.dumps(self.catalog, ensure_ascii=False, sort_keys=True, default=str),
                                json.dumps(self.requirements, ensure_ascii=False, sort_keys=True, default=str), n=16)
             # Projects whose documents are all gone (or moved to another canonical project) go first.
             stale = [k for k in state if k not in grouped and (not project_key or k == project_key)]
@@ -462,8 +467,8 @@ class KnowledgeGraphBuilder:
         """Link rules to the nodes they apply to. ArchOntos subject refs resolve, most specific first, by
         object id (node evidence, else the object's drawing), ``locator.kg_node``, ``locator.document_id`` /
         ``source_id`` (drawing) and finally ``project_id`` (project). A ref whose byte revision differs from the
-        drawing's current hash is linked with ``stale: true`` so a reviewer re-checks it. Legacy space-use
-        rules link every Space with that room key."""
+        drawing's current hash or parser revision is linked with ``stale: true`` so a reviewer re-checks it.
+        Legacy space-use rules link every Space with that room key."""
         if not self.requirements:
             return
         by_id = {d["id"]: d for d in docs}
@@ -489,6 +494,8 @@ class KnowledgeGraphBuilder:
                 if s.props.get("room_key") in req["space_uses"]:
                     links.setdefault(s.id, {"via": "space_use"})
             for ref in req["subjects"]:
+                if ref["project_id"] not in project_ids:
+                    continue  # a locator or matching hash cannot grant cross-project rule scope
                 loc = ref.get("locator") or {}
                 doc = None
                 target = None
@@ -509,19 +516,37 @@ class KnowledgeGraphBuilder:
                     unresolved += ref["project_id"] in project_ids
                     continue
                 if doc is None:
+                    doc = by_id.get(loc.get("document_id")) or by_hash.get(ref.get("source_id"))
+                if doc is None:
                     tdocs = g.nodes[target].document_ids
                     doc = by_id.get(tdocs[0]) if len(tdocs) == 1 else None
+                if doc is not None and doc["project_id"] != ref["project_id"]:
+                    unresolved += 1
+                    continue
                 evidence: dict[str, Any] = {"via": "subject_ref"}
-                if ref.get("source_byte_revision_id") and doc is not None:
-                    evidence["stale"] = ref["source_byte_revision_id"] != (doc.get("source_hash") or "")
+                if ref.get("source_byte_revision_id"):
+                    # Equal source bytes do not prove equal parser output after a revision bump.
+                    evidence["stale"] = doc is None or (
+                        ref["source_byte_revision_id"] != (doc.get("source_hash") or "")
+                        or ref.get("parser_revision_id") != parser_revision_id(
+                            doc["id"], doc.get("revision"), doc.get("source_hash")))
+                if links.get(target, {}).get("stale"):
+                    evidence["stale"] = True  # a later fresh ref cannot hide an obsolete one for the same node
                 links[target] = evidence
             if not links:
                 continue
             rid = f"kg:req:{key}:{short_hash(str(req['id']), str(req.get('version_label') or ''), n=12)}"
+            stale_links = sum(1 for e in links.values() if e.get("stale"))
+            authority_problems = list(req.get("authority_problems") or [])
+            context = req.get("canonical_context") or {}
+            if context and context.get("project_key") != key:
+                authority_problems.append("canonical evaluation belongs to another project")
             node = g.node(rid, "Requirement", req["title"], rule_id=req["id"], version_label=req.get("version_label"),
                           text=req.get("text"), source=req.get("source"), has_logic=bool(req.get("logic_expr")),
-                          outcome=req.get("outcome"),
-                          stale_links=sum(1 for e in links.values() if e.get("stale")))
+                          outcome="REVIEW" if stale_links or authority_problems else req.get("outcome"),
+                          exported_outcome=req.get("exported_outcome", req.get("outcome")),
+                          canonical_context=req.get("canonical_context"), authority_problems=authority_problems,
+                          stale_links=stale_links)
             docs_seen: list[str] = []
             for target, evidence in sorted(links.items()):
                 g.edge(target, "subjectTo", rid, **evidence)

@@ -341,6 +341,18 @@ class GraphRAG:
                     gate_note = None
                 items += self._semantic(conn, question, keys, budget_ms=semantic_budget)
             items = _dedupe(items)[:top_k]
+            # An asked attribute (cost, phone, award) that no retrieved text supports is refused by ask()
+            # anyway (unsupported_by_context over a subset of these texts): refuse here, before resolving
+            # citations, which reads object payloads and is slow on a cold disk.
+            attr = asked_attribute(question)
+            if attr and not any(attr[1].search(i.text) for i in items):
+                out = {"linked": linked, "route": "refuse", "items": [], "cypher": cypher,
+                       "gate": f"asked attribute not in context: {attr[0]}",
+                       "retrieval_ms": round((time.monotonic() - started) * 1000)}
+                if semantic_budget is not None:
+                    out["semantic"] = {"budget_ms": semantic_budget, "timed_out": self._semantic_timed_out,
+                                       "gate": gate_note}
+                return out
             for i, item in enumerate(items, 1):
                 item.cid = f"C{i}"
             self._resolve_citations(conn, items)

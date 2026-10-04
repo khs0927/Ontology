@@ -94,7 +94,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build the api/worker image (deps from pyproject extras)
-        run: docker build -f docker/Dockerfile.app -t aec-intelligence-app:ci .
+        run: |
+          # A decoy .env must never reach the image (.dockerignore).
+          echo "AEC_API_TOKEN=ci-decoy-not-a-secret" > .env
+          docker build -f docker/Dockerfile.app -t aec-intelligence-app:ci .
+          rm .env
+
+      - name: Image hygiene (no .env/.git/.venv, non-root)
+        run: |
+          docker run --rm aec-intelligence-app:ci sh -c 'test ! -e /app/.env && test ! -e /app/.git && test ! -e /app/.venv && test "$(id -u)" != 0 && echo hygiene-ok'
 
       - name: Smoke-test the image
         run: |

@@ -119,3 +119,25 @@ def test_power_cad_header_format_matches(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch, TOKEN)
     res = client.get("/v1/elements", headers={"Authorization": "Bearer " + TOKEN, "User-Agent": "power-cad-mcp"})
     assert res.status_code != 401
+
+
+def test_websocket_scope_requires_the_token():
+    import asyncio
+
+    reached, sent = [], []
+
+    async def app(scope, receive, send):
+        reached.append(scope["type"])
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    mw = BearerTokenMiddleware(app, token=TOKEN)
+    asyncio.run(mw({"type": "websocket", "path": "/ws", "headers": []}, receive, send))
+    assert reached == [] and sent == [{"type": "websocket.close", "code": 1008}]
+    good = [(b"authorization", f"Bearer {TOKEN}".encode())]
+    asyncio.run(mw({"type": "websocket", "path": "/ws", "headers": good}, receive, send))
+    assert reached == ["websocket"]

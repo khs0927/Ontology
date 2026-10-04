@@ -12,7 +12,7 @@ services:
       dockerfile: Dockerfile.db
     image: aec-postgres-age:16-1.6.0
     container_name: aec-db
-    # Published on loopback only: the default password is a placeholder and the API has no auth.
+    # Published on loopback only (scripts/ops/init-env.ps1 generates the password and the API token).
     # Change the host side of the mapping only in a reviewed deployment with a front door.
     ports:
       - "127.0.0.1:55432:5432"
@@ -45,7 +45,6 @@ services:
       AEC_DATA_ROOT: /data
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
-      - .:/app
     depends_on:
       db:
         condition: service_healthy
@@ -77,7 +76,6 @@ services:
       AEC_LLM_TIMEOUT_SECONDS: ${AEC_LLM_TIMEOUT_SECONDS:-120}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
-      - .:/app
     depends_on:
       db:
         condition: service_healthy
@@ -101,7 +99,6 @@ services:
       AEC_INGEST_STATEMENT_TIMEOUT_SECONDS: ${AEC_INGEST_STATEMENT_TIMEOUT_SECONDS:-300}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
-      - .:/app
     depends_on:
       db:
         condition: service_healthy
@@ -118,7 +115,6 @@ services:
       AEC_DATA_ROOT: /data
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
-      - .:/app
     depends_on:
       db:
         condition: service_healthy

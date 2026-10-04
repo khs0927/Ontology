@@ -31,8 +31,10 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from .config import Settings
+from .netguard import is_local_endpoint, opener_for, remote_allowed
 
 
 EMBEDDING_DIM = 1024
@@ -102,6 +104,11 @@ def _env_number(name: str, default: float, cast=float):
 
 def vector_literal(vec: list[float]) -> str:
     return "[" + ",".join(str(float(v)) for v in vec) + "]"
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    """Proxy-less for local endpoints (netguard.opener_for); a seam for transport tests."""
+    return opener_for(req.full_url).open(req, timeout=timeout)
 
 
 class EmbeddingService:
@@ -189,9 +196,13 @@ class EmbeddingService:
         else:
             url = self.endpoint if self.endpoint.endswith("/embeddings") else f"{self.endpoint}/v1/embeddings"
             body = {"input": texts, "model": self.model_name}
+        if not is_local_endpoint(url) and not remote_allowed("AEC_EMBEDDING_ALLOW_REMOTE"):
+            # Object text from private drawings must not leave the PC by a typo in AEC_EMBEDDING_URL.
+            raise EmbeddingEndpointError(f"refusing non-local embedding endpoint {urlparse(url).hostname!r} "
+                                         "(set AEC_EMBEDDING_ALLOW_REMOTE=1 to opt in)")
         req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with _urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if isinstance(data, list):  # TEI native /embed
             vectors = data

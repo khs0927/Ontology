@@ -64,7 +64,15 @@ class BearerTokenMiddleware:
         return hmac.compare_digest(presented.encode("utf-8"), self._expected)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("method") == "OPTIONS" or is_open_path(scope.get("path", "")):
+        kind = scope["type"]
+        if kind == "websocket":
+            # No websocket routes today; any future one is covered by the same token instead of open.
+            if self._authorized(scope):
+                await self.app(scope, receive, send)
+            else:
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        if kind != "http" or scope.get("method") == "OPTIONS" or is_open_path(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
         if self._authorized(scope):

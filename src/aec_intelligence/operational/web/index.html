@@ -363,6 +363,36 @@
   <script>
     const API_BASE = window.location.origin;
 
+    // When the server sets AEC_API_TOKEN every /v1 call needs "Authorization: Bearer <token>".
+    // The token is asked for once on the first 401 and kept for this browser tab only.
+    const TOKEN_KEY = 'aecApiToken';
+    async function apiFetch(path, options = {}, retried = false) {
+      const headers = new Headers(options.headers || {});
+      const token = sessionStorage.getItem(TOKEN_KEY);
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      if (res.status === 401 && !retried) {
+        const entered = window.prompt('API 토큰(AEC_API_TOKEN)을 입력하세요');
+        if (entered && entered.trim()) {
+          sessionStorage.setItem(TOKEN_KEY, entered.trim());
+          return apiFetch(path, options, true);
+        }
+      }
+      return res;
+    }
+
+    // Labels, file names and handles come from parsed drawings (untrusted text): always escape
+    // them before putting them into innerHTML.
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"'`]/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;'
+      })[ch]);
+    }
+    function num(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
     // Tab Switching
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -377,7 +407,7 @@
     // Load Stats
     async function loadStats() {
       try {
-        const res = await fetch(`${API_BASE}/v1/stats`);
+        const res = await apiFetch(`/v1/stats`);
         if (!res.ok) return;
         const data = await res.json();
         document.getElementById('stats-badge').textContent =
@@ -405,7 +435,7 @@
       resultsDiv.innerHTML = '<div style="color: var(--text-muted); padding: 12px;">검색 중...</div>';
 
       try {
-        const res = await fetch(`${API_BASE}/v1/search`, {
+        const res = await apiFetch(`/v1/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, project_id, kind, top_k: 20 })
@@ -425,13 +455,13 @@
                                 : (hit.citation.state === 'USER_CONFIRMED' ? 'badge-confirmed' : 'badge-inferred');
           card.innerHTML = `
             <div class="hit-header">
-              <span class="hit-tag">${hit.kind}</span>
-              <span class="badge ${stateBadgeClass}">${hit.citation.state}</span>
-              <span class="score-badge">${(hit.score * 100).toFixed(1)}점</span>
+              <span class="hit-tag">${esc(hit.kind)}</span>
+              <span class="badge ${stateBadgeClass}">${esc(hit.citation.state)}</span>
+              <span class="score-badge">${(num(hit.score) * 100).toFixed(1)}점</span>
             </div>
-            <div style="font-weight: 600; margin-bottom: 4px;">${hit.label}</div>
+            <div style="font-weight: 600; margin-bottom: 4px;">${esc(hit.label)}</div>
             <div class="citation-info">
-              📄 ${hit.citation.document_name} (r${hit.citation.revision}) | 뷰: ${hit.citation.layout_or_page} | 핸들: ${hit.citation.handle_or_id}
+              📄 ${esc(hit.citation.document_name)} (r${esc(hit.citation.revision)}) | 뷰: ${esc(hit.citation.layout_or_page)} | 핸들: ${esc(hit.citation.handle_or_id)}
             </div>
           `;
           card.addEventListener('click', () => showDetail(hit));
@@ -440,7 +470,7 @@
 
         if (data.hits.length > 0) showDetail(data.hits[0]);
       } catch (err) {
-        resultsDiv.innerHTML = `<div style="color: var(--danger); padding: 12px;">검색 오류: ${err.message}</div>`;
+        resultsDiv.innerHTML = `<div style="color: var(--danger); padding: 12px;">검색 오류: ${esc(err.message)}</div>`;
       }
     }
 
@@ -451,20 +481,20 @@
       detailDiv.innerHTML = `
         <table class="data-table">
           <tr><th>속성</th><th>값</th></tr>
-          <tr><td>객체 ID</td><td><code>${hit.object_id}</code></td></tr>
-          <tr><td>도면 문서</td><td>${hit.citation.document_name} (Rev ${hit.citation.revision})</td></tr>
-          <tr><td>도면 시트/페이지</td><td>${hit.citation.layout_or_page}</td></tr>
-          <tr><td>CAD 핸들 / ID</td><td>${hit.citation.handle_or_id}</td></tr>
-          <tr><td>좌표계</td><td>${hit.citation.coordinate_system}</td></tr>
-          <tr><td>Bounding Box</td><td>${hit.citation.bbox ? JSON.stringify(hit.citation.bbox) : 'N/A'}</td></tr>
-          <tr><td>유사도 점수</td><td>종합 ${(hit.score*100).toFixed(1)}% (어휘 ${(hit.lexical_score*100).toFixed(1)}%, 벡터 ${(hit.vector_score*100).toFixed(1)}%)</td></tr>
-          <tr><td>연결 관계</td><td>${hit.relations && hit.relations.length ? JSON.stringify(hit.relations) : '독립 부재'}</td></tr>
+          <tr><td>객체 ID</td><td><code>${esc(hit.object_id)}</code></td></tr>
+          <tr><td>도면 문서</td><td>${esc(hit.citation.document_name)} (Rev ${esc(hit.citation.revision)})</td></tr>
+          <tr><td>도면 시트/페이지</td><td>${esc(hit.citation.layout_or_page)}</td></tr>
+          <tr><td>CAD 핸들 / ID</td><td>${esc(hit.citation.handle_or_id)}</td></tr>
+          <tr><td>좌표계</td><td>${esc(hit.citation.coordinate_system)}</td></tr>
+          <tr><td>Bounding Box</td><td>${hit.citation.bbox ? esc(JSON.stringify(hit.citation.bbox)) : 'N/A'}</td></tr>
+          <tr><td>유사도 점수</td><td>종합 ${(num(hit.score)*100).toFixed(1)}% (어휘 ${(num(hit.lexical_score)*100).toFixed(1)}%, 벡터 ${(num(hit.vector_score)*100).toFixed(1)}%)</td></tr>
+          <tr><td>연결 관계</td><td>${hit.relations && hit.relations.length ? esc(JSON.stringify(hit.relations)) : '독립 부재'}</td></tr>
         </table>
       `;
 
       // Render Bounding Box in SVG
       if (hit.citation.bbox && hit.citation.bbox.length === 4) {
-        const [minX, minY, maxX, maxY] = hit.citation.bbox;
+        const [minX, minY, maxX, maxY] = hit.citation.bbox.map(num);
         const w = Math.max(maxX - minX, 10);
         const h = Math.max(maxY - minY, 10);
         const margin = Math.max(w, h) * 0.25;
@@ -474,14 +504,14 @@
           <rect x="${minX - margin}" y="${minY - margin}" width="${w + margin*2}" height="${h + margin*2}" fill="#0b1120"/>
           <rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="rgba(56, 189, 248, 0.25)" stroke="#38bdf8" stroke-width="2"/>
           <text x="${minX + w/2}" y="${minY + h/2}" fill="#f8fafc" font-size="12" text-anchor="middle" dominant-baseline="middle">
-            ${hit.kind}: ${hit.label}
+            ${esc(hit.kind)}: ${esc(hit.label)}
           </text>
         `;
       } else {
         svg.setAttribute('viewBox', '0 0 1000 600');
         svg.innerHTML = `
           <text x="500" y="300" text-anchor="middle" fill="#94a3b8" font-size="14">
-            ${hit.kind} (${hit.label}) - 기하 좌표 정보 없음
+            ${esc(hit.kind)} (${esc(hit.label)}) - 기하 좌표 정보 없음
           </text>
         `;
       }
@@ -499,7 +529,7 @@
       }
 
       try {
-        const res = await fetch(`${API_BASE}/v1/ingestions`, {
+        const res = await apiFetch(`/v1/ingestions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path, project_id, queue })
@@ -521,7 +551,7 @@
       const tbody = document.querySelector('#reviews-table tbody');
       tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">로딩 중...</td></tr>';
       try {
-        const res = await fetch(`${API_BASE}/v1/reviews`);
+        const res = await apiFetch(`/v1/reviews`);
         const items = await res.json();
         tbody.innerHTML = '';
         if (!items || items.length === 0) {
@@ -532,25 +562,29 @@
         items.forEach(item => {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td><code>${item.object_id.slice(0, 16)}...</code></td>
-            <td>${item.document_name}</td>
-            <td><span class="badge badge-inferred">${item.kind}</span></td>
-            <td>${item.label}</td>
+            <td><code>${esc(String(item.object_id).slice(0, 16))}...</code></td>
+            <td>${esc(item.document_name)}</td>
+            <td><span class="badge badge-inferred">${esc(item.kind)}</span></td>
+            <td>${esc(item.label)}</td>
             <td>
-              <button class="btn-primary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="submitReview('${item.object_id}', 'CONFIRM')">확정 승인</button>
-              <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="submitReview('${item.object_id}', 'REJECT')">반려</button>
+              <button class="btn-primary" data-action="CONFIRM" style="padding: 4px 8px; font-size: 0.75rem;">확정 승인</button>
+              <button class="btn-secondary" data-action="REJECT" style="padding: 4px 8px; font-size: 0.75rem;">반려</button>
             </td>
           `;
+          // No inline onclick with interpolated ids: bind the handlers to the row's own data.
+          tr.querySelectorAll('button[data-action]').forEach(btn => {
+            btn.addEventListener('click', () => submitReview(item.object_id, btn.dataset.action));
+          });
           tbody.appendChild(tr);
         });
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5" style="color: var(--danger);">검토 목록 조회 실패: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="color: var(--danger);">검토 목록 조회 실패: ${esc(err.message)}</td></tr>`;
       }
     }
 
     async function submitReview(objectId, action) {
       try {
-        const res = await fetch(`${API_BASE}/v1/reviews`, {
+        const res = await apiFetch(`/v1/reviews`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ object_id: objectId, action: action })

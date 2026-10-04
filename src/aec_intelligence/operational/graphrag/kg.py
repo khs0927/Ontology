@@ -187,6 +187,14 @@ class KnowledgeGraphBuilder:
             state = {r["project_key"]: r["fingerprint"] for r in
                      conn.execute("SELECT project_key, fingerprint FROM aec.kg_build_state").fetchall()}
             extra = f"cat{len(self.catalog)}:req{len(self.requirements)}"
+            # Projects whose documents are all gone (or moved to another canonical project) go first.
+            stale = [k for k in state if k not in grouped and (not project_key or k == project_key)]
+            for key in stale:
+                with conn.transaction():
+                    conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s", (key,))
+                    conn.execute("DELETE FROM aec.kg_build_state WHERE project_key=%s", (key,))
+                    conn.execute("DELETE FROM aec.kg_communities WHERE project_key=%s", (key,))
+            stats["removed_projects"] = len(stale)
             for key, docs in sorted(grouped.items()):
                 if project_key and key != project_key:
                     continue
@@ -203,13 +211,6 @@ class KnowledgeGraphBuilder:
                 stats["by_type"].update(n.type for n in graph.nodes.values())
                 stats["resolution"].update(graph.nodes[f"kg:p:{key}"].props.get("resolution", {}))
                 log.info("kg project %s: %d nodes, %d edges", key, len(graph.nodes), len(graph.edges))
-            # Projects whose documents are all gone.
-            stale = [k for k in state if k not in grouped and (not project_key or k == project_key)]
-            for key in stale:
-                with conn.transaction():
-                    conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s", (key,))
-                    conn.execute("DELETE FROM aec.kg_build_state WHERE project_key=%s", (key,))
-            stats["removed_projects"] = len(stale)
         stats["by_type"] = dict(stats["by_type"])
         stats["resolution"] = dict(stats["resolution"])
         return stats
@@ -491,7 +492,9 @@ class KnowledgeGraphBuilder:
     # ------------------------------------------------------------------ persistence
     def _write(self, conn, g: ProjectGraph, fp: str) -> None:
         with conn.transaction():
-            conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s", (g.key,))
+            # A document can move to another canonical project (container folders are data-driven), so
+            # its old node ids are dropped too, not only this project's rows.
+            conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s OR id = ANY(%s)", (g.key, list(g.nodes)))
             with conn.cursor() as cur:
                 cur.executemany(
                     """INSERT INTO aec.kg_nodes(id, project_key, type, name, props, object_ids, document_ids,

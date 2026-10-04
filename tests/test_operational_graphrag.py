@@ -34,9 +34,9 @@ def seeded():
     pid_a, pid_b = f"P-gr{RUN}-허가", f"P-gr{RUN}-사용승인"
     top = f"##그래프시험{RUN}"
     docs = [
-        (f"doc_gr_{RUN}_1", pid_a, f"A-101 1층 평면도_0611.dwg", f"{top}/#허가"),
-        (f"doc_gr_{RUN}_2", pid_a, f"A-101 1층 평면도_0626.dwg", f"{top}/#허가"),
-        (f"doc_gr_{RUN}_3", pid_b, f"S-201 2층 구조평면도.dwg", f"{top}/#사용승인"),
+        (f"doc_gr_{RUN}_1", pid_a, "A-101 1층 평면도_0611.dwg", f"{top}/#허가"),
+        (f"doc_gr_{RUN}_2", pid_a, "A-101 1층 평면도_0626.dwg", f"{top}/#허가"),
+        (f"doc_gr_{RUN}_3", pid_b, "S-201 2층 구조평면도.dwg", f"{top}/#사용승인"),
     ]
     objects = {
         docs[0][0]: [_obj(1, 1, "Space", "회의실 1", "1F", {"roomName": "회의실 1", "roomNameNormalized": "회의실1",

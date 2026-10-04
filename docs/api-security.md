@@ -58,3 +58,19 @@ python -m aec_intelligence.operational.legacy_ids --apply
 - `COLLIDED`: 서로 다른 `source_key`가 한 문서에 섞인 경우 → 반드시 재수집 필요.
 - `legacy`: 파일 하나뿐 → 재수집하면 내용 기반 id로 옮겨짐(선택).
 - 원본 파일이 없거나 import root 밖이면 `skip`으로 표시되며 재수집되지 않습니다.
+
+## 보안 점검 결과 (Phase 5, 2026-10-04)
+
+| 항목 | 결과 / 조치 |
+|---|---|
+| 컨테이너가 저장소를 마운트 | compose가 `.:/app`을 api/migrate/worker에 쓰기 가능하게 마운트하고 있었습니다. 그래서 컨테이너 안에서 호스트 `.env`(토큰·DB 비밀번호)를 읽을 수 있었고, 작업 스케줄러가 실행하는 호스트 스크립트를 고칠 수도 있었습니다. **마운트를 제거**했습니다. 코드는 이미지에 들어가므로 배포할 때 `docker compose build`가 필요합니다 |
+| 이미지에 비밀 포함 | `.dockerignore`가 없어서 `COPY . .`가 `.env`·`.venv`·`.git`까지 복사했습니다. `.dockerignore`를 추가했고, CI가 미끼 `.env`로 이미지에 빠지는지 검사합니다 |
+| 컨테이너 root 실행 | 비특권 사용자 `aec`(uid 10001)로 바꿨습니다. 코드는 root 소유(읽기 전용)이고, 이미지에서 pytest를 뺐습니다 |
+| 임베딩 엔드포인트 외부 전송 | LLM과 같은 규칙을 적용했습니다. 루프백·사설·링크로컬이 아닌 `AEC_EMBEDDING_URL`은 거부합니다(`AEC_EMBEDDING_ALLOW_REMOTE=1`로만 허용). 로컬 호출은 환경 변수나 레지스트리의 HTTP 프록시를 거치지 않습니다(`operational/netguard.py`). URL 안의 사용자 정보(`127.0.0.1@외부`)나 `file:` 스킴도 거부합니다 |
+| WebSocket | 현재 라우트는 없습니다. 나중에 생기더라도 같은 토큰이 필요합니다(없으면 1008로 닫음) |
+| 입력 크기 | `/v1/search` `query`는 최대 2,000자입니다(`/v1/ask`와 같음) |
+| SQL / Cypher 주입 | 확인했습니다. 사용자 값은 모두 psycopg 파라미터로 넘깁니다. Cypher 값은 JSON 문자열 리터럴로 넣고, 쿼리는 `$aec_cypher$` 고정 태그로 감쌉니다. 태그가 들어 있으면 거부합니다. f-string으로 조립하는 SQL 조각은 모두 내부 상수나 정수입니다 |
+| 경로 탐색 | `POST /v1/ingestions`는 `resolve(strict=True)` 뒤 `AEC_IMPORT_ROOTS` 안에 있는지 검사합니다. 디렉터리 안의 심볼릭 링크도 하나씩 다시 검사합니다 |
+| 도면 문자열 프롬프트 주입 | 답변 프롬프트가 자료를 데이터로만 취급하도록 지시합니다. 목록에 없는 인용 번호는 지우고, 인용이 없는 답은 발췌 답변으로 바꿉니다. LLM에는 도구 권한이 없습니다 |
+| 의존성 | `pip-audit`: Ontology 호스트 venv·API 이미지·개발 venv, ArchOntos, power-cad-mcp 모두 알려진 취약점이 없습니다(ArchOntos 개발용 pytest 8.4.2 PYSEC-2026-1845는 하한을 9.0.3으로 올림). `dotnet list package --vulnerable --include-transitive`: hs-steel-cad 6개, power-cad-mcp 4개 프로젝트 모두 없음. npm 프로젝트는 없습니다 |
+| 남은 위험 (수용) | MCP 게이트웨이(stdio / 로컬 HTTP)의 CAIR 도구(`aec.parse_cad`, `aec.ingest_file` 등)는 임의 경로를 받습니다. 로컬 MCP 클라이언트를 사용자 자신으로 신뢰하는 전제입니다. HTTP 전송은 localhost 바인드와 Origin 검사만 하고 토큰은 없습니다. 원격으로 노출하지 마세요 |

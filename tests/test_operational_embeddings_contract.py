@@ -1,6 +1,6 @@
 """Embedding transport contract: fail closed, never relabel a batch to the hash model.
 
-No socket is opened: ``urllib.request.urlopen`` is monkeypatched with a recorder
+No socket is opened: ``embeddings._urlopen`` is monkeypatched with a recorder
 that replays a scripted body. A configured endpoint that cannot produce usable
 1024-dimensional vectors must raise, because the alternative is storing a
 placeholder as if a model had produced it.
@@ -18,7 +18,7 @@ import pytest
 from aec_intelligence.operational import embeddings as emb
 from aec_intelligence.operational.config import Settings
 
-ENDPOINT = "http://embeddings.invalid:8080"
+ENDPOINT = "http://embeddings:8080"  # compose service name: a local endpoint
 
 
 def make_settings(tmp_path: Path, *, url: str = "", model: str = "BAAI/bge-m3") -> Settings:
@@ -62,7 +62,7 @@ class Recorder:
 
 def install(monkeypatch, responder) -> Recorder:
     rec = Recorder(responder)
-    monkeypatch.setattr(emb.urllib.request, "urlopen", rec)
+    monkeypatch.setattr(emb, "_urlopen", rec)
     return rec
 
 
@@ -187,3 +187,26 @@ def test_empty_input_reports_active_model_without_a_request(monkeypatch, tmp_pat
     offline = emb.EmbeddingService(make_settings(tmp_path))
     assert offline.embed_with_model([]) == (emb.HASH_MODEL, [])
     assert rec.calls == []
+
+
+def test_non_local_endpoint_is_refused_without_opt_in(tmp_path, monkeypatch):
+    monkeypatch.delenv("AEC_EMBEDDING_ALLOW_REMOTE", raising=False)
+    calls = []
+    monkeypatch.setattr(emb, "_urlopen", lambda req, timeout=None: calls.append(req.full_url))
+    service = emb.EmbeddingService(make_settings(tmp_path, url="https://api.example.com"), retries=1)
+    with pytest.raises(emb.EmbeddingEndpointError, match="refusing non-local"):
+        service.embed_batch(["2층 평면도"])
+    assert calls == []  # nothing was sent
+
+
+def test_local_endpoints_bypass_proxies():
+    from aec_intelligence.operational import netguard
+
+    assert netguard.is_local_endpoint("http://127.0.0.1:11434")
+    assert netguard.is_local_endpoint("http://host.docker.internal:11434")
+    assert netguard.is_local_endpoint("http://10.0.0.5:8080")
+    assert not netguard.is_local_endpoint("http://127.0.0.1@8.8.8.8/")  # userinfo trick
+    assert not netguard.is_local_endpoint("file:///etc/passwd")
+    assert not netguard.is_local_endpoint("http://8.8.8.8/v1/embeddings")
+    direct = netguard.opener_for("http://127.0.0.1:11434")
+    assert not any(type(h).__name__ == "ProxyHandler" and h.proxies for h in direct.handlers)

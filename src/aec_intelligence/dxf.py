@@ -448,7 +448,7 @@ def block_definitions(doc: Any) -> list[dict[str, Any]]:
     from .classifier import classify
 
     rows: list[dict[str, Any]] = []
-    for block in doc.blocks:
+    for block in list(doc.blocks):  # snapshot, see parsers.catalog_blocks
         if block.is_any_layout:
             continue
         dxf_name = str(block.name)

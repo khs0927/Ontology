@@ -125,7 +125,9 @@ class _DXFSemantics:
     # ----------------------------------------------------------------- blocks
     def catalog_blocks(self, ezbbox):
         cache = ezbbox.Cache()
-        for block in self.document.blocks:
+        # Snapshot: resolving dynamic-block names / bboxes can add anonymous block records while we
+        # iterate (ezdxf raised "OrderedDict mutated during iteration" on 3 real drawings).
+        for block in list(self.document.blocks):
             if block.is_any_layout:
                 continue
             dxf_name = str(block.name)

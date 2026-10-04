@@ -35,11 +35,17 @@ class Database:
         self.dsn = dsn
 
     @contextmanager
-    def connect(self):
+    def connect(self, statement_timeout_seconds=30):
+        """Open a configured session.
+
+        Interactive/search sessions keep the 30s default. Long ingestion projection can
+        explicitly request a larger timeout without globally weakening query safeguards.
+        """
+        timeout = max(0, int(statement_timeout_seconds))
         with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
             conn.execute("LOAD 'age'")
             conn.execute('SET search_path = ag_catalog, aec, public')
-            conn.execute("SET statement_timeout = '30s'")
+            conn.execute(f"SET statement_timeout = '{timeout}s'")
             yield conn
 
     def initialize(self):

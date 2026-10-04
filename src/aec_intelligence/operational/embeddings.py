@@ -7,10 +7,16 @@ therefore stored with the name of the model that actually produced it:
   when ``AEC_EMBEDDING_URL`` answered — e.g. the ``embeddings`` compose service
   running Hugging Face text-embeddings-inference (OpenAI-compatible
   ``/v1/embeddings``; the native ``/embed`` route is accepted too);
-* ``HASH_MODEL`` for the deterministic offline fallback.
+* ``HASH_MODEL`` for the deterministic offline fallback, produced **only** when
+  ``AEC_EMBEDDING_URL`` is unset (offline mode).
 
-Search filters on the producing model (see ``search.py``) so hash vectors and
-real vectors are never ranked against each other.
+A configured endpoint never degrades silently. If the remote fails after the
+retries, or answers with a payload that cannot be stored as a real vector (wrong
+dimension, wrong count, non-finite component, zero vector), ``embed_with_model``
+raises ``EmbeddingEndpointError`` and writes nothing: a placeholder must never be
+stored as if a model had produced it. Offline hash vectors are labelled
+``HASH_MODEL``, are never ranked against real vectors, and every consumer
+surfaces the model that was actually used (see ``worker.py``, ``search.py``).
 """
 
 from __future__ import annotations
@@ -69,6 +75,23 @@ def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIM) -> list[floa
     return vec
 
 
+def _validate_remote_vector(vec: list[Any]) -> list[float]:
+    """Coerce one remote vector to float and reject what a vector column cannot hold.
+
+    Magnitude is left alone: ``aec.embeddings`` is indexed with
+    ``vector_cosine_ops`` and every query uses the cosine operator, so a
+    non-unit vector is comparable and rescaling it would be a silent transform.
+    A zero vector and any non-finite component are rejected, because cosine
+    distance against them is undefined and the row would poison the index.
+    """
+    values = [float(v) for v in vec]
+    if not all(math.isfinite(v) for v in values):
+        raise EmbeddingEndpointError("model returned a non-finite component (NaN/Inf)")
+    if math.sqrt(sum(v * v for v in values)) <= 1e-9:
+        raise EmbeddingEndpointError("model returned a zero vector; cosine distance is undefined")
+    return values
+
+
 def _env_number(name: str, default: float, cast=float):
     try:
         return cast(os.getenv(name, "") or default)
@@ -111,24 +134,28 @@ class EmbeddingService:
     def embed_with_model(self, texts: list[str]) -> tuple[str, list[list[float]]]:
         """Embed all texts with ONE model and return (model_name, vectors).
 
-        The remote endpoint is used when configured and healthy; if any batch
-        fails after retries the whole call falls back to the hash model so the
-        result never mixes vector spaces.
+        Offline (``AEC_EMBEDDING_URL`` unset) returns deterministic hash vectors
+        labelled ``HASH_MODEL``. With an endpoint configured, a failure or an
+        unusable payload raises ``EmbeddingEndpointError`` instead: relabelling
+        the batch to the hash model would store a placeholder as if a real model
+        had produced it, and the caller could not tell the two apart.
         """
         if not texts:
             return self.active_model(), []
-        if self.endpoint and not self._circuit_open():
-            try:
-                vectors: list[list[float]] = []
-                for start in range(0, len(texts), self.batch_size):
-                    vectors.extend(self._call_with_retries(texts[start:start + self.batch_size]))
-                return self.model_name, vectors
-            except EmbeddingEndpointError as exc:
-                self.last_error = str(exc)
-                self._trip_circuit()
-        elif self.endpoint:
+        if not self.endpoint:
+            return HASH_MODEL, [_deterministic_hash_vector(t, EMBEDDING_DIM) for t in texts]
+        if self._circuit_open():
             self.last_error = "embedding endpoint circuit open after recent failures"
-        return HASH_MODEL, [_deterministic_hash_vector(t, EMBEDDING_DIM) for t in texts]
+            raise EmbeddingEndpointError(f"{self.endpoint}: {self.last_error}; no vectors were written")
+        try:
+            vectors: list[list[float]] = []
+            for start in range(0, len(texts), self.batch_size):
+                vectors.extend(self._call_with_retries(texts[start:start + self.batch_size]))
+        except EmbeddingEndpointError as exc:
+            self.last_error = str(exc)
+            self._trip_circuit()
+            raise
+        return self.model_name, vectors
 
     # -- remote ---------------------------------------------------------
     def _circuit_open(self) -> bool:
@@ -175,7 +202,7 @@ class EmbeddingService:
         for vec in vectors:
             if len(vec) != EMBEDDING_DIM:
                 raise EmbeddingEndpointError(f"model returned {len(vec)} dimensions; aec.embeddings requires {EMBEDDING_DIM}")
-        return [[float(v) for v in vec] for vec in vectors]
+        return [_validate_remote_vector(vec) for vec in vectors]
 
 
 def _embeddable(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -195,7 +222,8 @@ def index_snapshot_embeddings(conn, snapshot: dict[str, Any], settings: Settings
 
     models: set[str] = set()
     count = 0
-    # Chunk per DB round so one remote outage only downgrades the remaining chunks, each labelled with its model.
+    # Chunk per DB round to bound request size. A remote failure propagates and fails the job;
+    # chunks are never relabelled to the hash model mid-run.
     chunk = max(service.batch_size * 8, 1)
     for start in range(0, len(objects), chunk):
         part = objects[start:start + chunk]

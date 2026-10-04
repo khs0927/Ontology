@@ -70,6 +70,11 @@ services:
       # Unset -> the 'embeddings' profile service; set to empty to force the offline hash model.
       AEC_EMBEDDING_URL: ${AEC_EMBEDDING_URL-http://embeddings:80}
       AEC_EMBEDDING_MODEL: ${AEC_EMBEDDING_MODEL:-BAAI/bge-m3}
+      # POST /v1/ask: local LLM only (Ollama on the host). Non-local hosts are refused unless
+      # AEC_LLM_ALLOW_REMOTE=1, so drawing text never leaves the PC by accident.
+      AEC_LLM_URL: ${AEC_CONTAINER_LLM_URL:-http://host.docker.internal:11434}
+      AEC_LLM_MODEL: ${AEC_LLM_MODEL:-qwen3:8b}
+      AEC_LLM_TIMEOUT_SECONDS: ${AEC_LLM_TIMEOUT_SECONDS:-120}
     volumes:
       - ${AEC_HOST_DATA_ROOT:-D:/AECData}:/data
       - .:/app

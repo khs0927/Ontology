@@ -130,3 +130,10 @@ not semantic), and the ingest result reports `embedding_model` and
 vector would be the hash model or the endpoint is down, and says so in `warnings`;
 `operational.embeddings.reindex_embeddings()` backfills real vectors for rows that
 only have hash vectors.
+
+## Graph RAG tools (operational database)
+
+- `aec.graph_rag_query` `{question, project?, top_k?, generate?}`: same contract as `POST /v1/ask` (routed retrieval, local-LLM answer, `citations[]`, `refused`).
+- `aec.explain_path` `{node_id, limit?}`: one `kg:` node with typed incoming/outgoing edges.
+
+Both read `AEC_DATABASE_URL`; without it they return `REQUIRES_CONFIGURATION`. See `docs/GRAPHRAG.ko.md`.

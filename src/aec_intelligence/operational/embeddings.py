@@ -546,7 +546,10 @@ def reindex_embeddings(db, settings: Settings, project_id: str | None = None, *,
             written += len(objs)
             if progress is not None:
                 progress(written, len(rows))
-        if not rows:
+        # The project-wide refresh also runs after a productive, fully successful pass: a document whose
+        # objects were embedded by an earlier run never appears in any chunk, so waiting for a run with
+        # nothing pending left it carrying a stale marker (36 of 547 documents in the live database).
+        if not rows or (failure is None and not skipped and not stopped):
             _refresh_embedding_state(conn, target, project_id=project_id)
         if delete_stale:
             deleted = conn.execute(

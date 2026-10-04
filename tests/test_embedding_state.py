@@ -123,3 +123,51 @@ def test_reembed_replaces_old_parser_revision_and_repairs_metadata(monkeypatch):
         assert [(v["model"], v["revision"]) for v in vectors] == [("bge-m3", 2)]
     finally:
         raw.close()
+
+
+def test_reembed_reconciles_documents_it_did_not_process(monkeypatch):
+    """A productive run must still reconcile the documents it never touched.
+
+    Live data (36 of 547 documents) showed documents whose objects were embedded by an earlier run
+    left carrying the offline ``hash-sha256-1024-v1`` marker: they never appear in a chunk, and the
+    project-wide refresh used to run only when a whole run found nothing pending.
+    """
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    raw.execute("ATTACH DATABASE ':memory:' AS aec")
+    raw.executescript("""
+        CREATE TABLE aec.documents(id TEXT PRIMARY KEY, project_id TEXT, revision INT);
+        CREATE TABLE aec.objects(id TEXT PRIMARY KEY, document_id TEXT, project_id TEXT,
+                                 kind TEXT, search_text TEXT, revision INT);
+        CREATE TABLE aec.embeddings(object_id TEXT, model TEXT, revision INT, content_hash TEXT,
+                                    PRIMARY KEY(object_id, model));
+        CREATE TABLE aec.text_vectors(model TEXT, content_hash TEXT, embedding TEXT,
+                                      PRIMARY KEY(model, content_hash));
+        CREATE TABLE aec.index_state(document_id TEXT PRIMARY KEY, embedding_model TEXT, embedding_revision INT);
+        INSERT INTO aec.documents VALUES ('done', 'P', 1);
+        INSERT INTO aec.objects VALUES ('o1', 'done', 'P', 'Door', 'embedded earlier', 1);
+        INSERT INTO aec.embeddings VALUES ('o1', 'bge-m3', 1, 'h1');
+        INSERT INTO aec.text_vectors VALUES ('bge-m3', 'h1', '[]');
+        INSERT INTO aec.index_state VALUES ('done', 'hash-sha256-1024-v1', 1);
+        INSERT INTO aec.documents VALUES ('todo', 'P', 1);
+        INSERT INTO aec.objects VALUES ('o2', 'todo', 'P', 'Window', 'needs a vector', 1);
+        INSERT INTO aec.index_state VALUES ('todo', 'hash-sha256-1024-v1', 0);
+    """)
+
+    def embed(self, texts):
+        return "bge-m3", [[1.0] + [0.0] * 1023 for _ in texts]
+
+    class DB:
+        def connect(self):
+            return nullcontext(SQLiteConnection(raw))
+
+    monkeypatch.setattr(embeddings.EmbeddingService, "embed_with_model", embed)
+    settings = Settings(dsn="unused", data_root=Path("."), import_roots=(),
+                        embedding_url="http://127.0.0.1:9", embedding_model="bge-m3")
+    try:
+        out = embeddings.reindex_embeddings(DB(), settings)
+        assert out["pending"] == 1 and out["written"] == 1 and out["complete"]
+        states = dict(raw.execute("SELECT document_id, embedding_model FROM aec.index_state"))
+        assert states == {"done": "bge-m3", "todo": "bge-m3"}
+    finally:
+        raw.close()

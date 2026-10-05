@@ -6,6 +6,7 @@ import os
 import re
 import threading
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -636,6 +637,66 @@ def _safe_relative(path: Path, root: Path) -> str:
         return str(path)
 
 
+_FONT_WATCH_LOCK = threading.Lock()
+
+
+class _FontSubstitutionWatch:
+    """Font families ezdxf substituted while a layout was rendered.
+
+    ezdxf has no callback for "I could not resolve this font": it logs one line per text entity and
+    draws a monospace stub instead, and the worker's ``_OncePerMessage`` filter then discards the
+    repeats, so the substitution left no trace in any artifact. Its resolver is wrapped for the
+    duration of one render to recover it.
+
+    This counts the last-resort monospace substitution - the one the production log actually shows
+    (a style naming a font file that does not exist, e.g. ``NanumSquareR.ttf``). A face that resolves
+    to some other default TrueType font is not counted, so the report is a lower bound.
+    """
+
+    def __init__(self) -> None:
+        self.missing: set[str] = set()
+
+    def _resolver(self, original):
+        watch = self
+
+        def resolve(face, cap_height, *args, **kwargs):
+            font = original(face, cap_height, *args, **kwargs)
+            if "Mono" in type(font).__name__:  # the library's last-resort stub
+                watch.missing.add(str(getattr(face, "family", None) or getattr(face, "filename", "") or "unknown"))
+            return font
+
+        return resolve
+
+
+@contextmanager
+def _watch_font_substitutions():
+    """Yield a watch whose ``missing`` collects the families ezdxf substituted inside the block."""
+    from ezdxf.fonts import fonts as ezfonts
+
+    watch = _FontSubstitutionWatch()
+    with _FONT_WATCH_LOCK:  # the resolver is a module global: one render at a time patches it
+        original = ezfonts.make_font
+        ezfonts.make_font = watch._resolver(original)
+        try:
+            yield watch
+        finally:
+            ezfonts.make_font = original
+
+
+def font_substitution_warning(sheet_name: str, missing: set[str]) -> str | None:
+    """Explicit warning for one layout, or None when nothing was substituted.
+
+    The unit is font families, not entities: ezdxf resolves once per distinct face, so the entity
+    count that the old log line carried is not recoverable after the fact.
+    """
+    if not missing:
+        return None
+    names = ", ".join(sorted(missing)[:3])
+    more = f" (+{len(missing) - 3} more)" if len(missing) > 3 else ""
+    return (f"Preview {sheet_name}: text was drawn with a substitute font because {names}{more} could not be "
+            f"resolved; the raster text may not match the drawing.")
+
+
 def parse_source(source, doc, output, settings, source_name=None, source_hash=None):
     output.mkdir(parents=True,exist_ok=True)
     name = source_name or source.name
@@ -680,10 +741,16 @@ def parse_source(source, doc, output, settings, source_name=None, source_hash=No
             preview = output/f'layout-{index}.svg'
             backend = svg.SVGBackend()
             try:
-                Frontend(RenderContext(document),backend).draw_layout(sheet,finalize=True)
-                preview.write_text(backend.get_string(layout.Page(0,0)),encoding='utf-8')
+                with _watch_font_substitutions() as font_watch:
+                    Frontend(RenderContext(document),backend).draw_layout(sheet,finalize=True)
+                    preview.write_text(backend.get_string(layout.Page(0,0)),encoding='utf-8')
                 view['evidence']['preview_path'] = _safe_relative(preview, settings.data_root)
                 warnings.append('SVG coordinates differ from CAD WCS; use the evidence overlay for CAD selection.')
+                # A substituted font is drawn as a monospace stub; say so instead of leaving the raster
+                # looking authoritative (the deduplicated ezdxf log line no longer carries it).
+                font_warning = font_substitution_warning(sheet.name, font_watch.missing)
+                if font_warning:
+                    warnings.append(font_warning)
             except Exception as exc:
                 warnings.append(f'Preview {sheet.name}: {exc}')
             with (output/f'geometry-{index}.jsonl').open('w',encoding='utf-8') as geometry_file:

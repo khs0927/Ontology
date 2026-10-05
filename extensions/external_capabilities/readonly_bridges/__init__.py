@@ -128,11 +128,17 @@ def ingest_readonly_probe(content, *, expected_identity):
     allowed = {'probe', 'capabilities', 'version', 'health', 'read_context'}
     if not isinstance(capabilities, list) or any(not isinstance(k, str) or k not in allowed for k in capabilities):
         raise ValueError('Unsupported capability')
+    if len(capabilities) != len(set(capabilities)):
+        raise ValueError('Duplicate capability declaration')
     result = _base(content, identity)
-    result['capabilities'] = sorted(set(capabilities))
+    result.update(capabilities=sorted(capabilities), probe_authenticated=False,
+                  host_identity_verified=False)
     if not _text(data.get('host')) or not _text(data.get('host_version')):
         result['status'] = 'NOT_RUN'
         result['reason'] = 'Missing host identity; native execution not established'
     else:
-        result.update(host=data['host'], host_version=data['host_version'])
+        host = data['host'].strip()
+        if host.lower() != identity['provider_id'].lower():
+            raise ValueError('Host/provider declaration mismatch')
+        result.update(host=host, host_version=data['host_version'].strip())
     return result

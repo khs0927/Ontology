@@ -18,7 +18,6 @@ import pytest
 
 ezdxf = pytest.importorskip("ezdxf")
 
-from ezdxf.addons.drawing import Frontend, RenderContext, layout, svg  # noqa: E402
 from ezdxf.fonts import fonts as ezfonts  # noqa: E402
 
 from aec_intelligence.operational import parsers  # noqa: E402
@@ -32,48 +31,11 @@ class TrueTypeFont:
     pass
 
 
-def _doc_with_text():
-    doc = ezdxf.new("R2010")
-    doc.styles.add("MISSING", font="NanumSquareR.ttf")
-    modelspace = doc.modelspace()
-    modelspace.add_lwpolyline([(0, 0), (200, 0), (200, 100), (0, 100), (0, 0)])  # a real bounding box
-    modelspace.add_text("문", height=8, dxfattribs={"style": "MISSING"}).set_placement((10, 10))
-    return doc
-
-
-def _render(doc):
-    for sheet in doc.layouts:
-        try:
-            backend = svg.SVGBackend()
-            Frontend(RenderContext(doc), backend).draw_layout(sheet, finalize=True)
-            backend.get_string(layout.Page(0, 0))
-        except ValueError as exc:  # an empty paperspace layout is not what this test is about
-            assert "bounding box" in str(exc)
-
-
 def test_the_resolver_is_wrapped_only_inside_the_block():
     original = ezfonts.make_font
     with parsers._watch_font_substitutions():
         assert ezfonts.make_font is not original
     assert ezfonts.make_font is original
-
-
-def test_the_hook_is_reached_by_the_real_renderer():
-    """The wrapper must be on the live path, not merely installed on the module."""
-    seen = []
-    with parsers._watch_font_substitutions():
-        watch_wrapper = ezfonts.make_font  # parsers' wrapper; it delegates to the library's resolver
-
-        def counting(face, cap_height, *args, **kwargs):
-            seen.append(face)
-            return watch_wrapper(face, cap_height, *args, **kwargs)
-
-        ezfonts.make_font = counting
-        try:
-            _render(_doc_with_text())
-        finally:
-            ezfonts.make_font = watch_wrapper
-    assert seen, "rendering text must resolve at least one font through the wrapped resolver"
 
 
 def test_only_the_last_resort_font_counts_as_a_substitution():

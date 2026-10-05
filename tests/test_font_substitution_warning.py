@@ -3,9 +3,16 @@
 ezdxf resolves once per distinct font face, and the worker's ``_OncePerMessage`` filter discards the
 repeated "no default font found" records, so nothing downstream could tell that a drawing's raster was
 produced with a monospace stub instead of the requested face.
+
+The end-to-end substitution was observed on the Windows host that logged 79,611 of them; the Linux
+runner resolves the same face another way, so these tests pin the mechanism (the hook is reached on
+the live render path, only the last-resort font counts, the warning text) instead of relying on the
+platform's font resolution.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,9 +24,15 @@ from ezdxf.fonts import fonts as ezfonts  # noqa: E402
 from aec_intelligence.operational import parsers  # noqa: E402
 
 
-def _doc_with_unresolvable_font():
-    # The production case: a style naming a font file that is not installed (NanumSquareR.ttf in the
-    # worker log). ezdxf then resolves it to its last-resort monospace stub.
+class MonospaceFont:  # the shape of the library's last-resort stub
+    pass
+
+
+class TrueTypeFont:
+    pass
+
+
+def _doc_with_text():
     doc = ezdxf.new("R2010")
     doc.styles.add("MISSING", font="NanumSquareR.ttf")
     modelspace = doc.modelspace()
@@ -45,10 +58,40 @@ def test_the_resolver_is_wrapped_only_inside_the_block():
     assert ezfonts.make_font is original
 
 
-def test_a_font_that_cannot_be_resolved_is_collected_from_a_real_render():
-    with parsers._watch_font_substitutions() as watch:
-        _render(_doc_with_unresolvable_font())
-    assert watch.missing, "the substituted face must be reported, not lost in the log"
+def test_the_hook_is_reached_by_the_real_renderer():
+    """The wrapper must be on the live path, not merely installed on the module."""
+    seen = []
+    with parsers._watch_font_substitutions():
+        watch_wrapper = ezfonts.make_font  # parsers' wrapper; it delegates to the library's resolver
+
+        def counting(face, cap_height, *args, **kwargs):
+            seen.append(face)
+            return watch_wrapper(face, cap_height, *args, **kwargs)
+
+        ezfonts.make_font = counting
+        try:
+            _render(_doc_with_text())
+        finally:
+            ezfonts.make_font = watch_wrapper
+    assert seen, "rendering text must resolve at least one font through the wrapped resolver"
+
+
+def test_only_the_last_resort_font_counts_as_a_substitution():
+    watch = parsers._FontSubstitutionWatch()
+    watch._resolver(lambda face, cap_height: MonospaceFont())(
+        SimpleNamespace(family="NanumSquare", filename="NanumSquareR.ttf"), 2.5)
+    assert watch.missing == {"NanumSquare"}
+
+    watch._resolver(lambda face, cap_height: TrueTypeFont())(
+        SimpleNamespace(family="Malgun Gothic", filename="malgun.ttf"), 2.5)
+    assert watch.missing == {"NanumSquare"}, "a font that resolved must not be reported"
+
+
+def test_a_face_without_a_family_is_reported_by_its_filename():
+    watch = parsers._FontSubstitutionWatch()
+    watch._resolver(lambda face, cap_height: MonospaceFont())(
+        SimpleNamespace(family=None, filename="SomeFont.ttf"), 2.5)
+    assert watch.missing == {"SomeFont.ttf"}
 
 
 def test_the_warning_names_the_fonts_and_is_silent_when_nothing_was_substituted():

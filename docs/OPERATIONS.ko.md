@@ -20,7 +20,7 @@
 ## 1. 켜기 / 끄기
 
 ### 켜기 (재부팅 후)
-로그온하면 예약 작업이 알아서 올라옵니다(§3). Docker Desktop만 켜져 있으면 됩니다.
+활성화된 예약 작업은 로그온 후 올라옵니다(§3). Docker Desktop이 실행 중이어야 합니다. 비활성 작업은 자동 실행되지 않습니다.
 ```powershell
 docker ps --format "{{.Names}} {{.Status}}"          # aec-db (healthy), aec-api
 cd C:\CODE\Ontology
@@ -37,7 +37,7 @@ git pull --ff-only
 docker compose build api
 docker compose run --rm --no-deps migrate        # 스키마 마이그레이션(멱등)
 docker compose up -d --no-deps api               # aec-db는 건드리지 않음
-powershell -ExecutionPolicy Bypass -File scripts\ops\stop-workers.ps1 -Resume                # 워커+재임베딩 재개
+powershell -ExecutionPolicy Bypass -File scripts\ops\stop-workers.ps1 -Resume                # 워커 재개; 재임베딩은 활성 작업만
 ```
 - `-Drain`은 `D:\AECData\bulk\STOP-WORKERS` 파일을 만듭니다. 이 파일이 있는 동안 워커·재임베딩은 새로 시작하지 않습니다.
   **작업이 끝나면 꼭 `-Resume`** (파일이 남아 있으면 적재가 멈춘 상태로 유지됩니다).
@@ -67,7 +67,9 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 
 자세히: [api-security.md](api-security.md)
 
-## 3. 예약 작업 (`\AEC\`, 관리자 권한 불필요, 로그온 중에만 실행)
+## 3. 예약 작업 (`\AEC\` 및 루트 `\`, 관리자 권한 불필요, 로그온 중에만 실행)
+
+아래 트리거는 등록 설정입니다. 실제 실행 여부는 작업의 State를 함께 확인합니다. 2026-10-05 감사 시 AEC-Reembed와 AEC-GraphRAG-Refresh는 **Disabled**였습니다. RAM 여유를 확보하고 활성화하기 전에는 벡터 보완과 KG 갱신이 자동으로 실행되지 않습니다.
 
 | 작업 | 내용 | 트리거 | 등록 스크립트 |
 |---|---|---|---|
@@ -80,9 +82,11 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 | AEC-GraphRAG-Refresh | `graphrag.ps1 refresh`: 바뀐 프로젝트만 kg-build → kg-summarize(FAILED 커뮤니티 재시도) → kg-stats. 대화형 질의에 양보, 뮤텍스로 중복 방지, 3시간 제한, 로그 `D:\AECData\bulk\logs\graphrag-yyyyMMdd.log`(14일 지나면 삭제) | 로그온 10분 후 + 2시간마다 | `register-host-tasks.ps1 -Only GraphRag` |
 | `\AEC-DB-Backup` | `backup.ps1 -Keep 7 -Target D:\AECData\backups` | 매일 04:30 | `register-backup-task.ps1` |
 
-- 모든 작업은 `MultipleInstances=IgnoreNew` + 스크립트 내부 뮤텍스 → 반복 트리거가 와도 중복 실행되지 않습니다.
-- 감시 트리거가 있으므로 프로세스가 조용히 죽어도 5–30분 안에 다시 뜹니다. 긴 작업은 **절대 임시 셸에서 띄우지 말고** 작업 스케줄러로 실행합니다.
+- 위 등록 스크립트로 만든 작업은 `MultipleInstances=IgnoreNew`를 사용합니다. 워커·Ollama·GraphRAG 등에는 내부 뮤텍스도 있습니다. 레거시 작업까지 같은 설정이라고 가정하지 않습니다.
+- 활성 감시 트리거는 프로세스 종료 후 다음 주기에 다시 시작합니다(5–30분). 긴 작업은 **절대 임시 셸에서 띄우지 말고** 작업 스케줄러로 실행합니다.
 - 상태: `Get-ScheduledTask -TaskPath \AEC\ | Get-ScheduledTaskInfo | ft TaskName,LastRunTime,LastTaskResult`
+- 백업은 루트 `\`에 등록되어 위 조회에 나오지 않습니다: `Get-ScheduledTask -TaskPath '\' -TaskName AEC-DB-Backup | Get-ScheduledTaskInfo | ft TaskName,LastRunTime,LastTaskResult`.
+- 감사 시 `\AEC\`에는 표의 7개 외에 레거시 `AEC-Ops-DbTune`, `AEC-Ops-DeployApi`, `AEC-Ops-DeployFinal`(Ready, 트리거 없음), `AEC-Ops-FinalAB`, `AEC-Ops-FinalCheck`, `AEC-Ops-FinalWrap`(Disabled)이 있었습니다. `D:\AECData\dev\*.ps1`을 실행하는 수동 작업이며 자동 복구 작업으로 취급하지 않습니다.
 - 로그오프하면 멈춥니다(로그오프 후 실행에는 '일괄 작업으로 로그온' 권한=관리자 필요, Docker Desktop도 세션 필요).
 
 ## 4. Ollama (C:\AECLocal, GPU)
@@ -109,6 +113,8 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
 
 ### aec-db 크래시와 복구 시간 (2026-10-04 22:01 사건)
 
+2026-10-05 감사에서는 컨테이너 재생성으로 당시 로그가 소실되어 아래 WAL 양·복구 시간과 사건 인과관계를 재검증하지 못했습니다. 이 수치를 현재 성능 기준이나 확정된 원인으로 사용하지 않습니다. 완화 설정은 현재 소스에서 확인합니다.
+
 - 증상: `server process (PID …) exited with exit code 2` → postmaster가 모든 연결을 끊고 크래시 복구,
   WAL redo 366 MB에 **489 s**(USB에서 캐시가 빈 상태의 무작위 읽기). reembed가 죽고 API가 8분간 응답 불가.
 - 확인한 것: VM 커널 로그(`wsl -d docker-desktop -e dmesg`)에 OOM/segfault 없음, VM 가용 메모리 3.9 GB,
@@ -123,7 +129,7 @@ Docker Desktop/WSL 재시작은 사용자 컨테이너 전체(workmachine 등)�
      `work_mem=16MB`, `maintenance_work_mem=256MB`, `effective_cache_size=2GB`, `max_wal_size=512MB`(redo 상한 ≈ 절반),
      `wal_compression=lz4`(full-page image 축소 → USB 쓰기 감소), `log_checkpoints=on`, `shm_size=256m`
      (병렬 쿼리의 `could not resize shared memory segment` 해결), `stop_grace_period=10m`(기본 10 s면 종료 체크포인트 중
-     SIGKILL → 매 재시작이 크래시 복구). 값은 `.env`의 `AEC_PG_*`로 바꿀 수 있습니다.
+     SIGKILL → 매 재시작이 크래시 복구). 기본값은 `docker-compose.yml`에 있으며, `.env`에 `AEC_PG_SHARED_BUFFERS` 등 해당 `AEC_PG_*` 변수를 추가하면 재생성 시 덮어쓸 수 있습니다.
   3. VM 메모리 예산(6 GB): Postgres 공유 512 MB + 백엔드 ~10×16 MB + 다른 컨테이너 ~1.5 GB → 여유 충분.
 - db 설정 적용 = 컨테이너 재생성(재시작). 순서: `stop-workers.ps1` 로 워커·reembed 비우기 →
   `docker exec aec-db psql -U aec -d aec -c CHECKPOINT` (종료 체크포인트를 짧게) → `docker stop -t 600 aec-db` →
@@ -141,13 +147,14 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Dump D:\
 ```
 - 행 수가 정확히 같으려면 덤프 전에 `stop-workers.ps1 -Drain` (아니면 적재 중인 테이블만 차이).
 - 복원 훈련은 DB 크기만큼 VM 공간이 필요하고 USB 디스크에서 40분 이상 걸립니다(1.1 GB 덤프 기준).
-- 실제 복원(재해 복구)은 API·워커를 멈춘 뒤 `cli restore` — [database-backup-restore.md](database-backup-restore.md),
+- 실제 복원(재해 복구)은 API·워커를 멈춘 뒤 `python -m aec_intelligence.operational.cli restore <dump경로> --yes` (대상 DB 객체를 삭제·재생성하므로 대상 DSN을 먼저 확인) — [database-backup-restore.md](database-backup-restore.md),
   Drive 체크포인트는 [DRIVE-CHECKPOINT.ko.md](DRIVE-CHECKPOINT.ko.md).
 
 ## 7. 대량 적재 모니터링과 디스크 가드
 
 - 설정: `D:\AECData\bulk\sources.json` (비공개; 원본 폴더 목록). 수정 전 `.bak-<날짜>`로 백업.
   - `"workers"`: 워커 수(라운드마다 다시 읽음). RAM 15 GB PC에서는 1–2.
+  - 워커는 각 라운드 시작 전에 호스트 가용 RAM을 확인합니다. 기본 하한은 2048 MB이며 양의 정수 환경 변수 `AEC_MIN_AVAILABLE_MB`로 설정합니다. 하한 미만이거나 메모리 조회가 실패하면 `paused` 로그를 남기고 `IdleSleepSec`(기본 300초) 후 다시 확인합니다. 이때 예약 작업은 **Running**이어도 Python 적재 워커가 없고 큐가 소비되지 않을 수 있습니다. 진행 여부는 작업 상태와 함께 워커 로그·완료 이벤트로 확인합니다.
   - `"min_free_gb": {"C:\\": 15, "D:\\": 60}` (2026-10-04 설정값): 드라이브 여유 공간이 이보다 적으면 census·워커가 **일시정지**(5분마다 재확인).
     C:는 Google Drive 스트리밍 캐시·임시 파일·Ollama, D:는 Docker 디스크(DB)·DXF 캐시·백업.
 - 로그: `D:\AECData\bulk\logs\workers-YYYYMMDD.log`, `census-*.log`, `reembed-*.log`, `wsl-reclaim.log`.
@@ -155,13 +162,14 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\restore-drill.ps1 -Dump D:\
 - 현황:
   ```powershell
   docker exec aec-db psql -U aec -d aec -c "select state, count(*) from aec.jobs group by 1"
-  docker exec aec-db psql -U aec -d aec -c "select embedding_state, count(*) from aec.objects group by 1"
-  python -m aec_intelligence.operational.cli report        # 또는 GET /v1/stats (토큰 필요)
-  python -m aec_intelligence.operational.cli storage-report  # 테이블별 바이트, 문서당 바이트
+  # aec.objects에는 embedding_state 컬럼이 없습니다. 인증된 GET /v1/stats의 embeddings_pending 사용.
+  . .\scripts\ops\_common.ps1 # .env와 배포본 Python 환경 로드(비밀값 출력 없음)
+  Invoke-AecCli -Arguments @('report', '--out', 'D:\AECData\reports\report')
+  Invoke-AecCli -Arguments @('storage-report')  # 테이블별 바이트, 문서당 바이트
   ```
 - 실패 작업은 `aec.jobs.error`에 이유가 남습니다. 재시도: API `POST /v1/jobs/{id}/retry`.
 - 저장 구조: 같은 텍스트는 벡터 하나(`aec.text_vectors`, halfvec)만 저장하고 객체는 매핑(`aec.embeddings`)만 가집니다.
-  매핑이 사라진 벡터 정리: `cli vectors-gc` (1시간 이상 된 미참조 벡터만 삭제).
+  매핑이 사라진 벡터 정리: `python -m aec_intelligence.operational.cli vectors-gc`는 삭제 대상 미리보기입니다. 확인 후 `vectors-gc --yes`로 1시간 이상 된 미참조 벡터를 실제 삭제합니다.
 
 자세히: [PIPELINE.ko.md](PIPELINE.ko.md), [operations-phase2.md](operations-phase2.md)
 
@@ -195,7 +203,7 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\latency-check.ps1 -EvalSet 
   최근 `AEC_INTERACTIVE_YIELD_SECONDS`(15)초 안에 질의가 있었거나 지금 API 쿼리가 실행 중이면 멈춥니다.
   한 번에 최대 `AEC_INTERACTIVE_MAX_WAIT_SECONDS`(120)초(워커는 30초)까지만 기다립니다. 0이면 끔.
 - **reembed 야간 창**: `AEC_REEMBED_HOURS=22-7`(또는 `reembed.ps1 -Hours 22-7`)이면 그 시간대에만 돌고, 창을 벗어나면
-  현재 청크까지 커밋하고 정상 종료(코드 0)합니다. 30분마다 뜨는 `AEC-Reembed`가 다음 창에서 이어 갑니다. 기본은 항상.
+  현재 청크까지 커밋하고 정상 종료(코드 0)합니다. 활성화된 `AEC-Reembed`가 다음 창에서 이어 갑니다(감사 시 Disabled). 기본은 항상.
 - **빠른 거절**: Graph RAG의 객체 의미 검색 단계는 `AEC_ASK_SEMANTIC_TIMEOUT_MS`(8000) 안에서만 돕니다. 공사비·연락처·수상처럼
   도면 그래프가 모델링하지 않는 속성을 묻고 지식그래프에도 근거 문자열이 없으면 `AEC_ASK_GATE_TIMEOUT_MS`(1200)로 줄여
   근거가 없으면 바로 거절합니다. 예산을 넘긴 검색은 결과 없음 + 경고로 끝나며 오류가 되지 않습니다.
@@ -206,29 +214,43 @@ powershell -ExecutionPolicy Bypass -File scripts\ops\latency-check.ps1 -EvalSet 
 ### 성능 측정 CLI (예전 D:\AECData\dev 임시 스크립트)
 ```powershell
 # 검색 골든셋(비공개, git 밖): [{"q": "...", "expect": "<document_id 일부>", "set": "ko|en"}, ...]
-python -m aec_intelligence.operational.cli search-eval --cases D:\AECData\eval\search-cases.json --out D:\AECData\eval --tag now
-python -m aec_intelligence.operational.cli search-eval --cases ... --set en --expansion off   # 확장 전후 비교
-# 적재 상태: 상태별 건수, 실패율, 최근 N시간 처리량, ETA, (로그를 주면) 작업당 소요 시간
-python -m aec_intelligence.operational.cli ingest-stats --hours 6 --log D:\AECData\bulk\logs\workers-<날짜>.log
-python -m aec_intelligence.operational.cli storage-report   # 테이블/인덱스 바이트, 문서당 바이트
+. .\scripts\ops\_common.ps1
+Invoke-AecCli -Arguments @('search-eval', '--cases', 'D:\AECData\eval\search-cases.json', '--out', 'D:\AECData\eval', '--tag', 'now')
+Invoke-AecCli -Arguments @('search-eval', '--cases', '<같은 cases 경로>', '--set', 'en', '--expansion', 'off') # 확장 전후 비교
+# 적재 상태와 로그 기반 소요 시간. 처리량의 측정 근거는 아래 주의사항 확인.
+Invoke-AecCli -Arguments @('ingest-stats', '--hours', '6', '--log', 'D:\AECData\bulk\logs\workers-<날짜>.log')
+Invoke-AecCli -Arguments @('storage-report')   # 테이블/인덱스 바이트, 문서당 바이트
 ```
+
+호스트 CLI는 §7의 `_common.ps1`을 먼저 로드하고 `Get-AecPython`이 선택한 환경에서 실행합니다. 새 `ingest-stats`는 `aec.metrics`의 `kind='ingestion_completed'` 이벤트와 `created_at`으로 기간별 적재 완료 건수·처리율을 계산합니다(`throughput_source` 참조). 이 이벤트는 DB 적재 커밋을 뜻하며 작업 최종 성공·실패 이력이 아닙니다. 기간별 실패 원장이 없으므로 `window_failure_count`는 `null`이고, `failure_rate`는 현재 큐의 완료 상태에서 계산한 비율입니다. 새 census는 기존 별칭 갱신 때 작업 완료 시각을 덮어쓰지 않지만, 과거 `jobs.updated_at`은 이미 오염되어 있으므로 역사적 처리율·ETA를 복원하는 근거로 사용하지 않습니다. 완료 로그를 함께 확인하고 측정 구간과 분모를 기록합니다.
 
 ## 9. 문제 해결
 
 | 증상 | 원인 / 조치 |
 |---|---|
 | API 401 | 토큰 불일치. `.env`의 `AEC_API_TOKEN`과 클라이언트 `POWERCAD_ONTOLOGY_TOKEN` 확인, 교체 후 MCP 클라이언트 재시작 |
-| 적재 작업이 몇 분씩 걸림, 로그에 `embeddings pending ... timed out` | Ollama 로드 실패. `ollama ps`, serve.log의 `watchdog`/`Load failed`/`Vulkan` 확인 → §4 재시작. 대기 벡터는 AEC-Reembed가 채움 |
+| 적재 작업이 몇 분씩 걸림, 로그에 `embeddings pending ... timed out` | Ollama 로드 실패. `ollama ps`, serve.log의 `watchdog`/`Load failed`/`Vulkan` 확인 → §4 재시작. 대기 벡터는 AEC-Reembed가 활성화되어 있어야 자동으로 채움(§3) |
 | 적재가 느리고 `pg_stat_activity`에 `DataFileRead` 대기 | USB D:에서 캐시 미스. 무거운 작업(복원 훈련, 대량 평가) 동시 실행 피하기, AEC-WSL-Reclaim 임계값 확인 |
-| 워커가 아무것도 안 함 | `D:\AECData\bulk\STOP-WORKERS` 남아 있음 → `stop-workers.ps1 -Resume`; 또는 디스크 가드(§7) |
-| `could not resize shared memory segment` | 컨테이너 `/dev/shm` (이제 compose `shm_size: 256m`). 병렬 인덱스 빌드 끄기(`max_parallel_maintenance_workers=0`, 스크립트에 반영됨) |
+| 워커가 아무것도 안 함 | `D:\AECData\bulk\STOP-WORKERS` 남아 있음 → `stop-workers.ps1 -Resume`; 또는 디스크·메모리 가드(§7). 작업이 Running이고 로그가 `paused`이면 가용 RAM 2048 MB 하한과 300초 재확인 주기 확인 |
+| `could not resize shared memory segment` | 컨테이너 `/dev/shm` (이제 compose `shm_size: 256m`). 병렬 인덱스 빌드 끄기(`max_parallel_maintenance_workers=0`, `0003_text_vectors.sql` 마이그레이션 및 `operational/backup.py`의 pg_restore 옵션에 반영됨) |
 | 호스트 연결마다 10초 지연 | DSN `localhost` → `127.0.0.1` |
 | PC 메모리 부족(가용 < 0.5 GB) | qwen3는 10분 유휴 후 내려감. 사용자 앱(브라우저 등) 정리, `workers` 1로 |
 | Docker 재시작 후 일부 컨테이너 없음 | restart 정책 없는 사용자 컨테이너를 `docker start` |
 
 ## 10. 방화벽 (관리자 필요, 사용자가 직접)
 
-AEC 포트(55432, 58000, 11434)는 모두 `127.0.0.1`에만 바인드되어 방화벽 규칙이 필요 없습니다.
+로그인 시 Docker 자동 시작에는 `scripts/ops/start-docker.ps1`을 사용자 로그인 태스크로 한 번 실행합니다. Desktop 또는 backend 프로세스가 이미 있으면 재시작하지 않고 종료합니다. 반복 감시 태스크로 등록하지 않으므로 사용자가 Docker를 종료하면 다시 켜지 않습니다. 시작 로그는 `%LOCALAPPDATA%\AEC\logs\docker-logon.log`에 남습니다. Docker 시작 요청은 엔진이나 D:/Google Drive 준비 완료를 뜻하지 않으며, 적재 워커는 별도로 준비 상태와 메모리 하한을 확인해야 합니다.
+
+AEC 포트(55432, API 기본 58000, 11434)는 모두 `127.0.0.1`에만 바인드되어 방화벽 규칙이 필요 없습니다.
+
+Windows가 API 포트를 예약한 경우 `netsh interface ipv4 show excludedportrange protocol=tcp`와 IPv6 목록을 확인합니다. 예를 들어 예약 범위 57965–58064는 기본 API 포트 58000을 포함합니다. 예약되지 않고 다른 프로세스가 사용하지 않는 포트를 선택해 호스트 `.env`에 `AEC_API_HOST_PORT=38000`처럼 지정하고 API 서비스만 재생성합니다. 기본값은 58000이며 바인딩 주소는 계속 loopback입니다.
+
+```powershell
+docker compose up -d --no-deps --force-recreate api
+# 변경한 포트의 /healthz와 클라이언트 API 주소를 확인합니다.
+```
+
+`latency-check.ps1`은 `.env`의 `AEC_API_HOST_PORT`를 읽습니다. 명시적인 `-Api` URL이 있으면 그것을 우선합니다. 다른 클라이언트의 API 주소도 선택한 포트로 맞춰야 합니다.
 다른 사용자 컨테이너가 `0.0.0.0`에 공개한 18080/22217 포트를 막는 스크립트가 준비되어 있습니다(에이전트는 UAC를 우회하지 않음):
 ```powershell
 # 관리자 PowerShell에서

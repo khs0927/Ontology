@@ -165,6 +165,14 @@ class Database:
                 WHERE id=%s AND lease_owner=%s AND state='RUNNING' AND lease_until>now()""",
                 (lease_seconds,job_id,owner)).rowcount == 1
 
+    def defer_unavailable_source(self, job_id, owner):
+        """Release our live lease after a source mount outage without exhausting retry attempts."""
+        with self.connect() as conn:
+            return conn.execute("""UPDATE aec.jobs SET state='QUEUED',stage='queued',progress=0,
+                attempts=GREATEST(attempts-1,0),lease_owner=NULL,lease_until=NULL,updated_at=now()
+                WHERE id=%s AND lease_owner=%s AND state='RUNNING' AND lease_until>now()""",
+                (job_id,owner)).rowcount == 1
+
     def finish(self, job_id, owner, result=None, error=None):
         with self.connect() as conn:
             return conn.execute("""UPDATE aec.jobs SET state=%s,result=%s,error=%s,progress=%s,

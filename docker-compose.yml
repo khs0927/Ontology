@@ -87,7 +87,7 @@ services:
     image: aec-intelligence-app:latest
     container_name: aec-api
     ports:
-      - "127.0.0.1:58000:8000"
+      - "127.0.0.1:${AEC_API_HOST_PORT:-58000}:8000"
     environment:
       AEC_DATABASE_URL: postgresql://aec:${AEC_DB_PASSWORD:-change-me}@db:5432/aec
       AEC_DATA_ROOT: /data

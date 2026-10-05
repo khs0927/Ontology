@@ -15,7 +15,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$EvalSet,
     [string]$OutRoot = 'D:\AECData\eval\latency',
-    [string]$Api = 'http://127.0.0.1:58000',
+    [string]$Api = '',
     [int]$LlmQuestions = 6,
     [switch]$SkipEval
 )
@@ -25,6 +25,10 @@ $out = Join-Path $OutRoot (Get-Date -Format 'yyyyMMdd-HHmm'); New-Item -ItemType
 $log = Join-Path $out 'run.log'
 function L($m) { $line = "$(Get-Date -Format s) $m"; $line | Out-File $log -Append -Encoding utf8; Write-Host $line }
 Import-AecDotEnv -Path (Join-Path $script:RepoRoot '.env')
+if (-not $Api) {
+    $apiPort = if ($env:AEC_API_HOST_PORT) { $env:AEC_API_HOST_PORT } else { '58000' }
+    $Api = "http://127.0.0.1:$apiPort"
+}
 $env:PYTHONPATH = (Join-Path $script:RepoRoot 'src') + ';' + $env:PYTHONPATH
 $env:PYTHONIOENCODING = 'utf-8'
 $env:AEC_EMBEDDING_URL = if ($env:AEC_HOST_EMBEDDING_URL) { $env:AEC_HOST_EMBEDDING_URL } else { 'http://127.0.0.1:11434' }

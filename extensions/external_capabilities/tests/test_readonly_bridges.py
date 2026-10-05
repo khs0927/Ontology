@@ -35,12 +35,21 @@ def test_readonly_providers(provider):
     data.update(host=provider,host_version='test-version')
     result=ingest_readonly_probe(json.dumps(data).encode(),expected_identity=identity)
     assert result['status']=='DECLARED' and not result['native_mapping_verified']
+    assert not result['probe_authenticated'] and not result['host_identity_verified']
 
-@pytest.mark.parametrize('change',[{'mutation_count':False},{'mutation_count':1},{'read_only':False},{'capabilities':['execute_python']}])
+@pytest.mark.parametrize('change',[{'mutation_count':False},{'mutation_count':1},{'read_only':False},{'capabilities':['execute_python']},{'capabilities':['health','health']}])
 def test_reject_unsafe_probe(change):
     identity=dict(IDENTITY,provider_id='rhino')
     data=dict(schema_version=1,identity=identity,read_only=True,mutation_count=0,capabilities=[]);data.update(change)
     with pytest.raises(ValueError):ingest_readonly_probe(json.dumps(data).encode(),expected_identity=identity)
+
+def test_host_provider_mismatch_is_rejected():
+    identity=dict(IDENTITY,provider_id='freecad')
+    data=dict(schema_version=1,identity=identity,read_only=True,mutation_count=0,
+              capabilities=['health'],host='rhino',host_version='8')
+    with pytest.raises(ValueError):
+        ingest_readonly_probe(json.dumps(data).encode(),expected_identity=identity)
+
 
 def test_duplicate_json_and_nan_rejected():
     for raw in [b'{"x":1,"x":2}',b'{"x":NaN}']:

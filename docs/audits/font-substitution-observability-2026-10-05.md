@@ -24,7 +24,17 @@ The branch then replaced the render-dependent assertion with deterministic contr
 
 ## Reproduction / re-run evidence
 
-The final PR-head workflow run was re-run after the investigation:
+The pre-fix failing workflow was re-run without changing its historical checkout:
+
+- original run: `37280093321`
+- re-run job: `111679522309`
+- result: **failure**
+- failing test: `test_the_hook_is_reached_by_the_real_renderer`
+- repeated assertion: `seen == []` / `rendering text must resolve at least one font through the wrapped resolver`
+
+This reproduces the same Linux synthetic-render failure on the historical intermediate state.
+
+The final PR-head workflow run was separately re-run after the investigation:
 
 - run: `37280821496`
 - re-run job: `111679341488`

@@ -738,13 +738,51 @@ def worker_stop_reason(settings) -> str | None:
     return None
 
 
+def _host_available_memory_mb() -> float | None:
+    """Read Windows available physical RAM without an additional runtime dependency."""
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
+                    ("total_phys", ctypes.c_ulonglong), ("avail_phys", ctypes.c_ulonglong),
+                    ("total_page", ctypes.c_ulonglong), ("avail_page", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong), ("avail_virtual", ctypes.c_ulonglong),
+                    ("avail_extended_virtual", ctypes.c_ulonglong)]
+
+    try:
+        status = MemoryStatus()
+        status.length = ctypes.sizeof(status)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return status.avail_phys / (1024 * 1024)
+    except (AttributeError, OSError):
+        return None
+
+
+def worker_memory_pause_reason() -> str | None:
+    if os.name != "nt":
+        return None
+    try:
+        minimum = int(os.getenv("AEC_MIN_AVAILABLE_MB", "2048"))
+    except ValueError:
+        return "AEC_MIN_AVAILABLE_MB must be a positive integer"
+    if minimum <= 0:
+        return "AEC_MIN_AVAILABLE_MB must be a positive integer"
+    available = _host_available_memory_mb()
+    if available is None:
+        return "available host memory could not be measured"
+    if available < minimum:
+        return f"available host memory {available:.0f} MB below {minimum} MB"
+    return None
+
+
 def worker_process(settings, queue: str, poll: float, index: int) -> int:
     """Top-level (picklable) target for spawn: drain the queue, exit when nothing is left, when the stop file
     appears or when the parent ``run-workers`` process is gone (checked between jobs, never mid-job)."""
     import logging
 
     from .db import Database
-    from .worker import IngestionWorker, quiet_noisy_loggers
+    from .worker import IngestionWorker, quiet_noisy_loggers, unavailable_import_roots
 
     logging.basicConfig(level=logging.INFO, format=f"[w{index}] %(asctime)s %(levelname)s %(message)s")
     quiet_noisy_loggers()
@@ -752,11 +790,21 @@ def worker_process(settings, queue: str, poll: float, index: int) -> int:
     worker = IngestionWorker(db, settings, queue=queue, worker_id=f"census-{os.getpid()}-{index}")
     min_free = parse_min_free(os.getenv("AEC_MIN_FREE_GB"))
     processed = 0
+    last_pause = None
     while True:
         reason = worker_stop_reason(settings)
         if reason:
             logging.getLogger(__name__).warning("worker %s exiting after %d jobs: %s", index, processed, reason)
             return processed
+        missing_roots = unavailable_import_roots(settings)
+        pause = (f"import roots unavailable: {missing_roots}" if missing_roots else worker_memory_pause_reason())
+        if pause:
+            if pause != last_pause:
+                logging.getLogger(__name__).warning("worker %s paused before claim: %s", index, pause)
+            last_pause = pause
+            time.sleep(max(poll, 1.0))
+            continue
+        last_pause = None
         if min_free:
             wait_for_disk(min_free, logging.getLogger(__name__).warning)
         try:

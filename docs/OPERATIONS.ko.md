@@ -239,7 +239,18 @@ Invoke-AecCli -Arguments @('storage-report')   # 테이블/인덱스 바이트, 
 
 ## 10. 방화벽 (관리자 필요, 사용자가 직접)
 
-AEC 포트(55432, 58000, 11434)는 모두 `127.0.0.1`에만 바인드되어 방화벽 규칙이 필요 없습니다.
+로그인 시 Docker 자동 시작에는 `scripts/ops/start-docker.ps1`을 사용자 로그인 태스크로 한 번 실행합니다. Desktop 또는 backend 프로세스가 이미 있으면 재시작하지 않고 종료합니다. 반복 감시 태스크로 등록하지 않으므로 사용자가 Docker를 종료하면 다시 켜지 않습니다. 시작 로그는 `%LOCALAPPDATA%\AEC\logs\docker-logon.log`에 남습니다. Docker 시작 요청은 엔진이나 D:/Google Drive 준비 완료를 뜻하지 않으며, 적재 워커는 별도로 준비 상태와 메모리 하한을 확인해야 합니다.
+
+AEC 포트(55432, API 기본 58000, 11434)는 모두 `127.0.0.1`에만 바인드되어 방화벽 규칙이 필요 없습니다.
+
+Windows가 API 포트를 예약한 경우 `netsh interface ipv4 show excludedportrange protocol=tcp`와 IPv6 목록을 확인합니다. 예를 들어 예약 범위 57965–58064는 기본 API 포트 58000을 포함합니다. 예약되지 않고 다른 프로세스가 사용하지 않는 포트를 선택해 호스트 `.env`에 `AEC_API_HOST_PORT=38000`처럼 지정하고 API 서비스만 재생성합니다. 기본값은 58000이며 바인딩 주소는 계속 loopback입니다.
+
+```powershell
+docker compose up -d --no-deps --force-recreate api
+# 변경한 포트의 /healthz와 클라이언트 API 주소를 확인합니다.
+```
+
+`latency-check.ps1`은 `.env`의 `AEC_API_HOST_PORT`를 읽습니다. 명시적인 `-Api` URL이 있으면 그것을 우선합니다. 다른 클라이언트의 API 주소도 선택한 포트로 맞춰야 합니다.
 다른 사용자 컨테이너가 `0.0.0.0`에 공개한 18080/22217 포트를 막는 스크립트가 준비되어 있습니다(에이전트는 UAC를 우회하지 않음):
 ```powershell
 # 관리자 PowerShell에서

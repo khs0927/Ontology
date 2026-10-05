@@ -164,6 +164,12 @@ class SearchResult:
         }
 
 
+# A run whose vector stage was skipped (endpoint down, or offline hash query vectors) is not comparable
+# with a healthy run, so the marker is a shared constant rather than a literal repeated in two places:
+# perf.search_eval counts the cases that carry it instead of dropping the warning.
+VECTOR_STAGE_OFF_MARKER = "searching without the vector stage"
+
+
 class SearchRouter:
     def __init__(self, db: Database, settings: Settings):
         self.db = db
@@ -205,12 +211,12 @@ class SearchRouter:
         try:
             query_model, vec_str = self._query_vector(embed_text)
         except EmbeddingEndpointError as exc:
-            warnings.append(f"Embedding endpoint unavailable ({exc}); searching without the vector stage")
+            warnings.append(f"Embedding endpoint unavailable ({exc}); {VECTOR_STAGE_OFF_MARKER}")
         else:
             if query_model == HASH_MODEL:
                 warnings.append(
                     "AEC_EMBEDDING_URL is not configured, so query vectors would come from the offline "
-                    "hash model; searching without the vector stage"
+                    f"hash model; {VECTOR_STAGE_OFF_MARKER}"
                 )
                 query_model, vec_str = None, None
 

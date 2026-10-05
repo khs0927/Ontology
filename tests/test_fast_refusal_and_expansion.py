@@ -227,3 +227,24 @@ def test_cases_and_search_eval(tmp_path):
     assert len(stamps) == 2
     assert res["sets"]["ko"]["mrr"] == 1.0 and res["sets"]["en"]["mrr"] == round(1 / 3, 3)
     assert summarize([])["n"] == 0
+
+
+def test_search_eval_marks_cases_that_ran_without_the_vector_stage():
+    """A degraded run must be visible in the baseline, not silently equal to a healthy one."""
+    from aec_intelligence.operational.search import VECTOR_STAGE_OFF_MARKER
+
+    cases = [{"q": "a", "expect": "D1", "set": "ko"}, {"q": "b", "expect": "D2", "set": "ko"}]
+
+    def hit(doc):
+        return SimpleNamespace(citation=SimpleNamespace(document_id=doc))
+
+    class Router:
+        def search(self, q, **kw):
+            warnings = [f"Embedding endpoint unavailable (down); {VECTOR_STAGE_OFF_MARKER}"] if q == "a" else []
+            docs = {"a": ["D1"], "b": ["X", "D2"]}.get(q, [])
+            return SimpleNamespace(hits=[hit(d) for d in docs], warnings=warnings)
+
+    res = search_eval(Router(), cases)
+    assert [r["vector_stage_off"] for r in res["rows"]] == [True, False]
+    assert res["all"]["vector_stage_off"] == 1 and res["sets"]["ko"]["vector_stage_off"] == 1
+    assert res["rows"][0]["warnings"] and res["rows"][1]["warnings"] == []

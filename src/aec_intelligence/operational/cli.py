@@ -494,6 +494,11 @@ def _cmd_search_eval(parsed, settings, db):
     result = search_eval(SearchRouter(db, settings), cases, top_k=parsed.top_k,
                          on_query=ActivityStamp(settings.dsn, "eval").touch)
     result["expansion"] = os.getenv("AEC_QUERY_EXPANSION") or "glossary"
+    off = result["all"].get("vector_stage_off") or 0
+    if off:
+        print(f"WARNING: {off} of {result['all']['n']} cases ran without the vector stage (endpoint unavailable "
+              "or not configured), so this baseline measures the lexical stage and is not comparable with a "
+              "healthy run.", file=sys.stderr)
     if parsed.out:
         out = Path(parsed.out)
         out.mkdir(parents=True, exist_ok=True)

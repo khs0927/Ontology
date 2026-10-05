@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from capability_registry.history import EvidenceHistory
-from .evidence import record_readonly_probe_evidence
+from .evidence import CONTRACT_SCOPE, record_readonly_probe_evidence
 
 
 def build_parser():
@@ -58,6 +58,7 @@ def main(argv=None):
                 "capability_id": record["capability_id"],
                 "outcome": record["outcome"],
                 "verification_kind": record["verification_kind"],
+                "contract_scope": CONTRACT_SCOPE,
                 "execution_allowed": False,
                 "canonical_allowed": False,
             }

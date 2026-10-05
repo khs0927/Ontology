@@ -3,8 +3,10 @@
 * ``search_eval``: run a golden set of search queries in-process (the API's SearchRouter, no HTTP) and
   report hit@1/3/10, MRR and latency per set (e.g. ``ko``/``en``). Cases live OUTSIDE the repository
   (they name private drawings): a JSON list of ``{"q": ..., "expect": <document_id substring>, "set": "ko"}``.
-* ``ingest_stats``: queue state, failure rate, throughput over the last hours and ETA from ``aec.jobs``
-  (``updated_at`` of finished jobs), and optionally per-job claim -> done durations parsed from the
+* ``ingest_stats``: current queue state and failure rate from ``aec.jobs``; committed ingestion
+  throughput and an estimated ETA from append-only ``aec.metrics`` completion events. These events
+  precede job finalization, so they are not a historical success/failure ledger. Optionally parse
+  per-job claim -> done durations from the
   workers log (``bulk-run.ps1`` output, lines ``Worker .. claimed job <id>`` / ``Job <id> succeeded``).
 """
 
@@ -90,27 +92,32 @@ def parse_worker_log(lines) -> list[dict[str, Any]]:
 
 
 def ingest_stats(db, *, hours: float = 6.0, log_path: str | None = None) -> dict[str, Any]:
+    if hours <= 0:
+        raise ValueError("hours must be greater than zero")
     with db.connect() as conn:
         states = {r["state"]: r["n"] for r in conn.execute(
             "SELECT state, count(*) AS n FROM aec.jobs GROUP BY state").fetchall()}
-        recent = {r["state"]: r["n"] for r in conn.execute(
-            """SELECT state, count(*) AS n FROM aec.jobs WHERE state IN ('SUCCEEDED','FAILED')
-               AND updated_at > now() - make_interval(secs => %s) GROUP BY state""", (hours * 3600,)).fetchall()}
-        hourly = [{"hour": r["h"].isoformat(), "succeeded": r["s"], "failed": r["f"]} for r in conn.execute(
-            """SELECT date_trunc('hour', updated_at) AS h, count(*) FILTER (WHERE state='SUCCEEDED') AS s,
-                      count(*) FILTER (WHERE state='FAILED') AS f
-               FROM aec.jobs WHERE state IN ('SUCCEEDED','FAILED') AND updated_at > now() - make_interval(secs => %s)
+        completed_ingestions = conn.execute(
+            """SELECT count(*) AS n FROM aec.metrics WHERE kind='ingestion_completed'
+               AND created_at > now() - make_interval(secs => %s)""", (hours * 3600,)).fetchone()["n"]
+        hourly = [{"hour": r["h"].isoformat(), "ingestion_completed": r["n"]} for r in conn.execute(
+            """SELECT date_trunc('hour', created_at) AS h, count(*) AS n
+               FROM aec.metrics WHERE kind='ingestion_completed'
+               AND created_at > now() - make_interval(secs => %s)
                GROUP BY 1 ORDER BY 1""", (hours * 3600,)).fetchall()]
         top_errors = [{"error": r["e"], "n": r["n"]} for r in conn.execute(
             """SELECT left(regexp_replace(coalesce(error, ''), '[0-9a-f-]{8,}|[A-Z]:\\\\[^ ]+|/[^ ]+', '…', 'g'), 120) AS e,
                       count(*) AS n FROM aec.jobs WHERE state='FAILED' GROUP BY 1 ORDER BY 2 DESC LIMIT 5""").fetchall()]
     finished = states.get("SUCCEEDED", 0) + states.get("FAILED", 0)
-    done_recent = recent.get("SUCCEEDED", 0) + recent.get("FAILED", 0)
-    per_hour = done_recent / hours if hours else 0
+    per_hour = completed_ingestions / hours
     queued = states.get("QUEUED", 0) + states.get("RUNNING", 0)
     out: dict[str, Any] = {
         "jobs_by_state": states, "failure_rate": round(states.get("FAILED", 0) / finished, 4) if finished else None,
-        "window_hours": hours, "finished_in_window": recent, "jobs_per_hour": round(per_hour, 1),
+        "window_hours": hours, "finished_in_window": None,
+        "ingestion_completed_in_window": completed_ingestions, "jobs_per_hour": round(per_hour, 1),
+        "throughput_source": "aec.metrics:ingestion_completed.created_at",
+        "throughput_basis": "committed ingestion events; may include retries before job finalization",
+        "window_failure_count": None,
         "eta_days": round(queued / per_hour / 24, 1) if per_hour else None, "hourly": hourly,
         "top_errors": top_errors,
     }

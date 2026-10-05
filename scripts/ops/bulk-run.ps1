@@ -14,6 +14,8 @@
   Host overrides: AEC_EMBEDDING_URL=http://127.0.0.1:11434 (the .env value is for containers),
   AEC_IMPORT_ROOTS = every source root, OCR models in D:\AECData\ocr-models, 2 OCR threads,
   AEC_MIN_FREE_GB from sources.json "min_free_gb" (census and workers pause while a drive is low).
+  Workers wait before starting each round for 2048 MB available host RAM; AEC_MIN_AVAILABLE_MB
+  overrides this threshold. A failed memory query also pauses the launch until the next retry.
   The process runs at BelowNormal priority; ODA/OCR child processes inherit it.
   Worker count: sources.json "workers" (re-read before every round) overrides -Workers, so it can be
   lowered while a re-embed or another heavy job runs. A round (run-workers) lasts until the queue is
@@ -67,6 +69,10 @@ function Invoke-Logged([string[]]$CliArgs) {
 }
 
 Write-BulkLog "pid $PID priority $Priority roots=$($roots.Count) embedding=$($env:AEC_EMBEDDING_URL)"
+# Drain also blocks census starts, so scheduled refreshes cannot enqueue during maintenance.
+$stopFile = if ($env:AEC_WORKER_STOP_FILE) { $env:AEC_WORKER_STOP_FILE } else {
+    Join-Path $(if ($env:AEC_DATA_ROOT) { $env:AEC_DATA_ROOT } else { 'D:\AECData' }) 'bulk\STOP-WORKERS' }
+if (Test-Path -LiteralPath $stopFile) { Write-BulkLog "stop file $stopFile present: exiting"; exit 0 }
 if ($Role -eq 'census') {
     $cliArgs = @('bulk-census', '--config', $Config)
     if ($Refresh) { $cliArgs += '--refresh' }
@@ -74,10 +80,31 @@ if ($Role -eq 'census') {
     exit $code
 }
 # Drain switch shared with the Python workers (census.worker_stop_file): scripts/ops/stop-workers.ps1.
-$stopFile = if ($env:AEC_WORKER_STOP_FILE) { $env:AEC_WORKER_STOP_FILE } else {
-    Join-Path $(if ($env:AEC_DATA_ROOT) { $env:AEC_DATA_ROOT } else { 'D:\AECData' }) 'bulk\STOP-WORKERS' }
+$minAvailableMb = 2048
+if ($env:AEC_MIN_AVAILABLE_MB) {
+    $configuredMin = 0
+    if ([int]::TryParse($env:AEC_MIN_AVAILABLE_MB, [ref]$configuredMin) -and $configuredMin -gt 0) {
+        $minAvailableMb = $configuredMin
+    } else {
+        Write-BulkLog "invalid AEC_MIN_AVAILABLE_MB; using $minAvailableMb MB"
+    }
+}
 while ($true) {
     if (Test-Path -LiteralPath $stopFile) { Write-BulkLog "stop file $stopFile present: exiting"; exit 0 }
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        if ($null -eq $os.FreePhysicalMemory) { throw 'available memory reading missing' }
+        $availableMb = [double]$os.FreePhysicalMemory / 1024
+        if ($availableMb -lt $minAvailableMb) {
+            Write-BulkLog "paused: available memory $([math]::Round($availableMb)) MB below $minAvailableMb MB"
+            Start-Sleep -Seconds $IdleSleepSec
+            continue
+        }
+    } catch {
+        Write-BulkLog "paused: could not read available memory ($_); retry in $IdleSleepSec seconds"
+        Start-Sleep -Seconds $IdleSleepSec
+        continue
+    }
     $n = $Workers
     try {
         $live = [System.IO.File]::ReadAllText($Config, [System.Text.Encoding]::UTF8) | ConvertFrom-Json

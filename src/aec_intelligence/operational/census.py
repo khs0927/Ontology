@@ -548,8 +548,7 @@ def enqueue_census(db, census: str | Path, queue: str = "cad", limit: int | None
         for job in selected:
             row = conn.execute("""INSERT INTO aec.jobs(id,dedup_key,payload) VALUES(%s,%s,%s)
                 ON CONFLICT(dedup_key) DO UPDATE SET
-                  payload = aec.jobs.payload || jsonb_build_object('aliases', EXCLUDED.payload->'aliases'),
-                  updated_at = now()
+                  payload = aec.jobs.payload || jsonb_build_object('aliases', EXCLUDED.payload->'aliases')
                 RETURNING (xmax = 0) AS inserted, state""",
                 (uuid.uuid4(), job["sha256"], Jsonb(job))).fetchone()
             if row["inserted"]:

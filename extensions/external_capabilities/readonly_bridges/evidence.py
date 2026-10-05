@@ -10,6 +10,7 @@ from capability_registry.history import EvidenceHistory
 
 
 CONTRACT_CAPABILITY_ID = "readonly-bridge-contract"
+CONTRACT_SCOPE = "headless-contract/1"
 CONTRACT_HOST = "headless-contract"
 CONTRACT_HOST_VERSION = "1"
 

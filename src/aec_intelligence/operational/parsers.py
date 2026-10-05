@@ -664,7 +664,8 @@ class _FontLogHandler(logging.Handler):
             return
         match = _FONT_LOG.search(message)
         if match:
-            self.missing.add(Path(match.group(1)).name)
+            # Split on both separators: a Windows path must yield the file name on any platform.
+            self.missing.add(match.group(1).replace("\\", "/").rsplit("/", 1)[-1])
 
 
 class _FontSubstitutionWatch:

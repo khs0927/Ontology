@@ -14,3 +14,19 @@ Run: `PYTHONPATH=extensions/external_capabilities python -m pytest -q extensions
 
 
 This contract does not prove that a live process exists or that a live document was unchanged. Those claims require a separately authorized native-host validation lane.
+
+
+## Violation fixtures
+
+The contract tests include independent fixtures under
+`extensions/external_capabilities/tests/fixtures/readonly_bridges/` for:
+
+- `schema-mismatch.json`
+- `capability-mismatch.json`
+- `auth-state-error.json`
+- `partial-response.json`
+- `timeout.json`
+- `empty-response.bin`
+
+These fixtures do not simulate a native CAD host. They only verify that malformed,
+contradictory, absent or incomplete contract evidence cannot be promoted.

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 from copy import deepcopy
 import pytest
 from readonly_bridges import ingest_readonly_probe, ingest_section_catalog
@@ -108,3 +109,60 @@ def test_transport_failure_rejects_stray_response_bytes():
     with pytest.raises(ValueError):
         ingest_readonly_probe(b'{}', expected_identity=identity,
                               expected_capabilities=['health'], transport_state='timeout')
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "readonly_bridges"
+FIXTURE_IDENTITY = dict(
+    provider_id="rhino",
+    upstream_repo="https://example.test/rhino-bridge",
+    upstream_commit="a" * 40,
+    source_path="bridge/probe.json",
+    adapter_version="1",
+)
+
+
+@pytest.mark.parametrize("name,match", [
+    ("schema-mismatch.json", "Unsupported"),
+    ("capability-mismatch.json", "Capability contract mismatch"),
+    ("auth-state-error.json", "self-authenticate"),
+    ("partial-response.json", "Partial"),
+])
+def test_violation_fixtures_fail_closed(name, match):
+    raw = (FIXTURE_DIR / name).read_bytes()
+    with pytest.raises(ValueError, match=match):
+        ingest_readonly_probe(
+            raw,
+            expected_identity=FIXTURE_IDENTITY,
+            expected_capabilities=["health", "read_context"],
+        )
+
+
+def test_timeout_fixture_is_not_run():
+    fixture = json.loads((FIXTURE_DIR / "timeout.json").read_text(encoding="utf-8"))
+    result = ingest_readonly_probe(
+        fixture["content"],
+        expected_identity=FIXTURE_IDENTITY,
+        expected_capabilities=["health"],
+        transport_state=fixture["transport_state"],
+    )
+    assert result["status"] == "NOT_RUN"
+    assert result["transport_state"] == "timeout"
+    assert result["execution_allowed"] is False
+
+
+def test_empty_response_fixture_is_not_run_for_empty_transport_and_rejected_for_ok():
+    raw = (FIXTURE_DIR / "empty-response.bin").read_bytes()
+    result = ingest_readonly_probe(
+        raw,
+        expected_identity=FIXTURE_IDENTITY,
+        expected_capabilities=["health"],
+        transport_state="empty",
+    )
+    assert result["status"] == "NOT_RUN"
+    with pytest.raises(ValueError, match="Empty"):
+        ingest_readonly_probe(
+            raw,
+            expected_identity=FIXTURE_IDENTITY,
+            expected_capabilities=["health"],
+            transport_state="ok",
+        )

@@ -62,6 +62,7 @@ def _identity(data, expected):
 def _base(content, identity):
     return {'identity': identity, 'payload_sha256': hashlib.sha256(content).hexdigest(),
             'status': 'DECLARED', 'verification_kind': 'contract_only',
+            'contract_scope': 'headless-contract/1',
             'execution_allowed': False, 'canonical_allowed': False,
             'native_mapping_verified': False}
 
@@ -129,7 +130,8 @@ def _expected_capabilities(values):
 def _transport_result(identity, state):
     return {
         'identity': deepcopy(identity), 'payload_sha256': None, 'status': 'NOT_RUN',
-        'verification_kind': 'contract_only', 'transport_state': state,
+        'verification_kind': 'contract_only', 'contract_scope': 'headless-contract/1',
+        'transport_state': state,
         'capabilities': [], 'probe_authenticated': False,
         'host_identity_verified': False, 'native_mapping_verified': False,
         'execution_allowed': False, 'canonical_allowed': False,

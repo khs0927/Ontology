@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .search import VECTOR_STAGE_OFF_MARKER
+
 
 def _pct(values: list[float], q: float):
     if not values:
@@ -42,7 +44,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"n": n, "hit@1": sum(r["rank"] == 1 for r in rows), "hit@3": sum(1 <= r["rank"] <= 3 for r in rows),
             "hit@10": sum(1 <= r["rank"] <= 10 for r in rows),
             "mrr": round(sum(1 / r["rank"] for r in rows if r["rank"]) / n, 3) if n else None,
-            "ms_p50": _pct(ms, 0.5), "ms_p95": _pct(ms, 0.95), "ms_max": max(ms) if ms else None}
+            "ms_p50": _pct(ms, 0.5), "ms_p95": _pct(ms, 0.95), "ms_max": max(ms) if ms else None,
+            # A run in which the vector stage was off measures the lexical stage only. Without this count
+            # an outage run is indistinguishable from a quality regression in a saved baseline.
+            "vector_stage_off": sum(1 for r in rows if r.get("vector_stage_off"))}
 
 
 def search_eval(router, cases: list[dict[str, Any]], *, top_k: int = 10, warmup: bool = True,
@@ -61,7 +66,9 @@ def search_eval(router, cases: list[dict[str, Any]], *, top_k: int = 10, warmup:
         docs = [h.citation.document_id or "" for h in res.hits]
         rank = next((i for i, d in enumerate(docs, 1) if c["expect"] in d), 0)
         rows.append({"q": c["q"], "set": c["set"], "rank": rank, "ms": ms,
-                     "expanded": next((w for w in res.warnings if w.startswith("query expanded")), None)})
+                     "expanded": next((w for w in res.warnings if w.startswith("query expanded")), None),
+                     "warnings": list(res.warnings),
+                     "vector_stage_off": any(VECTOR_STAGE_OFF_MARKER in w for w in res.warnings)})
     sets = sorted({r["set"] for r in rows})
     return {"sets": {s: summarize([r for r in rows if r["set"] == s]) for s in sets}, "all": summarize(rows),
             "rows": rows}

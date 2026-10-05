@@ -47,6 +47,7 @@ def test_runtime_cli_records_projection_into_ledger(tmp_path, capsys):
     assert emitted["capability_id"] == CONTRACT_CAPABILITY_ID
     assert emitted["outcome"] == "PASS"
     assert emitted["verification_kind"] == "headless"
+    assert emitted["contract_scope"] == "headless-contract/1"
     assert emitted["execution_allowed"] is False
     assert emitted["canonical_allowed"] is False
 

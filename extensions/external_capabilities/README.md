@@ -68,3 +68,17 @@ historical revocation state for a past `now`. Keep returned `head_digest` in an
 independent trusted receipt if stronger continuity checks are required.
 
 No CAD host/version is assumed. Tests use headless fixture declarations only.
+
+
+## Read-only bridge lifecycle integration
+
+As of 2026-10-05, `EvidenceHistory` had no non-test runtime consumer: references were limited to this README and `test_history.py`. That made the ledger vulnerable to becoming isolated/dead code even though its own contract tests were healthy.
+
+`readonly_bridges.evidence.record_readonly_probe_evidence(...)` now provides one concrete module-level integration point. It records only the headless capability `readonly-bridge-contract`:
+
+- a `DECLARED` bridge projection becomes `PASS` for that contract capability only;
+- a `NOT_RUN` projection remains `NOT_RUN`;
+- the ledger scope uses `host=headless-contract`, `host_version=1`, and `verification_kind=headless` so it cannot be mistaken for a native CAD-host observation;
+- lifecycle projection still returns `execution_allowed: false` and `canonical_allowed: false`.
+
+This removes the previous **test-only ledger isolation**, but one residual dead-code risk remains: there is still no production CLI/API scheduler that invokes this adapter automatically. The integration is callable code with contract tests, not an operational background service. A future runtime caller must preserve the same non-authorizing scope and must not rewrite it as `native-live` without separately collected native evidence.

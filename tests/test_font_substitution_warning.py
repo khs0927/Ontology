@@ -12,6 +12,7 @@ platform's font resolution.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -61,3 +62,23 @@ def test_the_warning_names_the_fonts_and_is_silent_when_nothing_was_substituted(
     text = parsers.font_substitution_warning("A-101", {"NanumSquare"})
     assert text and "A-101" in text and "NanumSquare" in text and "substitute font" in text
     assert parsers.font_substitution_warning("A-101", {"a", "b", "c", "d"}).count("(+1 more)") == 1
+
+
+def test_the_missing_font_name_comes_from_the_library_record():
+    """The face carries no name, so the name has to come from ezdxf's own record (verified end to end:
+    the warning said 'unknown' until this source was used)."""
+    watch = parsers._FontSubstitutionWatch()
+    record = logging.LogRecord(
+        "ezdxf", logging.WARNING, __file__, 1,
+        "no default font found: [Errno 2] No such file or directory: "
+        "'C:\\Users\\someone\\AppData\\Local\\Microsoft\\Windows\\Fonts\\NanumSquareR.ttf'",
+        None, None)
+    watch._log_handler.emit(record)
+    assert watch.missing == {"NanumSquareR.ttf"}
+
+
+def test_an_unrelated_record_does_not_add_a_font():
+    watch = parsers._FontSubstitutionWatch()
+    watch._log_handler.emit(logging.LogRecord("ezdxf", logging.WARNING, __file__, 1,
+                                             "layer 'A-WALL' has no linetype", None, None))
+    assert watch.missing == set()

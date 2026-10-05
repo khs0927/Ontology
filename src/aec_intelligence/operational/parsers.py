@@ -1,6 +1,7 @@
 """Observations with traceable source coordinates; no inferred BIM solids."""
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -640,6 +641,33 @@ def _safe_relative(path: Path, root: Path) -> str:
 _FONT_WATCH_LOCK = threading.Lock()
 
 
+_FONT_LOG = re.compile(r"no default font found:.*?['\"]([^'\"]+)['\"]")
+
+
+class _FontLogHandler(logging.Handler):
+    """Recover the missing font's file name from ezdxf's own record.
+
+    The face handed to ``make_font`` carries neither family nor filename, so wrapping the resolver can
+    say that a substitution happened but not which font it was. The library's own record names the file,
+    and the first record per distinct message is the one that survives the worker's dedup filter. The
+    record is emitted once per distinct message rather than once per entity, so a count is not recovered.
+    """
+
+    def __init__(self, missing: set[str]) -> None:
+        super().__init__(level=logging.WARNING)
+        self.missing = missing
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:  # a record that cannot be formatted must not break a render
+            return
+        match = _FONT_LOG.search(message)
+        if match:
+            # Split on both separators: a Windows path must yield the file name on any platform.
+            self.missing.add(match.group(1).replace("\\", "/").rsplit("/", 1)[-1])
+
+
 class _FontSubstitutionWatch:
     """Font families ezdxf substituted while a layout was rendered.
 
@@ -655,6 +683,7 @@ class _FontSubstitutionWatch:
 
     def __init__(self) -> None:
         self.missing: set[str] = set()
+        self._log_handler = _FontLogHandler(self.missing)
 
     def _resolver(self, original):
         watch = self
@@ -674,12 +703,15 @@ def _watch_font_substitutions():
     from ezdxf.fonts import fonts as ezfonts
 
     watch = _FontSubstitutionWatch()
+    ezdxf_logger = logging.getLogger("ezdxf")
     with _FONT_WATCH_LOCK:  # the resolver is a module global: one render at a time patches it
         original = ezfonts.make_font
         ezfonts.make_font = watch._resolver(original)
+        ezdxf_logger.addHandler(watch._log_handler)
         try:
             yield watch
         finally:
+            ezdxf_logger.removeHandler(watch._log_handler)
             ezfonts.make_font = original
 
 

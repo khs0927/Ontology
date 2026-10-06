@@ -69,3 +69,8 @@ def test_knowledge_route(q, route):
     linked = link_static(q)
     assert choose_route(linked) == route
     assert unsupported_reason(q, linked) is None
+
+
+def test_knowledge_route_criteria_words():
+    linked = link_static("외벽 단열재 표기 기준은?")
+    assert choose_route(linked) == "knowledge"

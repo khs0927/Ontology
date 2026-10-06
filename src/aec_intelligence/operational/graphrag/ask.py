@@ -70,7 +70,8 @@ _DOMAIN_RE = re.compile(
 _KNOWLEDGE_RE = re.compile(
     r"(작성\s*(기준|방법|순서|규칙|절차|사양)|그리(는|려|기|면)|재작성|레이어|해치|치수\s*스타일|문자\s*(높이|스타일)|"
     r"블록|가이드|지침|표준|규칙|교훈|버그|도구\s*한계|power-?cad|파워\s*캐드|어떻게\s*(그|표현|작성|만들)|"
-    r"표현\s*방식|플레이북|playbook|절차)", re.IGNORECASE)
+    r"표현\s*방식|플레이북|playbook|절차|기준|표기\s*(법|방법|방식)?)", re.IGNORECASE)
+_KNOWLEDGE_STOP = {"어떻게", "그려", "그리는", "그리기", "방법", "알려줘", "뭐야", "무엇", "어떤", "있어", "해줘", "설명"}
 # Attributes the drawing database does not model. The question is only answered when the retrieved context
 # itself carries matching evidence (e.g. a title block with a phone number); otherwise it is refused.
 _UNSUPPORTED = (
@@ -632,22 +633,39 @@ class GraphRAG:
             ORDER BY c.embedding <=> %s::vector LIMIT 8""", [vector_literal(vecs[0]), model, vector_literal(vecs[0])])
 
     def _knowledge(self, conn, question, limit: int = 8) -> list[ContextItem]:
-        """Knowledge-pack nodes (kb:*): drafting rules, layers, procedures, lessons. Not project scoped."""
-        terms = " ".join(t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2)
+        """Knowledge-pack nodes (kb:*): drafting rules, layers, procedures, lessons. Not project scoped.
+
+        Ranked by how many question words occur in the node (name hits weigh double), then trigram similarity:
+        a whole-question trigram threshold misses short Korean questions against long rule texts."""
+        words = [w for w in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(w) >= 2]
+        # strip common Korean endings so "해치는" matches "해치"
+        terms = list(dict.fromkeys(re.sub(r"(은|는|이|가|을|를|의|에|로|으로|와|과|도|만)$", "", w) for w in words))
+        terms = [t for t in terms if len(t) >= 2 and t not in _KNOWLEDGE_STOP]
         if not terms:
             return []
-        rows = self._nodes(conn, """
-            SELECT n.id, n.type, n.name, n.props, word_similarity(%s, n.search_text) AS sim
-            FROM aec.kg_nodes n
-            WHERE n.project_key LIKE 'kb:%%' AND n.type NOT IN ('KnowledgePack') AND %s <%% n.search_text
-            ORDER BY sim DESC, length(n.search_text) DESC LIMIT %s""", [terms, terms, limit])
+        hit = " + ".join(["(CASE WHEN n.search_text ILIKE %s THEN 1 ELSE 0 END)"
+                          " + (CASE WHEN n.name ILIKE %s THEN 1 ELSE 0 END)"] * len(terms))
+        like = [x for t in terms for x in (f"%{t}%", f"%{t}%")]
+        rows = self._nodes(conn, f"""
+            SELECT * FROM (
+              SELECT n.id, n.type, n.name, n.props, ({hit}) AS hits,
+                     word_similarity(%s, n.search_text) AS sim
+              FROM aec.kg_nodes n
+              WHERE n.project_key LIKE 'kb:%%' AND n.type NOT IN ('KnowledgePack')) q
+            WHERE q.hits > 0
+            ORDER BY q.hits DESC, (q.type IN ('Lesson','TextRule','HatchRule','DimensionRule','GridRule',
+                                              'StandardClause','ReplicationMethod','ProcedureStep','Layer')) DESC,
+                     q.sim DESC LIMIT %s""", [*like, " ".join(terms), limit])
         out = []
+        top = max((r["hits"] for r in rows), default=0)
         for r in rows:
+            if r["hits"] < max(1, top // 2):
+                continue
             props = r["props"] if isinstance(r["props"], dict) else json.loads(r["props"] or "{}")
             text = (props.get("text") or r["name"])[:900]
             src = ", ".join(props.get("sources") or [])
             out.append(ContextItem("knowledge", f"[{r['type']}] {r['name']}: {text}" + (f" (출처: {src})" if src else ""),
-                                   0.4 + 0.5 * float(r["sim"] or 0), r["id"], [], []))
+                                   0.4 + 0.05 * float(r["hits"]) + 0.2 * float(r["sim"] or 0), r["id"], [], []))
         return out
 
     def _kg_lexical(self, conn, question, keys) -> list[ContextItem]:

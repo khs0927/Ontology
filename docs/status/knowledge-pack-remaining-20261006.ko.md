@@ -35,7 +35,11 @@
 ### ③ Ontology PR 생성·병합 — 사용자 결정
 - `feat/knowledge-pack` 브랜치만 올라가 있음 (master는 PR 방식으로 관리됨).
 
-### ④ C# 빌드·테스트 — .NET 10 SDK 있는 환경에서
+### ④ C# 빌드·테스트 — ✅ 완료 (2026-10-06)
+- `C:\CODE\All-In-Cad\.dotnet` (SDK 10.0.401)로 실행: 테스트 54/54 통과, AutoCAD 플러그인 빌드 경고 0·오류 0.
+- 남은 것: 플러그인을 AutoCAD에 재배포(`bash scripts/build_dotnet.sh` 패키징 후 번들 교체, AutoCAD 재시작).
+
+### (이전 메모) C# 빌드
 - 이 PC에는 SDK가 없어 정적 검사만 함 (충돌 병합한 3개 파일: CommandDispatcher.cs, AcadTransaction.cs, ServerTests.cs).
 - 실행: `bash scripts/build_dotnet.sh` (빌드 + 테스트 + 패키징). 성공하면 AutoCAD 플러그인 재배포.
 

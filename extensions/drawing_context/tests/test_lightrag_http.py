@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 import json
+from pathlib import Path
 
 import pytest
 
@@ -169,7 +170,7 @@ def test_binding_registry_is_runtime_only_and_roundtrips(tmp_path):
 
     saved = registry.save_runtime(tmp_path)
     assert saved["canonical_mutation"] is False
-    assert saved["path"].endswith("runtime/lightrag/bindings.json")
+    assert Path(saved["path"]).parts[-3:] == ("runtime", "lightrag", "bindings.json")
     assert not (tmp_path / "global" / "lightrag").exists()
 
     restored = LightRagBindingRegistry.load_runtime(tmp_path)

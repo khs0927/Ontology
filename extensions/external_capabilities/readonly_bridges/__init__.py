@@ -62,6 +62,7 @@ def _identity(data, expected):
 def _base(content, identity):
     return {'identity': identity, 'payload_sha256': hashlib.sha256(content).hexdigest(),
             'status': 'DECLARED', 'verification_kind': 'contract_only',
+            'contract_scope': 'headless-contract/1',
             'execution_allowed': False, 'canonical_allowed': False,
             'native_mapping_verified': False}
 
@@ -114,25 +115,86 @@ def ingest_section_catalog(content, *, expected_identity, source_files):
     return result
 
 
-def ingest_readonly_probe(content, *, expected_identity):
-    """Normalize an untrusted probe response; fixtures never verify a native host."""
+def _expected_capabilities(values):
+    allowed = {'probe', 'capabilities', 'version', 'health', 'read_context'}
+    if not isinstance(values, (list, tuple, set)) or not values:
+        raise ValueError('Require nonempty expected capabilities')
+    items = list(values)
+    if any(not isinstance(k, str) or k not in allowed for k in items):
+        raise ValueError('Unsupported expected capability')
+    if len(items) != len(set(items)):
+        raise ValueError('Duplicate expected capability')
+    return sorted(items)
+
+
+def _transport_result(identity, state):
+    return {
+        'identity': deepcopy(identity), 'payload_sha256': None, 'status': 'NOT_RUN',
+        'verification_kind': 'contract_only', 'contract_scope': 'headless-contract/1',
+        'transport_state': state,
+        'capabilities': [], 'probe_authenticated': False,
+        'host_identity_verified': False, 'native_mapping_verified': False,
+        'execution_allowed': False, 'canonical_allowed': False,
+        'reason': f'Probe transport did not yield a complete response: {state}',
+    }
+
+
+def ingest_readonly_probe(content, *, expected_identity, expected_capabilities,
+                          transport_state='ok'):
+    """Validate an untrusted read-only probe response without authenticating a host."""
+    # Validate the caller-owned identity independently even when no response arrived.
+    _identity({'identity': expected_identity}, expected_identity)
+    expected = _expected_capabilities(expected_capabilities)
+    if transport_state not in {'ok', 'timeout', 'empty'}:
+        raise ValueError('Unsupported transport state')
+    if transport_state in {'timeout', 'empty'}:
+        if content not in (None, b''):
+            raise ValueError('Transport failure must not carry response bytes')
+        return _transport_result(expected_identity, transport_state)
+    if not isinstance(content, bytes) or not content:
+        raise ValueError('Empty probe response')
+
     data = _decode(content)
     identity = _identity(data, expected_identity)
-    if identity['provider_id'] not in PROVIDERS or type(data.get('schema_version')) is not int or data.get('schema_version') != 1:
+    required = {
+        'schema_version', 'identity', 'read_only', 'mutation_count', 'capabilities',
+        'authenticated', 'complete',
+    }
+    if not required.issubset(data):
+        raise ValueError('Incomplete readonly probe schema')
+    if identity['provider_id'] not in PROVIDERS or type(data.get('schema_version')) is not int or data['schema_version'] != 1:
         raise ValueError('Unsupported readonly provider')
-    if data.get('mutation_count') != 0 or type(data.get('mutation_count')) is not int:
+    if data['complete'] is not True:
+        raise ValueError('Partial readonly probe response')
+    if data['authenticated'] is not False:
+        raise ValueError('Contract-only response cannot self-authenticate')
+    if data['mutation_count'] != 0 or type(data['mutation_count']) is not int:
         raise ValueError('Require explicit zero mutation count')
-    if data.get('read_only') is not True:
+    if data['read_only'] is not True:
         raise ValueError('Require readonly response')
-    capabilities = data.get('capabilities')
-    allowed = {'probe', 'capabilities', 'version', 'health', 'read_context'}
-    if not isinstance(capabilities, list) or any(not isinstance(k, str) or k not in allowed for k in capabilities):
-        raise ValueError('Unsupported capability')
+
+    capabilities = data['capabilities']
+    if not isinstance(capabilities, list) or any(not isinstance(k, str) for k in capabilities):
+        raise ValueError('Invalid capability list')
+    if len(capabilities) != len(set(capabilities)):
+        raise ValueError('Duplicate capability declaration')
+    if sorted(capabilities) != expected:
+        raise ValueError('Capability contract mismatch')
+
     result = _base(content, identity)
-    result['capabilities'] = sorted(set(capabilities))
-    if not _text(data.get('host')) or not _text(data.get('host_version')):
+    result.update(
+        capabilities=expected,
+        transport_state='ok',
+        probe_authenticated=False,
+        host_identity_verified=False,
+    )
+    host, version = data.get('host'), data.get('host_version')
+    if not _text(host) or not _text(version):
         result['status'] = 'NOT_RUN'
         result['reason'] = 'Missing host identity; native execution not established'
     else:
-        result.update(host=data['host'], host_version=data['host_version'])
+        host = host.strip()
+        if host.lower() != identity['provider_id'].lower():
+            raise ValueError('Host/provider declaration mismatch')
+        result.update(host=host, host_version=version.strip())
     return result

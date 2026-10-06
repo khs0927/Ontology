@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "identity": {
+    "provider_id": "rhino",
+    "upstream_repo": "https://example.test/rhino-bridge",
+    "upstream_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_path": "bridge/probe.json",
+    "adapter_version": "1"
+  },
+  "read_only": true,
+  "mutation_count": 0,
+  "capabilities": [
+    "health",
+    "read_context"
+  ],
+  "authenticated": false,
+  "complete": true,
+  "host": "rhino",
+  "host_version": "8"
+}

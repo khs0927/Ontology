@@ -135,7 +135,7 @@ def load_pack(db, data: dict[str, Any], *, settings=None, embed: bool = True, dr
                     "INSERT INTO aec.kg_aliases(alias_type, alias, node_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                     [(a[0], str(a[1])[:500], a[2]) for a in aliases])
                 cur.executemany(
-                    f"""INSERT INTO aec.kg_communities(id, project_key, level, title, node_ids, facts, input_hash, summary,
+                    """INSERT INTO aec.kg_communities(id, project_key, level, title, node_ids, facts, input_hash, summary,
                                                       model, status, embedding, embedding_model)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'knowledge-pack','DONE',%s::vector,%s)""",
                     [(c["id"], key, c["level"], c["title"][:500], c["node_ids"], json.dumps(c["facts"], ensure_ascii=False),

@@ -66,6 +66,11 @@ _DOMAIN_RE = re.compile(
     r"(도면|시트|도곽|층|실|벽|기둥|보|슬래브|창호|창문|문|계단|구조|건축|설비|전기|기계|소방|면적|치수|단면|평면|입면|배치|"
     r"프로젝트|현장|주차|철골|철근|콘크리트|마감|지붕|옥상|방수|단열|레이어|블록|도곽|리비전|개정|강재|부재|"
     r"cad|dwg|dxf|pdf|ifc)", re.IGNORECASE)
+# Drafting knowledge (knowledge packs kb:*): how to draw, layers, hatches, rules, procedures, lessons.
+_KNOWLEDGE_RE = re.compile(
+    r"(작성\s*(기준|방법|순서|규칙|절차|사양)|그리(는|려|기|면)|재작성|레이어|해치|치수\s*스타일|문자\s*(높이|스타일)|"
+    r"블록|가이드|지침|표준|규칙|교훈|버그|도구\s*한계|power-?cad|파워\s*캐드|어떻게\s*(그|표현|작성|만들)|"
+    r"표현\s*방식|플레이북|playbook|절차)", re.IGNORECASE)
 # Attributes the drawing database does not model. The question is only answered when the retrieved context
 # itself carries matching evidence (e.g. a title block with a phone number); otherwise it is refused.
 _UNSUPPORTED = (
@@ -163,7 +168,7 @@ def classify_intents(question: str) -> list[str]:
     intents = []
     for name, rx in (("summary", _SUMMARY_RE), ("count", _COUNT_RE), ("revision", _REVISION_RE),
                      ("find_drawing", _FIND_DRAWING_RE),
-                     ("location", _LOCATION_RE), ("list", _LIST_RE), ("drawing", _DRAWING_WORDS)):
+                     ("location", _LOCATION_RE), ("knowledge", _KNOWLEDGE_RE), ("list", _LIST_RE), ("drawing", _DRAWING_WORDS)):
         if rx.search(question):
             intents.append(name)
     return intents
@@ -199,7 +204,7 @@ def unsupported_reason(question: str, linked: Linked | None = None) -> str | Non
         if ask_rx.search(question) and evidence_rx is None:
             return "out of scope (not drawing data)"
     if linked is not None and not (linked.projects or linked.storeys or linked.kinds or linked.rooms
-                                   or linked.sections or linked.sheet_numbers) and not _DOMAIN_RE.search(question):
+                                   or linked.sections or linked.sheet_numbers) and not _DOMAIN_RE.search(question)             and not _KNOWLEDGE_RE.search(question):
         return "out of scope (no drawing/project anchor)"
     return None
 
@@ -227,6 +232,9 @@ def _dedupe(items: list[ContextItem]) -> list[ContextItem]:
 
 
 def choose_route(linked: Linked) -> str:
+    if ("knowledge" in linked.intents and not (linked.sections or linked.sheet_numbers or linked.rooms)
+            and not {"count", "revision", "find_drawing"} & set(linked.intents)):
+        return "knowledge"
     if ("summary" in linked.intents and "find_drawing" not in linked.intents
             and not (linked.rooms or linked.sections or linked.sheet_numbers)):
         return "summary"
@@ -311,7 +319,9 @@ class GraphRAG:
             if gate:
                 return {"linked": linked, "route": "refuse", "items": [], "cypher": [], "gate": gate,
                         "retrieval_ms": round((time.monotonic() - started) * 1000)}
-            if route == "summary":
+            if route == "knowledge":
+                items += self._knowledge(conn, question)
+            elif route == "summary":
                 items += self._summary(conn, question, keys, linked)
             elif route == "graph:section":
                 items += self._sections(conn, keys, linked, cypher)
@@ -327,6 +337,8 @@ class GraphRAG:
                 items += self._storey(conn, keys, linked, cypher)
             elif route == "graph:drawings":
                 items += self._drawings(conn, question, keys, cypher)
+            if len(items) < 3 and route != "knowledge" and "knowledge" in linked.intents:
+                items += self._knowledge(conn, question, limit=3)
             if len(items) < 3:
                 items += self._kg_lexical(conn, question, keys)
             # Object-level hybrid search (pg_trgm + pgvector over every object) is the slowest stage, so a
@@ -619,6 +631,25 @@ class GraphRAG:
             FROM aec.kg_communities c WHERE c.status='DONE' AND c.embedding_model = %s
             ORDER BY c.embedding <=> %s::vector LIMIT 8""", [vector_literal(vecs[0]), model, vector_literal(vecs[0])])
 
+    def _knowledge(self, conn, question, limit: int = 8) -> list[ContextItem]:
+        """Knowledge-pack nodes (kb:*): drafting rules, layers, procedures, lessons. Not project scoped."""
+        terms = " ".join(t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2)
+        if not terms:
+            return []
+        rows = self._nodes(conn, """
+            SELECT n.id, n.type, n.name, n.props, word_similarity(%s, n.search_text) AS sim
+            FROM aec.kg_nodes n
+            WHERE n.project_key LIKE 'kb:%%' AND n.type NOT IN ('KnowledgePack') AND %s <%% n.search_text
+            ORDER BY sim DESC, length(n.search_text) DESC LIMIT %s""", [terms, terms, limit])
+        out = []
+        for r in rows:
+            props = r["props"] if isinstance(r["props"], dict) else json.loads(r["props"] or "{}")
+            text = (props.get("text") or r["name"])[:900]
+            src = ", ".join(props.get("sources") or [])
+            out.append(ContextItem("knowledge", f"[{r['type']}] {r['name']}: {text}" + (f" (출처: {src})" if src else ""),
+                                   0.4 + 0.5 * float(r["sim"] or 0), r["id"], [], []))
+        return out
+
     def _kg_lexical(self, conn, question, keys) -> list[ContextItem]:
         pf, pp = self._project_filter(keys, "n")
         terms = " ".join(t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2)
@@ -750,7 +781,8 @@ class GraphRAG:
             generate: bool = True) -> dict[str, Any]:
         question = question.strip()
         ret = self.retrieve(question, project=project, top_k=top_k)
-        items: list[ContextItem] = [i for i in ret["items"] if i.document_ids or i.object_ids]
+        items: list[ContextItem] = [i for i in ret["items"]
+                                       if i.document_ids or i.object_ids or (i.node_id or "").startswith("kb:")]
         warnings: list[str] = []
         result: dict[str, Any] = {
             "question": question, "route": ret["route"], "linked": ret["linked"].to_dict(),

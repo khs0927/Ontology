@@ -20,6 +20,15 @@ def add_parsers(subparsers) -> None:
     p.add_argument("--max-level", type=int, default=1, help="Summarise levels <= N (0 project, 1 aspects, 2 leiden)")
     p.add_argument("--no-llm", action="store_true", help="Only refresh communities/facts, no summaries")
 
+    p = subparsers.add_parser("kg-knowledge-load", help="Load an aec-knowledge-pack/1 JSON into aec.kg_* (key kb:<pack>)")
+    p.add_argument("pack_file")
+    p.add_argument("--ttl", default=None, help="Also write the pack as RDF/Turtle (OWL) here")
+    p.add_argument("--no-embed", action="store_true", help="Skip community embeddings")
+    p.add_argument("--dry-run", action="store_true", help="Validate and count only")
+
+    p = subparsers.add_parser("kg-knowledge-unload", help="Remove a knowledge pack (kb:<pack>) from aec.kg_*")
+    p.add_argument("pack")
+
     p = subparsers.add_parser("kg-stats", help="Knowledge graph node/edge/community counts")
 
     p = subparsers.add_parser("kg-facts", help="Export rule facts + ArchOntos subject refs for one project")
@@ -140,6 +149,32 @@ def cmd_graphrag_eval_make(parsed, settings, db):
     return result
 
 
-COMMANDS = {"graphrag-eval-make": cmd_graphrag_eval_make, "kg-build": cmd_kg_build, "kg-summarize": cmd_kg_summarize, "kg-stats": cmd_kg_stats,
+def cmd_kg_knowledge_load(parsed, settings, db):
+    from pathlib import Path
+
+    from .knowledge_pack import load_pack, read_pack, to_turtle
+
+    data = read_pack(parsed.pack_file)
+    if parsed.ttl:
+        Path(parsed.ttl).write_text(to_turtle(data), encoding="utf-8")
+    if not parsed.dry_run:
+        db.initialize()
+    result = load_pack(db, data, settings=settings, embed=not parsed.no_embed, dry_run=parsed.dry_run)
+    if parsed.ttl:
+        result["ttl"] = parsed.ttl
+    _print(result)
+    return result
+
+
+def cmd_kg_knowledge_unload(parsed, settings, db):
+    from .knowledge_pack import unload_pack
+
+    result = unload_pack(db, parsed.pack)
+    _print(result)
+    return result
+
+
+COMMANDS = {"kg-knowledge-load": cmd_kg_knowledge_load, "kg-knowledge-unload": cmd_kg_knowledge_unload,
+            "graphrag-eval-make": cmd_graphrag_eval_make, "kg-build": cmd_kg_build, "kg-summarize": cmd_kg_summarize, "kg-stats": cmd_kg_stats,
             "kg-facts": cmd_kg_facts,
             "ask": cmd_ask, "graphrag-eval": cmd_graphrag_eval}

@@ -164,3 +164,22 @@ Ollama(사용자 환경 변수): `OLLAMA_MAX_LOADED_MODELS=2`(bge-m3와 qwen3 �
 | 새 도면이 답에 안 나옴 | `graphrag.ps1 refresh` (KG는 수집과 별도로 갱신) |
 | `kg-summarize` 중단 | 그대로 다시 실행(커뮤니티 단위 커밋, 입력 해시 캐시) |
 | 403/401 | `AEC_API_TOKEN`(.env)와 `POWERCAD_ONTOLOGY_TOKEN` 일치 확인 (`docs/api-security.md`) |
+
+## 5. 지식 팩 (도면 작성 지식)
+
+도면 데이터가 아닌 **작성 지식**(레이어 표준, 해치·문자·치수 규칙, 시트 재작성 절차, 도구 한계와 교훈, 가이드
+절)을 `aec-knowledge-pack/1` JSON으로 받아 같은 KG에 넣습니다. power-cad-mcp `scripts/export_knowledge_pack.py`가
+`docs/knowledge/drafting_kb.json`(+ OWL/Turtle `drafting_kb.ttl`)을 만듭니다.
+
+```powershell
+python -m aec_intelligence.operational.cli kg-knowledge-load C:\CODE\power-cad-mcp\docs\knowledge\drafting_kb.json --ttl out.ttl
+python -m aec_intelligence.operational.cli kg-knowledge-load <file> --dry-run   # 검증·개수만
+python -m aec_intelligence.operational.cli kg-knowledge-unload drafting
+```
+
+- 프로젝트 키 `kb:<pack>`으로 한 트랜잭션(삭제+삽입)에 들어갑니다. `kg-build`는 `kg_build_state`에 기록한 키만
+  지우므로 팩을 건드리지 않습니다. 노드 id는 반드시 `kb:`로 시작해야 합니다(도면 노드와 섞이지 않게).
+- 텍스트가 있는 노드는 각각 DONE 상태 level-1 커뮤니티가 되고(임베딩 모델이 있으면 벡터 포함), 요약·벡터 경로에서도 찾힙니다.
+- 라우터: "해치는 어떻게 그려?", "레이어 WAL1 색은?", "leader 버그 해결 방법"처럼 작성 방법·규칙·레이어·해치·
+  절차·교훈을 묻는 질문은 `knowledge` 경로로 가서 `kb:*` 노드를 직접 검색합니다. 다른 경로에서 근거가 3개 미만이면
+  지식 검색이 보충됩니다. 지식 근거는 문서/객체 id 대신 `kg_node_id`(kb:…)와 출처 파일로 인용됩니다.

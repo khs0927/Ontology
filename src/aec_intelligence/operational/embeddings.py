@@ -43,6 +43,7 @@ EMBEDDING_DIM = 1024
 HASH_MODEL = "hash-sha256-1024-v1"
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_TIMEOUT = 60.0
+DEFAULT_CONNECT_TIMEOUT = 1.0
 DEFAULT_RETRIES = 3
 CIRCUIT_COOLDOWN_SECONDS = 30.0
 # An ingest job waits at most this long per chunk for interactive queries (it holds its transaction).
@@ -137,12 +138,13 @@ def _urlopen(req: urllib.request.Request, timeout: float):
 
 class EmbeddingService:
     def __init__(self, settings: Settings, *, batch_size: int | None = None, timeout: float | None = None,
-                 retries: int | None = None, backoff: float = 0.5):
+                 connect_timeout: float | None = None, retries: int | None = None, backoff: float = 0.5):
         self.settings = settings
         self.model_name = settings.embedding_model or "BAAI/bge-m3"
         self.endpoint = (settings.embedding_url or "").rstrip("/")
         self.batch_size = max(1, int(batch_size or _env_number("AEC_EMBEDDING_BATCH_SIZE", DEFAULT_BATCH_SIZE, int)))
         self.timeout = float(timeout or _env_number("AEC_EMBEDDING_TIMEOUT", DEFAULT_TIMEOUT))
+        self.connect_timeout = float(connect_timeout or _env_number("AEC_EMBEDDING_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT))
         self.retries = max(1, int(retries or _env_number("AEC_EMBEDDING_RETRIES", DEFAULT_RETRIES, int)))
         self.backoff = backoff
         self.last_error: str | None = None

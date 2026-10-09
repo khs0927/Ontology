@@ -1,0 +1,6 @@
+# Generated pack data: ~60 MB and it lists private Drive folder/file names (this repo is public).
+# Regenerate locally with tools/build_gdrive_cad_pack.py (see README.md).
+/graph/
+/vectors/
+/sql/
+/assets/

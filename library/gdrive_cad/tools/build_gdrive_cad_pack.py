@@ -436,16 +436,16 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
                  "discipline": disc["code"], "discipline_confidence": disc["confidence"],
                  "discipline_source": disc["source"], "review": disc["review"], "parse_status": status,
                  "duplicate_count": len(rep["_copies"]), "duplicate_copies": rep["_copies"][:MAX_DUP_COPIES]}
-        parts = [f"도면 {stem}"]
+        parts = [f"도면 {scrub_text(stem)}"]
         if number:
-            parts.append(f"도면번호 {number}")
+            parts.append(f"도면번호 {scrub_text(number)}")
         if title:
-            parts.append(f"제목 {title}")
+            parts.append(f"제목 {scrub_text(title)}")
         parts.append(f"공종 {DISCIPLINE_KO[disc['code']]}")
-        parts.append(f"프로젝트 {sub_leaf}")
+        parts.append(f"프로젝트 {scrub_text(sub_leaf)}")
         if parent_dir and parent_dir != sub_leaf:
-            parts.append(f"상위폴더 {parent_dir}")
-        parts.append(f"경로 {path}")
+            parts.append(f"상위폴더 {scrub_text(parent_dir)}")
+        parts.append(f"경로 {scrub_text(path)}")
         parts.append(f"형식 {ext.upper()}")
         if status == "unparsed_format":
             parts.append("미해석 형식(메타데이터만)")
@@ -459,7 +459,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
             props["rooms"] = rooms[:25]
             texts = [scrub_text(t) for t in (rec.get("texts") or [])]
             texts = [t for t in texts if len(t) >= 2]
-            lnames = [l["name"] for l in sorted(rec.get("layers") or [], key=lambda l: -(l.get("entities") or 0))
+            lnames = [scrub_text(l["name"]) for l in sorted(rec.get("layers") or [], key=lambda l: -(l.get("entities") or 0))
                       if l.get("name") and l["name"] != "0" and (l.get("entities") or 0) > 0]
             if rooms:
                 parts.append("실: " + join_bounded(rooms, MAX_ROOMS_CHARS, ", "))
@@ -518,7 +518,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         sub_ids[sp] = sid
         leaf = sp.rsplit("/", 1)[-1]
         top = ", ".join(f"{DISCIPLINE_KO[k]} {v}" for k, v in s["disc"].most_common(4))
-        text = bound(f"프로젝트 폴더 {leaf}. 경로 {sp}. 도면 {s['drawings']}건 (중복 사본 {s['dups']}건). "
+        text = bound(f"프로젝트 폴더 {scrub_text(leaf)}. 경로 {scrub_text(sp)}. 도면 {s['drawings']}건 (중복 사본 {s['dups']}건). "
                      f"공종 분포: {top}. 형식: " + ", ".join(f"{k} {v}" for k, v in s["exts"].most_common(5)) + ".",
                      MAX_SEARCH)
         add_node(sid, "SubProject", leaf, text, path=sp, drawings=s["drawings"], duplicate_files=s["dups"],
@@ -553,7 +553,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         known = [(k, v) for k, v in a["disc"].most_common() if k != "unknown"]
         ldisc = LAYER_DISC.get(known[0][0], "GENERAL") if known else "GENERAL"
         klass = next((k for k, _ in a["cls"].most_common() if k != "unknown"), "unknown")
-        text = bound(f"레이어 {a['name']}. 공종 {DISCIPLINE_KO[ldisc]}. 요소 분류 {klass}. "
+        text = bound(f"레이어 {scrub_text(a['name'])}. 공종 {DISCIPLINE_KO[ldisc]}. 요소 분류 {klass}. "
                      f"사용 도면 {len(a['drawings'])}건, 객체 {a['entities']}개.", MAX_SEARCH)
         add_node(lid, "LayerStandard", a["name"], text, discipline=ldisc, element_class=klass,
                  drawings=len(a["drawings"]), entities=a["entities"], confidence=round(a["conf"], 2))
@@ -563,9 +563,9 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     blocks_sorted = sorted(block_agg.values(), key=lambda a: (-len(a["drawings"]), -a["inserts"], a["name"]))
     for a in blocks_sorted[:max_blocks]:
         bid = f"{PROJECT_KEY}:block:" + sha1(a["name"])[:16]
-        extra = (f" 분류 {a['category']}." if a.get("category") else "") + \
-                (" 속성 " + ", ".join(a["attrs"]) + "." if a["attrs"] else "")
-        text = bound(f"블록 {a['name']}.{extra} 사용 도면 {len(a['drawings'])}건, 삽입 {a['inserts']}회.", MAX_SEARCH)
+        extra = (f" 분류 {scrub_text(str(a['category']))}." if a.get("category") else "") + \
+                (" 속성 " + ", ".join(scrub_text(str(x)) for x in a["attrs"]) + "." if a["attrs"] else "")
+        text = bound(f"블록 {scrub_text(a['name'])}.{extra} 사용 도면 {len(a['drawings'])}건, 삽입 {a['inserts']}회.", MAX_SEARCH)
         add_node(bid, "BlockSpec", a["name"], text, drawings=len(a["drawings"]), inserts=a["inserts"],
                  category=a.get("category"), attrs=a["attrs"])
         for d in sorted(a["drawings"]):
@@ -631,7 +631,12 @@ def q(v) -> str:
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return str(v)
-    return "'" + str(v).replace("'", "''") + "'"
+    t = str(v)
+    if "\\" in t:
+        # E'' strings treat backslash as an escape in every standard_conforming_strings mode, so the
+        # literal is independent of the server setting (a parameter of the session, not of the script text).
+        return "E'" + t.replace("\\", "\\\\").replace("'", "''") + "'"
+    return "'" + t.replace("'", "''") + "'"
 
 
 def render_sql(nodes: dict, edges: list, aliases: list) -> str:
@@ -667,7 +672,8 @@ def render_sql(nodes: dict, edges: list, aliases: list) -> str:
                  "ON CONFLICT (project_key) DO UPDATE SET fingerprint=EXCLUDED.fingerprint, "
                  "nodes=EXCLUDED.nodes, edges=EXCLUDED.edges, built_at=now();")
     lines.append("-- link pack nodes to their aec.objects rows (object id == node id) so GraphRAG can cite them")
-    lines.append("UPDATE aec.kg_nodes n SET object_ids = ARRAY[o.id], document_ids = ARRAY[o.document_id] "
+    lines.append("UPDATE aec.kg_nodes n SET object_ids = ARRAY[o.id], "
+                 "document_ids = CASE WHEN o.document_id IS NULL THEN '{}' ELSE ARRAY[o.document_id] END "
                  f"FROM aec.objects o WHERE o.id = n.id AND n.project_key = {q(PROJECT_KEY)};")
     lines.append("COMMIT;")
     return "\n".join(lines) + "\n"

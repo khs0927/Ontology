@@ -16,7 +16,8 @@ Plan when --apply:
   3. in batches (default 32, one commit per batch => resumable):
        aec.objects upsert (id == kg node id), aec.text_vectors rows embedded by Ollama bge-m3
        (/api/embed batch; text_vectors already present are never re-embedded), aec.embeddings mapping upsert
-  4. relink kg_nodes.object_ids/document_ids from aec.objects, prune stale GDRIVE_CAD objects
+  4. prune stale GDRIVE_CAD objects, then relink kg_nodes.object_ids/document_ids from aec.objects
+     (links to pruned/missing objects are cleared; this also runs on --skip-kg)
 
 Usage:
   python load_gdrive_cad.py                       # dry run, prints the plan
@@ -45,8 +46,15 @@ SQL_FILE = "gdrive_cad_kg_load.sql"
 DEFAULT_BATCH = 32
 
 LINK_SQL = (
-    "UPDATE aec.kg_nodes n SET object_ids = ARRAY[o.id], document_ids = ARRAY[o.document_id] "
+    "UPDATE aec.kg_nodes n SET object_ids = ARRAY[o.id], "
+    "document_ids = CASE WHEN o.document_id IS NULL THEN '{}' ELSE ARRAY[o.document_id] END "
     f"FROM aec.objects o WHERE o.id = n.id AND n.project_key = '{PROJECT_KEY}'"
+)
+# Clears links whose object no longer exists (pruned, or never created). LINK_SQL alone only ever sets links.
+UNLINK_SQL = (
+    "UPDATE aec.kg_nodes n SET object_ids = '{}', document_ids = '{}' "
+    f"WHERE n.project_key = '{PROJECT_KEY}' AND cardinality(n.object_ids) > 0 "
+    "AND NOT EXISTS (SELECT 1 FROM aec.objects o WHERE o.id = n.id)"
 )
 
 
@@ -138,6 +146,14 @@ def prune_stale_objects(cur, vectors: list[dict]) -> None:
         "SELECT id FROM aec.objects WHERE project_id = %s AND NOT (id = ANY(%s)))",
         (PROJECT_KEY, keep))
     cur.execute("DELETE FROM aec.objects WHERE project_id = %s AND NOT (id = ANY(%s))", (PROJECT_KEY, keep))
+
+
+def relink(cur, vectors: list[dict]) -> None:
+    """Prune stale objects, then make kg_nodes.object_ids agree with aec.objects (also on a --skip-kg resume,
+    where the kg SQL did not reset the links first): dangling links cleared, existing ones (re)set."""
+    prune_stale_objects(cur, vectors)
+    cur.execute(UNLINK_SQL)
+    cur.execute(LINK_SQL)
 
 
 def doc_id(kind: str) -> str:
@@ -242,9 +258,9 @@ def apply(dsn: str, skip_kg: bool, batch_size: int) -> int:
                 print(f"  objects {done}/{len(vectors)} new_text_vectors={new_vec}", flush=True)
 
         with conn.cursor() as cur:
-            # objects now exist: (re)link kg nodes (the SQL ran before objects on a clean DB)
-            cur.execute(LINK_SQL)
-            prune_stale_objects(cur, vectors)
+            # objects now exist: prune stale ones, then (re)link kg nodes (the SQL ran before objects on a clean DB;
+            # on --skip-kg the old links are still there, so they must be reconciled, not just set)
+            relink(cur, vectors)
         conn.commit()
     print(f"APPLIED objects={len(vectors)} new_text_vectors={new_vec}")
     print("NOTE: this script does not run kg-summarize; run it afterwards:\n"

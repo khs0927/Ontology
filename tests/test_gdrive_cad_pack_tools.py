@@ -446,3 +446,316 @@ def test_retrieval_fixes_drawing_list_sheets_capped():
     assert len(drw["search_text"]) < 400
 
 
+
+# ======================================================================================================
+# PR #97 review follow-ups (t13): scrubbing, SQL quoting, resume relink, verify_pack, builder main,
+# embed fallback, renderer object branch, CLI citation line. Synthetic names only.
+verify = _load("verify_pack")
+
+
+def test_scrub_applies_to_every_search_text_component():
+    pii = "kim@example.com"
+    ph = "010-1234-5678"
+    rows = [row(f"Root/{pii}/{ph}/A-101 {pii} plan.dwg", md5="d1", project=f"Root/{pii}")]
+    rec = _rec(rows[0]["path"], [(f"LAY-{pii}", "architecture", 5)], [(f"BLK-{ph}", 2)])
+    rec["blocks"][0]["category"] = pii
+    rec["blocks"][0]["attrs"] = [ph]
+    g = b.build_graph(rows, {rows[0]["path"]: rec})
+    assert {n["type"] for n in g["nodes"].values()} >= {"SubProject", "Drawing", "LayerStandard", "BlockSpec"}
+    for n in g["nodes"].values():
+        assert "@" not in n["search_text"] and ph not in n["search_text"], n["type"]
+    assert all("@" not in v["text"] and ph not in v["text"] for v in g["vectors"])
+    # identity props keep the real path: only the embedded / searchable text is scrubbed
+    drw = next(n for n in g["nodes"].values() if n["type"] == "Drawing")
+    assert pii in drw["props"]["drive_path"]
+
+
+def test_sql_quote_and_backslash_escaping_contract():
+    assert b.q("O'Brien") == "'O''Brien'"
+    assert b.q(None) == "NULL" and b.q(True) == "true" and b.q(7) == "7"
+    # a backslash switches to an E'' literal, which is independent of standard_conforming_strings
+    assert b.q("a\\b") == "E'a\\\\b'"
+    assert b.q("it's a\\b") == "E'it''s a\\\\b'"
+
+
+def test_render_sql_escapes_tricky_synthetic_names():
+    name = "O'Brien\\Sub/A-101 it's.dwg"
+    rows = [row(name, md5="d1", project="O'Brien\\Sub")]
+    g = b.build_graph(rows, {})
+    sql = b.render_sql(g["nodes"], g["edges"], g["aliases"])
+    assert "O''Brien" in sql and "it''s" in sql
+    assert "E'" in sql  # backslash-bearing values are E'' literals
+    assert "O'Brien" not in sql.replace("O''Brien", "") and "it's" not in sql.replace("it''s", "")
+    for stmt in sql.splitlines():
+        if stmt.startswith("--"):
+            continue
+        # doubled quotes are escapes; what remains must be delimiter pairs only
+        assert stmt.replace("''", "").count("'") % 2 == 0, stmt[:120]
+
+
+def test_link_sql_handles_null_document_and_unlink_clears_dangling():
+    assert "CASE WHEN o.document_id IS NULL THEN '{}'" in loader.LINK_SQL
+    assert "CASE WHEN o.document_id IS NULL THEN '{}'" in b.render_sql({}, [], [])
+    assert "NOT EXISTS (SELECT 1 FROM aec.objects o WHERE o.id = n.id)" in loader.UNLINK_SQL
+    assert "n.project_key = 'GDRIVE_CAD'" in loader.UNLINK_SQL and "object_ids = '{}'" in loader.UNLINK_SQL
+
+
+def test_relink_prunes_then_unlinks_then_links():
+    log = []
+    loader.relink(FakeCursor(log), [_vec(1)])
+    sqls = [s for s, _ in log]
+    assert "DELETE FROM aec.objects" in sqls[1]
+    assert sqls[-2] == " ".join(loader.UNLINK_SQL.split()) and sqls[-1] == " ".join(loader.LINK_SQL.split())
+    with pytest.raises(ValueError):  # an empty corpus never reaches the link statements
+        loader.relink(FakeCursor([]), [])
+
+
+def test_apply_skip_kg_resume_still_reconciles_links(monkeypatch, tmp_path):
+    """--skip-kg skips the kg SQL (which would reset object_ids) but must still unlink pruned objects."""
+    import types
+
+    log = []
+
+    class Cur(FakeCursor):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def cursor(self):
+            return Cur(log)
+
+        def commit(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=lambda dsn: Conn()))
+    pack = tmp_path / "pack"
+    (pack / "graph").mkdir(parents=True)
+    (pack / "vectors").mkdir()
+    (pack / "sql").mkdir()
+    (pack / "graph" / "kg_nodes.jsonl").write_text('{"id":"GDRIVE_CAD:x:1"}\n', encoding="utf-8")
+    (pack / "vectors" / "vector_corpus.jsonl").write_text(json.dumps(_vec(1)) + "\n", encoding="utf-8")
+    (pack / "sql" / loader.SQL_FILE).write_text("SELECT 'kg-sql-marker';", encoding="utf-8")
+    monkeypatch.setattr(loader, "PACK", pack)
+    monkeypatch.setattr(loader, "embed_many", lambda texts: [[0.0] * 1024 for _ in texts])
+    assert loader.apply("dsn", True, 8) == 0
+    sqls = [s for s, _ in log]
+    assert not any("kg-sql-marker" in s for s in sqls)
+    assert sqls[-1] == " ".join(loader.LINK_SQL.split()) and sqls[-2] == " ".join(loader.UNLINK_SQL.split())
+    log.clear()
+    assert loader.apply("dsn", False, 8) == 0
+    assert any("kg-sql-marker" in s for s, _ in log)
+
+
+# ---- embed_many fallback ---------------------------------------------------------------------------
+def _http_error(code):
+    import urllib.error
+
+    return urllib.error.HTTPError("http://x", code, "err", {}, None)
+
+
+def test_embed_many_falls_back_to_legacy_endpoint_on_404(monkeypatch):
+    calls = []
+
+    def fake_post(url, body, timeout=300):
+        calls.append(url.rsplit("/", 1)[-1])
+        if url.endswith("/api/embed"):
+            raise _http_error(404)
+        return {"embedding": [0.5] * 1024}
+
+    monkeypatch.setattr(loader, "post_json", fake_post)
+    vecs = loader.embed_many(["a", "b"])
+    assert calls == ["embed", "embeddings", "embeddings"] and len(vecs) == 2 and len(vecs[0]) == 1024
+
+
+def test_embed_many_batch_path_and_error_handling(monkeypatch):
+    import urllib.error
+
+    monkeypatch.setattr(loader, "post_json", lambda url, body, timeout=300: {"embeddings": [[0.0] * 1024] * 2})
+    assert len(loader.embed_many(["a", "b"])) == 2
+    monkeypatch.setattr(loader, "post_json", lambda url, body, timeout=300: {"embeddings": [[0.0] * 1024]})
+    with pytest.raises(RuntimeError):  # wrong number of vectors
+        loader.embed_many(["a", "b"])
+
+    def boom(url, body, timeout=300):
+        raise _http_error(500)
+
+    monkeypatch.setattr(loader, "post_json", boom)
+    with pytest.raises(urllib.error.HTTPError):  # only 404 triggers the fallback
+        loader.embed_many(["a"])
+    monkeypatch.setattr(loader, "post_json", lambda url, body, timeout=300: {"embeddings": [[0.0] * 3]})
+    with pytest.raises(RuntimeError):  # wrong dimension
+        loader.embed_many(["a"])
+
+
+# ---- builder main(): UP TO DATE / --force ----------------------------------------------------------
+def _src(tmp_path, n=40):
+    src = tmp_path / "src"
+    src.mkdir()
+    rows = [row(f"루트/프로젝트/건축/A-{i:03d} 배치도 평면도 입면도 단면도 계단 창호.dwg", md5=f"d{i}",
+                project="루트/프로젝트") for i in range(1, n + 1)]
+    (src / "cad_all.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    return src
+
+
+def _run_main(mod, monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["prog", *argv])
+    return mod.main()
+
+
+def test_builder_main_up_to_date_and_force(tmp_path, monkeypatch, capsys):
+    src, out = _src(tmp_path), tmp_path / "out"
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out)]) == 0
+    first = (out / "manifest.json").read_text(encoding="utf-8")
+    capsys.readouterr()
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out)]) == 0
+    assert "UP TO DATE" in capsys.readouterr().out
+    assert (out / "manifest.json").read_text(encoding="utf-8") == first  # not rewritten
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out), "--force"]) == 0
+    rebuilt = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert "UP TO DATE" not in capsys.readouterr().out
+    assert rebuilt["input_fingerprint"] == json.loads(first)["input_fingerprint"]
+    # changed input invalidates the fingerprint
+    rows = json.loads((src / "cad_all.json").read_text(encoding="utf-8"))
+    (src / "cad_all.json").write_text(json.dumps(rows[:-1], ensure_ascii=False), encoding="utf-8")
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out)]) == 0
+    assert "UP TO DATE" not in capsys.readouterr().out
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8"))["counts"]["drawings"] == len(rows) - 1
+
+
+def test_builder_main_blocks_without_inputs(tmp_path, monkeypatch, capsys):
+    assert _run_main(b, monkeypatch, ["--src", str(tmp_path / "nope"), "--out", str(tmp_path / "o")]) == 2
+    assert "BLOCKED" in capsys.readouterr().err
+
+
+# ---- verify_pack.py --------------------------------------------------------------------------------
+def _verify(monkeypatch, capsys, out):
+    monkeypatch.setattr(sys, "argv", ["verify", "--out", str(out)])
+    code = verify.main()
+    return code, json.loads(capsys.readouterr().out)
+
+
+def _built_pack(tmp_path, monkeypatch, capsys, n=40):
+    src, out = _src(tmp_path, n), tmp_path / "out"
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out)]) == 0
+    capsys.readouterr()
+    return out
+
+
+def test_verify_pack_accepts_a_clean_synthetic_pack(tmp_path, monkeypatch, capsys):
+    out = _built_pack(tmp_path, monkeypatch, capsys)
+    code, rep = _verify(monkeypatch, capsys, out)
+    assert (code, rep["findings"]) == (0, ["NONE"])
+    assert rep["nodes"] > 40
+
+
+def _rewrite(path, fn):
+    rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    fn(rows)
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+
+def _drawing(rows):
+    return next(n for n in rows if n["type"] == "Drawing")
+
+
+def _manifest_count(o):
+    m = json.loads((o / "manifest.json").read_text(encoding="utf-8"))
+    m["counts"]["kg_nodes"] = 1
+    (o / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+
+
+@pytest.mark.parametrize("mutate, needle", [
+    (lambda o: _rewrite(o / "graph" / "kg_edges.jsonl", lambda r: r.append({**r[0], "dst": "missing"})),
+     "unresolved dst"),
+    (lambda o: _rewrite(o / "graph" / "kg_nodes.jsonl", lambda r: r.append(dict(r[0]))), "duplicate node ids"),
+    (lambda o: _rewrite(o / "vectors" / "vector_corpus.jsonl", lambda r: r[0].__setitem__("content_hash", "0" * 64)),
+     "content_hash"),
+    (lambda o: _rewrite(o / "graph" / "kg_nodes.jsonl",
+                        lambda r: r[1].__setitem__("search_text", r[1]["search_text"] + " a@b.co")), "e-mail"),
+    (lambda o: _rewrite(o / "graph" / "kg_nodes.jsonl",
+                        lambda r: _drawing(r)["props"].__setitem__("discipline", "WIZARD")), "unknown discipline"),
+    (lambda o: _rewrite(o / "graph" / "kg_nodes.jsonl",
+                        lambda r: _drawing(r)["props"].__setitem__("review", True)), "review flag"),
+    (_manifest_count, "manifest kg_nodes"),
+])
+def test_verify_pack_reports_corruption(tmp_path, monkeypatch, capsys, mutate, needle):
+    out = _built_pack(tmp_path, monkeypatch, capsys)
+    mutate(out)
+    code, rep = _verify(monkeypatch, capsys, out)
+    assert code == 1 and any(needle in f for f in rep["findings"]), rep["findings"]
+
+
+def test_verify_pack_flags_too_little_hangul(tmp_path, monkeypatch, capsys):
+    out = _built_pack(tmp_path, monkeypatch, capsys, n=1)
+    code, rep = _verify(monkeypatch, capsys, out)
+    assert code == 1 and any("Hangul" in f for f in rep["findings"])
+
+
+# ---- ask.py object-branch renderer + commands.py citation line -------------------------------------
+def _hit(props):
+    from aec_intelligence.operational.search import Citation, SearchHit
+
+    cit = Citation(document_id="doc1", document_name="DOC", revision=0, layout_or_page="p1", handle_or_id="h",
+                   coordinate_system="CAD_WCS")
+    return SearchHit(object_id="obj1", project_id="P", kind="drawing", label="SAMPLE", discipline="ARCH",
+                     storey="", revision=0, score=0.99, lexical_score=0.5, vector_score=0.9, citation=cit,
+                     properties=props)
+
+
+def _semantic_items(props_list):
+    from types import SimpleNamespace
+
+    from aec_intelligence.operational.graphrag import ask
+
+    class Stub:
+        def search(self, question, **kw):
+            return SimpleNamespace(hits=[_hit(p) for p in props_list], warnings=[])
+
+    rag = ask.GraphRAG(db=None, settings=None, search_router=Stub())
+    conn = SimpleNamespace(execute=lambda *a, **k: SimpleNamespace(fetchall=lambda: []))
+    return rag._semantic(conn, "q", None, budget_ms=None)
+
+
+def test_semantic_object_branch_text_is_append_only_for_pack_hits():
+    plain, rich = _semantic_items([{}, {"drive_path": "Root/ProjA/x/X-1 Sample.dwg", "sheet_number": "X-1",
+                                         "title": "Sample title", "sub_project": "Root/ProjA"}])
+    assert "경로" not in plain.text and plain.path is None
+    assert rich.text.startswith(plain.text)  # other projects' text is a strict prefix: unchanged
+    assert "도면번호 X-1, 제목 Sample title" in rich.text and "프로젝트 ProjA" in rich.text
+    assert rich.text.endswith("경로 Root/ProjA/x/X-1 Sample.dwg") and rich.path == "Root/ProjA/x/X-1 Sample.dwg"
+    # pack hit without sheet number / title / sub_project still renders safely
+    only = _semantic_items([{"drive_path": "a/b.dwg"}])[0]
+    assert "도면번호 미상, 제목 미상" in only.text and "프로젝트" not in only.text and only.path == "a/b.dwg"
+
+
+def test_cmd_ask_prints_path_only_for_pack_citations(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from aec_intelligence.operational.graphrag import ask, commands
+
+    result = {"answer": "ans", "route": "r", "retrieval_ms": 1, "llm_ms": 0, "citations": [
+        {"id": 1, "document_name": "D1", "layout_or_page": "p", "object_ids": ["o" * 20], "path": "Root/A/x.dwg"},
+        {"id": 2, "document_name": "D2", "layout_or_page": None, "object_ids": []}]}
+
+    class FakeRag:
+        def __init__(self, *a, **k):
+            pass
+
+        def ask(self, *a, **k):
+            return result
+
+    monkeypatch.setattr(ask, "GraphRAG", FakeRag)
+    parsed = SimpleNamespace(question="q", project="P", top_k=3, no_llm=True, json=False)
+    commands.cmd_ask(parsed, None, None)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[2].startswith("[1] D1 | p | objects " + "o" * 16) and lines[2].endswith(" | path Root/A/x.dwg")
+    assert lines[3] == "[2] D2 | - | objects -"

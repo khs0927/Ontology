@@ -278,3 +278,42 @@ def test_resolve_dsn_never_guesses(monkeypatch, tmp_path):
     env.write_text("AEC_DATABASE_URL='postgresql://u@127.0.0.1:55432/aec'\n", encoding="utf-8")
     assert loader.resolve_dsn("", str(env)).startswith("postgresql://")
     assert loader.resolve_dsn("postgresql://x", None) == "postgresql://x"
+
+
+# ---- renderer / pack identity props (synthetic names only) ----------------------------------------------
+class _NoRows:
+    def execute(self, *a, **k):
+        return self
+
+    def fetchall(self):
+        return []
+
+
+def _drawing_ctx(props):
+    from aec_intelligence.operational.graphrag.ask import GraphRAG
+
+    rag = object.__new__(GraphRAG)
+    r = {"id": "n1", "type": "Drawing", "name": "SAMPLE-01 plan", "props": props, "document_ids": [], "object_ids": []}
+    return rag._drawing_item(_NoRows(), r, 1.0)
+
+
+def test_pack_drawing_keeps_stem_as_title_and_emits_drive_path():
+    g = b.build_graph([row("Root/Proj/Sub/배관 평면도_v2.dwg", project="Root/Proj")], {})
+    drw = next(n for n in g["nodes"].values() if n["type"] == "Drawing")
+    assert drw["props"]["title"] == "배관 평면도_v2"
+    assert drw["props"]["drive_path"] == "Root/Proj/Sub/배관 평면도_v2.dwg"
+    assert drw["props"]["sub_project"] == "Root/Proj"
+    assert "제목" not in drw["search_text"]  # embedded text unchanged: stem is not an extra title
+    vec = next(v for v in g["vectors"] if v["node_id"] == drw["id"])
+    assert vec["properties"]["drive_path"] == drw["props"]["drive_path"]
+
+
+def test_renderer_shows_sub_project_and_path_only_when_pack_provides_them():
+    base = {"sheet_number": "X-1", "title": "Sample title", "discipline": "FIRE"}
+    plain = _drawing_ctx(base)
+    assert "경로" not in plain.text and plain.path is None
+    rich = _drawing_ctx({**base, "sub_project": "Root/ProjA", "drive_path": "Root/ProjA/x/X-1 Sample.dwg"})
+    assert "도면번호 X-1, 제목 Sample title" in rich.text
+    assert "프로젝트 ProjA" in rich.text and "경로 Root/ProjA/x/X-1 Sample.dwg" in rich.text
+    assert rich.path == "Root/ProjA/x/X-1 Sample.dwg"
+    assert rich.text.startswith(plain.text)  # other projects' text is a strict prefix: unchanged

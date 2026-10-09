@@ -169,7 +169,8 @@ def upsert_batch(cur, batch: list[dict], doc_ids: dict[str, str], embedded_this_
             "ON CONFLICT (id) DO UPDATE SET search_text=EXCLUDED.search_text, "
             "label=EXCLUDED.label, payload=EXCLUDED.payload, discipline=EXCLUDED.discipline",
             (oid, PROJECT_KEY, doc_ids[v["kind"]], v["kind"], v.get("discipline") or "", v["label"], v["text"],
-             json.dumps({"node_id": oid, "pack": PROJECT_KEY, "kind": v["kind"]}, ensure_ascii=False)))
+             json.dumps({"node_id": oid, "pack": PROJECT_KEY, "kind": v["kind"],
+                         **({"properties": v["properties"]} if v.get("properties") else {})}, ensure_ascii=False)))
     hashes = sorted({v["content_hash"] for v in batch} - embedded_this_run)
     have: set[str] = set()
     if hashes:

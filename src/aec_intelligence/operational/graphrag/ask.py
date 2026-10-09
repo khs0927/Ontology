@@ -152,6 +152,7 @@ class ContextItem:
     object_ids: list[str] = field(default_factory=list)
     cid: str = ""
     citation: dict[str, Any] = field(default_factory=dict)
+    path: str | None = None  # source file path (Drive relative path) when the node carries one
 
     def key(self) -> str:
         return self.node_id or (self.object_ids[0] if self.object_ids else ",".join(self.document_ids))
@@ -560,8 +561,12 @@ class GraphRAG:
                 + (f", 날짜표기 {p['date']}" if p.get("date") else "")
                 + (f", 층 {', '.join(sorted(storeys, key=storey_sort_key))}" if storeys else "")
                 + (", 요소 " + ", ".join(f"{KIND_KO.get(k, k)} {v}" for k, v in counts.items()) if counts else "")
-                + (", 같은 도면의 최신본" if p.get("series_latest") else ""))
-        return ContextItem("graph", text, score, r["id"], r["document_ids"], r["object_ids"])
+                + (", 같은 도면의 최신본" if p.get("series_latest") else "")
+                + (f", 프로젝트 {str(p['sub_project']).rsplit('/', 1)[-1]}" if p.get("drive_path") and p.get("sub_project") else "")
+                + (f", 경로 {p['drive_path']}" if p.get("drive_path") else ""))
+        item = ContextItem("graph", text, score, r["id"], r["document_ids"], r["object_ids"])
+        item.path = p.get("drive_path") or None
+        return item
 
     def _drawings(self, conn, question, keys, cypher) -> list[ContextItem]:
         pf, pp = self._project_filter(keys, "n")
@@ -762,7 +767,14 @@ class GraphRAG:
                 continue
             text = (f"{h.kind} '{h.label[:160]}'" + (f", 층 {h.storey}" if h.storey else "")
                     + f" (도면 {h.citation.document_name}, 레이아웃 {h.citation.layout_or_page})")
-            out.append(ContextItem("object", text, float(h.score), None, [h.citation.document_id], [h.object_id]))
+            hp = h.properties or {}
+            if hp.get("drive_path"):  # asset-table packs (GDRIVE_CAD): identify the file, not just the table
+                text += (f" 도면번호 {hp.get('sheet_number') or '미상'}, 제목 {hp.get('title') or '미상'}"
+                         + (f", 프로젝트 {str(hp['sub_project']).rsplit('/', 1)[-1]}" if hp.get("sub_project") else "")
+                         + f", 경로 {hp['drive_path']}")
+            item = ContextItem("object", text, float(h.score), None, [h.citation.document_id], [h.object_id])
+            item.path = hp.get("drive_path") or None
+            out.append(item)
         return out
 
     def _drawing_names(self, conn, doc_ids) -> list[str]:
@@ -804,6 +816,8 @@ class GraphRAG:
                 "handle": primary_obj["handle"] if primary_obj else None,
                 "coordinate_system": (primary_obj["cs"] or "CAD_WCS") if primary_obj else None, "bbox": bbox,
             }
+            if item.path:
+                item.citation["path"] = item.path
 
     # ------------------------------------------------------------------ answer
     def ask(self, question: str, *, project: str | None = None, top_k: int = MAX_CONTEXT,

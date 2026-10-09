@@ -124,7 +124,8 @@ def cmd_ask(parsed, settings, db):
         sys.stdout.write(result["answer"] + "\n\n")
         for c in result["citations"]:
             sys.stdout.write(f"[{c['id']}] {c.get('document_name')} | {c.get('layout_or_page') or '-'} | "
-                             f"objects {','.join(o[:16] for o in c.get('object_ids') or []) or '-'}\n")
+                             f"objects {','.join(o[:16] for o in c.get('object_ids') or []) or '-'}"
+                             + (f" | path {c['path']}" if c.get("path") else "") + "\n")
         sys.stdout.write(f"(route {result['route']}, retrieval {result['retrieval_ms']} ms, "
                          f"llm {result.get('llm_ms', 0)} ms)\n")
     return result

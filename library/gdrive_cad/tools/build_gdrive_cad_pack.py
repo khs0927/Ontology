@@ -301,10 +301,13 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         edges.append({"src": src, "predicate": pred, "dst": dst, "project_key": PROJECT_KEY,
                       "weight": weight, "evidence": evidence})
 
-    def add_vector(nid, kind, label, discipline=""):
+    def add_vector(nid, kind, label, discipline="", properties=None):
         text = nodes[nid]["search_text"]
-        vectors.append({"node_id": nid, "kind": kind, "label": label, "discipline": discipline,
-                        "model": "bge-m3", "dim": 1024, "content_hash": sha256_text(text), "text": text})
+        row = {"node_id": nid, "kind": kind, "label": label, "discipline": discipline,
+               "model": "bge-m3", "dim": 1024, "content_hash": sha256_text(text), "text": text}
+        if properties:
+            row["properties"] = properties  # copied to aec.objects.payload.properties (renderer / citations)
+        vectors.append(row)
 
     # ---- sub-projects
     subs: dict[str, dict] = {}
@@ -328,8 +331,11 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         path, ext = rep["path"], rep["ext"]
         rec = rec_by_rep.get(rep["path"])
         number, title, sheet_src = sheet_fields(path, ext, rec)
-        if title and title == file_stem(path, ext):
-            title = None  # the whole stem is not a title; it is already the node name
+        # The whole stem is not an *extra* title for search text / discipline rules (it is already the node
+        # name), but the renderer still shows it as the title instead of "제목 미상".
+        stem_title = title if title and title == file_stem(path, ext) else None
+        if stem_title:
+            title = None
         votes = (rec or {}).get("discipline_votes") if rec and rec.get("status") == "ok" else None
         disc = classify_discipline(path, number, title, votes)
         if ext not in CAD_DWG:
@@ -351,7 +357,8 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
 
         props = {"path": path, "file_name": path.rsplit("/", 1)[-1], "ext": ext, "size": int(rep.get("size") or 0),
                  "md5": rep.get("md5"), "mtime": (rep.get("mod") or "")[:10], "sub_project": sub_path,
-                 "sheet_number": number, "title": title, "sheet_source": sheet_src,
+                 "sheet_number": number, "title": title or stem_title, "drive_path": path,
+                 "sheet_source": sheet_src,
                  "discipline": disc["code"], "discipline_confidence": disc["confidence"],
                  "discipline_source": disc["source"], "review": disc["review"], "parse_status": status,
                  "duplicate_count": len(rep["_copies"]), "duplicate_copies": rep["_copies"][:MAX_DUP_COPIES]}
@@ -445,7 +452,8 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         add_node(did, "Drawing", stem, text, **props)
         add_edge(sub_ids[sp], "hasDrawing", did)
         add_edge(PROJECT_NODE, "hasDrawing", did)
-        add_vector(did, "drawing", stem, disc["code"])
+        add_vector(did, "drawing", stem, disc["code"],
+                   {k: props.get(k) for k in ("sheet_number", "title", "sub_project", "drive_path") if props.get(k)})
         if disc["review"]:
             review.append({"node_id": did, "path": props["path"], "sheet_number": props["sheet_number"],
                            "title": props["title"], "discipline": disc["code"],

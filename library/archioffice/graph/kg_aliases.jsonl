@@ -1,0 +1,45 @@
+{"alias_type": "library", "alias": "ArchiOffice", "node_id": "ARCHIOFFICE:library"}
+{"alias_type": "library", "alias": "아키오피스", "node_id": "ARCHIOFFICE:library"}
+{"alias_type": "library", "alias": "ArchiOfficeZW", "node_id": "ARCHIOFFICE:library"}
+{"alias_type": "view", "alias": "평면도", "node_id": "ARCHIOFFICE:view:plan"}
+{"alias_type": "view", "alias": "입면도", "node_id": "ARCHIOFFICE:view:elevation"}
+{"alias_type": "view", "alias": "3D 표현", "node_id": "ARCHIOFFICE:view:three_d"}
+{"alias_type": "category", "alias": "zwcad_platform_config", "node_id": "ARCHIOFFICE:category:zwcad_platform_config"}
+{"alias_type": "category", "alias": "ZWCAD 플랫폼 설정", "node_id": "ARCHIOFFICE:category:zwcad_platform_config"}
+{"alias_type": "category", "alias": "archioffice_config", "node_id": "ARCHIOFFICE:category:archioffice_config"}
+{"alias_type": "category", "alias": "ArchiOffice 설정", "node_id": "ARCHIOFFICE:category:archioffice_config"}
+{"alias_type": "category", "alias": "hatch_pattern", "node_id": "ARCHIOFFICE:category:hatch_pattern"}
+{"alias_type": "category", "alias": "해치 패턴", "node_id": "ARCHIOFFICE:category:hatch_pattern"}
+{"alias_type": "material", "alias": "벽돌·조적", "node_id": "ARCHIOFFICE:material:brick_masonry"}
+{"alias_type": "material", "alias": "지붕·기와", "node_id": "ARCHIOFFICE:material:roofing"}
+{"alias_type": "material", "alias": "단열재", "node_id": "ARCHIOFFICE:material:insulation"}
+{"alias_type": "material", "alias": "석재·암석", "node_id": "ARCHIOFFICE:material:stone"}
+{"alias_type": "material", "alias": "unclassified", "node_id": "ARCHIOFFICE:material:unclassified"}
+{"alias_type": "material", "alias": "금속", "node_id": "ARCHIOFFICE:material:metal"}
+{"alias_type": "material", "alias": "추상·기하", "node_id": "ARCHIOFFICE:material:abstract_geometric"}
+{"alias_type": "material", "alias": "콘크리트", "node_id": "ARCHIOFFICE:material:concrete"}
+{"alias_type": "material", "alias": "목재", "node_id": "ARCHIOFFICE:material:wood"}
+{"alias_type": "material", "alias": "지반·토사", "node_id": "ARCHIOFFICE:material:earth_ground"}
+{"alias_type": "material", "alias": "유리", "node_id": "ARCHIOFFICE:material:glass"}
+{"alias_type": "material", "alias": "물·수계", "node_id": "ARCHIOFFICE:material:water"}
+{"alias_type": "category", "alias": "libversion-txt", "node_id": "ARCHIOFFICE:category:libversion-txt"}
+{"alias_type": "category", "alias": "LibVersion.txt", "node_id": "ARCHIOFFICE:category:libversion-txt"}
+{"alias_type": "category", "alias": "furniture", "node_id": "ARCHIOFFICE:category:furniture"}
+{"alias_type": "category", "alias": "가구 라이브러리", "node_id": "ARCHIOFFICE:category:furniture"}
+{"alias_type": "category", "alias": "annotation_symbol", "node_id": "ARCHIOFFICE:category:annotation_symbol"}
+{"alias_type": "category", "alias": "기호·주석 라이브러리", "node_id": "ARCHIOFFICE:category:annotation_symbol"}
+{"alias_type": "category", "alias": "elevator", "node_id": "ARCHIOFFICE:category:elevator"}
+{"alias_type": "category", "alias": "엘리베이터 라이브러리", "node_id": "ARCHIOFFICE:category:elevator"}
+{"alias_type": "category", "alias": "landscape_plant", "node_id": "ARCHIOFFICE:category:landscape_plant"}
+{"alias_type": "category", "alias": "조경 수목·지피 심볼", "node_id": "ARCHIOFFICE:category:landscape_plant"}
+{"alias_type": "habit", "alias": "낙엽관목 (deciduous shrub)", "node_id": "ARCHIOFFICE:habit:deciduous_shrub"}
+{"alias_type": "habit", "alias": "낙엽교목 (deciduous tree)", "node_id": "ARCHIOFFICE:habit:deciduous_tree"}
+{"alias_type": "habit", "alias": "상록관목 (evergreen shrub)", "node_id": "ARCHIOFFICE:habit:evergreen_shrub"}
+{"alias_type": "habit", "alias": "상록교목 (evergreen tree)", "node_id": "ARCHIOFFICE:habit:evergreen_tree"}
+{"alias_type": "habit", "alias": "초화류·지피 (herbaceous / groundcover)", "node_id": "ARCHIOFFICE:habit:herbaceous_groundcover"}
+{"alias_type": "category", "alias": "door", "node_id": "ARCHIOFFICE:category:door"}
+{"alias_type": "category", "alias": "문(Door) 심볼", "node_id": "ARCHIOFFICE:category:door"}
+{"alias_type": "category", "alias": "window", "node_id": "ARCHIOFFICE:category:window"}
+{"alias_type": "category", "alias": "창(Window) 심볼", "node_id": "ARCHIOFFICE:category:window"}
+{"alias_type": "category", "alias": "sanitary_fixture", "node_id": "ARCHIOFFICE:category:sanitary_fixture"}
+{"alias_type": "category", "alias": "화장실 위생기구 라이브러리", "node_id": "ARCHIOFFICE:category:sanitary_fixture"}

@@ -249,6 +249,11 @@ def choose_route(linked: Linked) -> str:
     return "semantic"
 
 
+PACK_NODE_TYPES = ("LayerStandard", "LayerRole", "LibrarySymbol", "LibraryCategory", "BlockSpec", "HatchPattern",
+                   "Linetype", "TextStyle", "MaterialClass", "CommandAlias", "ExternalCommand", "LispFunction",
+                   "ConfigSetting", "PlantHabit", "ViewType")
+
+
 class GraphRAG:
     def __init__(self, db, settings=None, llm=None, search_router=None):
         self._semantic_timed_out = False
@@ -332,7 +337,9 @@ class GraphRAG:
             # Object-level hybrid search (pg_trgm + pgvector over every object) is the slowest stage, so a
             # graph route only falls back to it when the graph found nothing.
             semantic_budget = None
-            if route == "semantic" or not items:
+            # Pack nodes are matched lexically on generic words ("해치 패턴"); let the vector leg re-rank them.
+            pack_only = bool(keys) and bool(items) and all(i.node_id and i.node_id.split(":")[0] in keys for i in items)
+            if route == "semantic" or not items or pack_only:
                 semantic_budget = _budget_ms("AEC_ASK_SEMANTIC_TIMEOUT_MS", DEFAULT_SEMANTIC_TIMEOUT_MS)
                 attr = asked_attribute(question)
                 if attr and not any(attr[1].search(i.text) for i in items) \
@@ -342,7 +349,8 @@ class GraphRAG:
                     gate_note = f"'{attr[0]}' has no evidence in the knowledge graph"
                 else:
                     gate_note = None
-                items += self._semantic(conn, question, keys, budget_ms=semantic_budget)
+                sem = self._semantic(conn, question, keys, budget_ms=semantic_budget)
+                items = sem + items if pack_only else items + sem
             items = _dedupe(items)[:top_k]
             # An asked attribute (cost, phone, award) that no retrieved text supports is refused by ask()
             # anyway (unsupported_by_context over a subset of these texts): refuse here, before resolving
@@ -624,18 +632,21 @@ class GraphRAG:
         terms = " ".join(t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2)
         if not terms:
             return []
+        # Asset-pack node types (library/archioffice) are searched only when the question is project-scoped.
+        types = ["Drawing", "Space", "SteelSection", "Sheet"] + (list(PACK_NODE_TYPES) if keys else [])
         rows = self._nodes(conn, f"""
-            SELECT n.id, n.project_key, n.type, n.name, n.props, n.object_ids, n.document_ids,
+            SELECT n.id, n.project_key, n.type, n.name, n.props, n.object_ids, n.document_ids, n.search_text,
                    word_similarity(%s, n.search_text) AS sim
             FROM aec.kg_nodes n
-            WHERE n.type IN ('Drawing','Space','SteelSection','Sheet') AND %s <%% n.search_text {pf}
-            ORDER BY sim DESC LIMIT 6""", [terms, terms, *pp])
+            WHERE n.type = ANY(%s) AND %s <%% n.search_text {pf}
+            ORDER BY sim DESC LIMIT 6""", [terms, types, terms, *pp])
         out = []
         for r in rows:
             if r["type"] in ("Drawing", "Sheet"):
                 item = self._drawing_item(conn, r, 0.5 * float(r["sim"] or 0) + 0.3)
             else:
-                item = ContextItem("graph", f"{r['type']} {r['name']} ({r['project_key']})",
+                label = r["search_text"] if r["type"] in PACK_NODE_TYPES else f"{r['type']} {r['name']}"
+                item = ContextItem("graph", f"{label} ({r['project_key']})",
                                    0.5 * float(r["sim"] or 0) + 0.3, r["id"], r["document_ids"][:4],
                                    r["object_ids"][:4])
             out.append(item)

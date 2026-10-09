@@ -140,8 +140,28 @@ def detect(conn, project_key: str, *, leiden: bool = False) -> list[dict[str, An
         out.append({"id": f"kgc:{project_key}:1:steel", "level": 1, "title": f"{project['name']} 철골 단면",
                     "node_ids": [s["id"] for s in secs], "facts": facts})
 
+    if project["props"].get("pack"):
+        out += _pack_types(project_key, project, nodes)
     if leiden:
         out += _leiden(project_key, project, nodes, edges)
+    return out
+
+
+def _pack_types(project_key, project, nodes) -> list[dict[str, Any]]:
+    """Asset packs (no drawings/storeys): one level-1 community per node type."""
+    by_type: dict[str, list[dict]] = defaultdict(list)
+    for n in nodes.values():
+        if n["type"] != "Project":
+            by_type[n["type"]].append(n)
+    out = []
+    for t, ns in sorted(by_type.items()):
+        ns.sort(key=lambda n: n["name"])
+        facts = [f"프로젝트: {project['name']}", f"{t} {len(ns)}건"]
+        for n in ns[:MAX_FACTS - 2]:
+            desc = n["props"].get("description") or n["props"].get("category") or ""
+            facts.append(f"{n['name']}" + (f": {desc}" if desc else ""))
+        out.append({"id": f"kgc:{project_key}:1:type:{t}", "level": 1, "title": f"{project['name']} {t}",
+                    "node_ids": [n["id"] for n in ns][:500], "facts": facts})
     return out
 
 

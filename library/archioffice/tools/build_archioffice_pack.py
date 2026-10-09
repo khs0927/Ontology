@@ -24,9 +24,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_SOURCE = Path(
-    r"C:\Users\khs09\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0"
-    r"\LocalCache\Roaming\ArchiOfficeZW"
+DEFAULT_SOURCE = Path.home().joinpath(
+    "AppData", "Local", "Packages", "OpenAI.Codex_2p2nqsd0c76g0", "LocalCache", "Roaming", "ArchiOfficeZW"
 )
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT = HERE.parent

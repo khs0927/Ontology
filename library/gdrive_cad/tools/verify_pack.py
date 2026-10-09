@@ -7,7 +7,7 @@ ids, content_hash == sha256(text), no U+FFFD, counts agree with manifest.json) p
   * Project node kg:p:GDRIVE_CAD exists with props.pack == true; build-state fingerprint contains '-pack-'
   * exactly one type='Project' node (SubProject is a separate type)
   * one Drawing node per unique md5; every Drawing hangs off a SubProject and the Project
-  * discipline is a known code, confidence < 0.7 <=> review == true <=> row in review_queue.jsonl
+  * discipline is a known code (LIBRARY only for asset_role == block_library), confidence < 0.7 <=> review == true <=> row in review_queue.jsonl
   * LayerStandard / BlockSpec caps; usedIn edges end on Drawing nodes
   * non-DWG/DXF formats are parse_status == unparsed_format
   * search_text bounded; no e-mail addresses or phone numbers in node/vector text
@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROJECT_KEY = "GDRIVE_CAD"
 DISCIPLINES = {"ARCH", "STRUCT", "MECH", "PLUMB", "ELEC", "FIRE", "CIVIL", "LAND", "COMM", "INTERIOR", "GENERAL"}
+LIBRARY_CODE = "LIBRARY"  # not a discipline: asset_role == block_library only
 DOC_EXTS = {"pdf", "xls", "xlsx"}
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE_RE = re.compile(r"\+?\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4}")
@@ -124,8 +125,11 @@ def main() -> int:
     rq = {r["node_id"] for r in review}
     for d in drawings:
         p = d["props"]
-        if p["discipline"] not in DISCIPLINES:
+        if p["discipline"] not in DISCIPLINES | {LIBRARY_CODE}:
             findings.append(f"unknown discipline {p['discipline']!r} on {d['id']}")
+            break
+        if (p["discipline"] == LIBRARY_CODE) != (p.get("asset_role") == "block_library")                 or p.get("asset_role") not in ("drawing", "block_library"):
+            findings.append(f"asset_role / LIBRARY code mismatch on {d['id']}")
             break
         if (p["discipline_confidence"] < 0.7) != bool(p["review"]) or (d["id"] in rq) != bool(p["review"]):
             findings.append(f"review flag / queue mismatch on {d['id']}")
@@ -195,7 +199,8 @@ def main() -> int:
                 "layer_standards": n_layers, "block_specs": n_blocks, "documents": len(docs),
                 "document_links": n_doc_links, "document_duplicates": sum(n["props"].get("duplicate_count") or 0
                                                                           for n in docs),
-                "sub_projects": sum(1 for n in nodes if n["type"] == "SubProject")}
+                "sub_projects": sum(1 for n in nodes if n["type"] == "SubProject"),
+                "block_library": sum(1 for d in drawings if d["props"].get("asset_role") == "block_library")}
     for k, v in expected.items():
         if manifest["counts"].get(k) != v:
             findings.append(f"manifest {k}={manifest['counts'].get(k)} but measured {v}")

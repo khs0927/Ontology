@@ -49,7 +49,7 @@ PACK = HERE.parent
 PROJECT_KEY = "GDRIVE_CAD"
 PROJECT_NODE = f"kg:p:{PROJECT_KEY}"
 FINGERPRINT = "gdrive-cad-pack-v1"
-BUILDER_VERSION = 2
+BUILDER_VERSION = 3
 DEFAULT_SRC = Path(r"C:\CODE\_data\gdrive_cad")
 
 MAX_LAYERS = 4000
@@ -63,8 +63,15 @@ REVIEW_BELOW = 0.7
 
 DISCIPLINE_KO = {"ARCH": "건축", "STRUCT": "구조", "MECH": "기계", "PLUMB": "위생", "ELEC": "전기",
                  "FIRE": "소방", "CIVIL": "토목", "LAND": "조경", "COMM": "통신", "INTERIOR": "인테리어",
-                 "GENERAL": "일반"}
+                 "GENERAL": "일반", "LIBRARY": "블록 라이브러리"}
+# LIBRARY is not a building discipline: it is the placeholder code of asset_role == block_library files.
 DISCIPLINES = set(DISCIPLINE_KO)
+ROLE_DRAWING, ROLE_BLOCK_LIBRARY = "drawing", "block_library"
+LIBRARY_CODE = "LIBRARY"
+LIBRARY_CONFIDENCE = 0.9
+FILENAME_PREFIX_CONFIDENCE = 0.8
+KEYWORD_CONFIDENCE = 0.75
+WEAK_KEYWORD_CONFIDENCE = 0.65  # generic drafting words: a guess that stays in the review queue
 
 # Sheet-number prefix -> discipline (decision: A/S/M/E/P/F/C/L/T/I). One-letter prefixes map directly; two-letter
 # prefixes only through this table so that "SH602" or "RG1" style tokens are not read as structural sheets.
@@ -74,19 +81,28 @@ PREFIX2 = {"AR": "ARCH", "AI": "ARCH", "ST": "STRUCT", "SD": "STRUCT", "MA": "ME
            "EL": "ELEC", "EE": "ELEC", "PL": "PLUMB", "PP": "PLUMB", "FP": "FIRE", "FF": "FIRE", "CV": "CIVIL",
            "LA": "LAND", "LS": "LAND", "TC": "COMM", "IN": "INTERIOR", "ID": "INTERIOR"}
 
-# Ordered: the first discipline with a matching keyword wins; ARCH is last because "건축" is generic.
+# Rule 0 (t3 review-queue analysis): block / backup libraries are not drawings of any discipline. Matched on the
+# casefolded path (folders or file name); first match wins over every other rule.
+BLOCK_LIBRARY_TOKENS = ("블록라이브러리", "xilib", "favoriteblocks", "recentblocks", "xicad_backup", "#캐드", "라이브러리")
+
+# Ordered: the first discipline with a matching keyword wins (specific MEP / structure before ARCH, which is generic).
+# "설비" sits after the specific trades so "전기설비" is ELEC, not MECH; PLUMB words follow the t3 table (MECH/CIVIL).
 KEYWORDS = [
-    ("FIRE", ("소방", "스프링클러", "소화", "방재", "피난")),
-    ("ELEC", ("전기", "조명", "전력", "배전", "콘센트", "접지", "피뢰", "분전반")),
-    ("COMM", ("통신", "방송", "cctv", "인터폰", "정보통신")),
-    ("MECH", ("기계", "공조", "덕트", "환기", "냉난방", "냉동", "보일러", "공기조화", "hvac")),
-    ("PLUMB", ("위생", "급수", "급탕", "오수", "배관", "배수")),
-    ("CIVIL", ("토목", "옹벽", "포장", "흙막이", "측량", "하수", "부지정지")),
-    ("LAND", ("조경", "식재", "수목", "녹지")),
-    ("STRUCT", ("구조", "철골", "골조", "배근", "철근", "기초", "거더", "트러스")),
+    ("FIRE", ("소방", "스프링클러", "소화", "방재", "피난", "화재", "경보", "제연", "옥내소화")),
+    ("COMM", ("통신", "정보통신", "방송", "cctv", "인터폰", "네트워크", "홈넷")),
+    ("MECH", ("기계", "공조", "덕트", "환기", "냉난방", "냉동", "보일러", "공기조화", "hvac", "배관", "위생",
+              "급수", "급탕")),
+    ("ELEC", ("전기", "전력", "조명", "전등", "배선", "배전", "수변전", "분전", "콘센트", "접지", "피뢰")),
+    ("STRUCT", ("구조", "골조", "철골", "기초", "배근", "철근", "슬라브", "보강", "볼트접합", "기둥", "거더", "트러스")),
+    ("CIVIL", ("토목", "토공", "포장", "배수", "우수", "오수", "맨홀", "측구", "법면", "옹벽", "흙막이", "측량", "하수",
+               "부지정지")),
+    ("LAND", ("조경", "식재", "수목", "녹지", "정원", "잔디")),
+    ("MECH", ("설비",)),
     ("INTERIOR", ("인테리어", "실내건축", "가구")),
-    ("ARCH", ("건축", "평면도", "입면도", "단면도", "창호", "마감", "계단", "상세도")),
+    ("ARCH", ("건축", "배치", "평면", "단면", "입면", "배면", "정면", "측면", "도곽", "창호", "마감", "계단", "일람표",
+              "공통도", "데이터크", "데크", "deck", "상세도", "도면", "면적")),
 ]
+WEAK_KEYWORDS = {"도면", "면적"}
 
 # layer_norm long discipline names (records.jsonl) -> pack codes
 LAYER_DISC = {"architecture": "ARCH", "structural": "STRUCT", "mechanical": "MECH", "electrical": "ELEC",
@@ -172,19 +188,40 @@ def discipline_from_sheet(number: str | None) -> str | None:
     return None
 
 
+def block_library_token(path: str) -> str | None:
+    low = str(path or "").casefold()
+    for tok in BLOCK_LIBRARY_TOKENS:
+        if tok in low:
+            return tok
+    return None
+
+
+_FILENAME_PREFIX_RE = re.compile(r"^\s*([A-Z]{1,3})\d*\s*[-_]")
+
+
+def discipline_from_filename_prefix(path: str) -> str | None:
+    """Rule 9: 'E-', 'AR_', 'MC1-' style prefixes of the file name when no sheet number could be parsed."""
+    m = _FILENAME_PREFIX_RE.match(_ORDER_PREFIX_RE.sub("", file_stem(path, path.rsplit(".", 1)[-1] if "." in path else ""), count=1))
+    if not m:
+        return None
+    letters = m.group(1)
+    return PREFIX1.get(letters) if len(letters) == 1 else PREFIX2.get(letters) if len(letters) == 2 else None
+
+
 def discipline_from_keywords(path: str, title: str | None):
-    """Title/file-name keywords first, then folders from the deepest upward."""
+    """Title/file-name keywords first, then folders from the deepest upward. Weak generic words only as a last resort."""
     segs = path.split("/")
     texts = [title or "", file_stem(path, path.rsplit(".", 1)[-1] if "." in path else "")]
     texts += list(reversed(segs[:-1]))
-    for text in texts:
-        low = text.lower()
-        if not low:
-            continue
-        for code, words in KEYWORDS:
-            for w in words:
-                if w in low:
-                    return code, w
+    for weak in (False, True):
+        for text in texts:
+            low = text.casefold()
+            if not low:
+                continue
+            for code, words in KEYWORDS:
+                for w in words:
+                    if (w in WEAK_KEYWORDS) == weak and w in low:
+                        return code, w
     return None, None
 
 
@@ -202,19 +239,28 @@ def discipline_from_votes(votes: dict | None):
 
 
 def classify_discipline(path: str, number: str | None, title: str | None, votes: dict | None) -> dict:
+    lib = block_library_token(path)
+    if lib:
+        # not a discipline: asset_role block_library (kept as a Drawing node so retrieval still finds it)
+        return {"code": LIBRARY_CODE, "confidence": LIBRARY_CONFIDENCE, "source": "block_library", "keyword": lib,
+                "role": ROLE_BLOCK_LIBRARY, "review": False}
     code = discipline_from_sheet(number)
     if code:
         out = {"code": code, "confidence": 0.85, "source": "sheet_prefix"}
+    elif fp_code := discipline_from_filename_prefix(path):
+        out = {"code": fp_code, "confidence": FILENAME_PREFIX_CONFIDENCE, "source": "filename_prefix"}
     else:
         code, word = discipline_from_keywords(path, title)
         if code:
-            out = {"code": code, "confidence": 0.75, "source": "keyword", "keyword": word}
+            out = {"code": code, "confidence": WEAK_KEYWORD_CONFIDENCE if word in WEAK_KEYWORDS else KEYWORD_CONFIDENCE,
+                   "source": "keyword", "keyword": word}
         else:
             code, conf = discipline_from_votes(votes)
             if code:
                 out = {"code": code, "confidence": conf, "source": "layer_votes"}
             else:
                 out = {"code": "GENERAL", "confidence": 0.4, "source": "default"}
+    out["role"] = ROLE_DRAWING
     out["review"] = out["confidence"] < REVIEW_BELOW
     return out
 
@@ -376,7 +422,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     for rep in reps:
         sp = rep.get("project") or "(root)"
         s = subs.setdefault(sp, {"drawings": 0, "dups": 0, "exts": collections.Counter(),
-                                 "disc": collections.Counter(), "bytes": 0})
+                                 "disc": collections.Counter(), "bytes": 0, "library": 0})
         s["drawings"] += 1
         s["dups"] += len(rep["_copies"])
         s["exts"][rep["ext"]] += 1
@@ -389,6 +435,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     proj_disc: collections.Counter = collections.Counter()
     proj_exts: collections.Counter = collections.Counter()
     status_counts: collections.Counter = collections.Counter()
+    role_counts: collections.Counter = collections.Counter()
     file_name_counts = collections.Counter(rep["path"].rsplit("/", 1)[-1] for rep in reps)
     for rep in reps:
         path, ext = rep["path"], rep["ext"]
@@ -414,8 +461,13 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         did = f"{PROJECT_KEY}:drw:" + (rep.get("md5") or sha1(path)[:32])
         sub_path = rep.get("project") or "(root)"
         sub_leaf = sub_path.rsplit("/", 1)[-1]
-        subs[sub_path]["disc"][disc["code"]] += 1
-        proj_disc[disc["code"]] += 1
+        if disc["role"] == ROLE_BLOCK_LIBRARY:
+            subs[sub_path]["library"] += 1
+            role_counts[ROLE_BLOCK_LIBRARY] += 1
+        else:
+            subs[sub_path]["disc"][disc["code"]] += 1
+            proj_disc[disc["code"]] += 1
+            role_counts[ROLE_DRAWING] += 1
         proj_exts[ext] += 1
 
         # Duplicate-name siblings: include distinguishing parent folder in search_text and title
@@ -434,14 +486,20 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
                  "sheet_number": number, "title": props_title, "drive_path": path,
                  "sheet_source": sheet_src,
                  "discipline": disc["code"], "discipline_confidence": disc["confidence"],
-                 "discipline_source": disc["source"], "review": disc["review"], "parse_status": status,
+                 "discipline_source": disc["source"], "asset_role": disc["role"], "review": disc["review"],
+                 "parse_status": status,
                  "duplicate_count": len(rep["_copies"]), "duplicate_copies": rep["_copies"][:MAX_DUP_COPIES]}
+        if disc.get("keyword"):
+            props["discipline_keyword"] = disc["keyword"]
         parts = [f"도면 {scrub_text(stem)}"]
         if number:
             parts.append(f"도면번호 {scrub_text(number)}")
         if title:
             parts.append(f"제목 {scrub_text(title)}")
-        parts.append(f"공종 {DISCIPLINE_KO[disc['code']]}")
+        if disc["role"] == ROLE_BLOCK_LIBRARY:
+            parts.append("자산구분 블록 라이브러리(공종 아님)")
+        else:
+            parts.append(f"공종 {DISCIPLINE_KO[disc['code']]}")
         parts.append(f"프로젝트 {scrub_text(sub_leaf)}")
         if parent_dir and parent_dir != sub_leaf:
             parts.append(f"상위폴더 {scrub_text(parent_dir)}")
@@ -504,6 +562,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
                  f"(도면 {n_draw}건, 중복 사본 {n_dup}건)")
     add_node(PROJECT_NODE, "Project", "Google Drive CAD", proj_text, pack=True, drawings=n_draw,
              duplicate_files=n_dup, sub_projects=len(subs), disciplines=dict(sorted(proj_disc.items())),
+             asset_roles=dict(sorted(role_counts.items())),
              file_types=dict(proj_exts.most_common()), parse_status=dict(sorted(status_counts.items())),
              review_queue=review_n, source="gdrive")
     aliases += [{"alias_type": "project_id", "alias": PROJECT_KEY, "node_id": PROJECT_NODE},
@@ -518,12 +577,13 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         sub_ids[sp] = sid
         leaf = sp.rsplit("/", 1)[-1]
         top = ", ".join(f"{DISCIPLINE_KO[k]} {v}" for k, v in s["disc"].most_common(4))
+        lib = f" 블록 라이브러리 {s['library']}건." if s["library"] else ""
         text = bound(f"프로젝트 폴더 {scrub_text(leaf)}. 경로 {scrub_text(sp)}. 도면 {s['drawings']}건 (중복 사본 {s['dups']}건). "
-                     f"공종 분포: {top}. 형식: " + ", ".join(f"{k} {v}" for k, v in s["exts"].most_common(5)) + ".",
+                     f"공종 분포: {top}.{lib} 형식: " + ", ".join(f"{k} {v}" for k, v in s["exts"].most_common(5)) + ".",
                      MAX_SEARCH)
         add_node(sid, "SubProject", leaf, text, path=sp, drawings=s["drawings"], duplicate_files=s["dups"],
                  bytes=s["bytes"], file_types=dict(s["exts"].most_common()),
-                 disciplines=dict(s["disc"].most_common()))
+                 disciplines=dict(s["disc"].most_common()), block_library_files=s["library"])
         add_edge(PROJECT_NODE, "hasSubProject", sid)
         add_vector(sid, "sub_project", leaf)
 
@@ -618,7 +678,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         add_vector(did_doc, "document", title, "", {"sub_project": sp, "drive_path": path, "ext": ext})
 
     return {"nodes": nodes, "edges": edges, "aliases": aliases, "vectors": vectors, "review": review,
-            "status_counts": dict(status_counts), "layers_total": len(layer_agg), "blocks_total": len(block_agg),
+            "status_counts": dict(status_counts), "role_counts": dict(role_counts), "layers_total": len(layer_agg), "blocks_total": len(block_agg),
             "duplicate_copies": n_dup, "path_to_rep": path_to_rep, "documents": documents_total,
             "document_dups": n_doc_dups, "document_links": document_links, "document_exts": dict(doc_exts)}
 
@@ -751,7 +811,9 @@ def main() -> int:
 
     node_types = collections.Counter(n["type"] for n in nodes.values())
     preds = collections.Counter(e["predicate"] for e in edges)
-    discs = collections.Counter(n["props"]["discipline"] for n in nodes.values() if n["type"] == "Drawing")
+    # block-library files are not a discipline: excluded from the discipline distribution, reported as asset_roles
+    discs = collections.Counter(n["props"]["discipline"] for n in nodes.values()
+                                if n["type"] == "Drawing" and n["props"]["asset_role"] != ROLE_BLOCK_LIBRARY)
     manifest = {
         "pack": "gdrive_cad",
         "project_key": PROJECT_KEY,
@@ -771,11 +833,13 @@ def main() -> int:
             "layers_seen": g["layers_total"], "blocks_seen": g["blocks_total"],
             "documents": node_types["Document"], "document_links": g["document_links"],
             "document_duplicates": g["document_dups"],
+            "block_library": g["role_counts"].get(ROLE_BLOCK_LIBRARY, 0),
         },
         "document_formats": g["document_exts"],
         "caps": {"layers": args.max_layers, "blocks": args.max_blocks},
         "parse_status": g["status_counts"],
         "disciplines": dict(sorted(discs.items())),
+        "asset_roles": dict(sorted(g["role_counts"].items())),
         "node_types": sorted(node_types),
         "predicates": sorted(preds),
         "fingerprint": FINGERPRINT,

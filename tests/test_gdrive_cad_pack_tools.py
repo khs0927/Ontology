@@ -759,3 +759,126 @@ def test_cmd_ask_prints_path_only_for_pack_citations(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert lines[2].startswith("[1] D1 | p | objects " + "o" * 16) and lines[2].endswith(" | path Root/A/x.dwg")
     assert lines[3] == "[2] D2 | - | objects -"
+
+
+# ======================================================================================================
+# t14 review-queue rules: block-library asset_role + keyword / folder discipline table. Synthetic names only.
+@pytest.mark.parametrize("path", [
+    "Root/Proj/블록라이브러리/배관 심볼.dwg", "Root/xiLib/sym.dwg", "Root/XILIB/sym.dwg",
+    "Root/FavoriteBlocks/a.dwg", "Root/RecentBlocks/a.dwg", "Root/xicad_backup/a.dwg",
+    "Root/#캐드/a.dwg", "Root/Proj/라이브러리/a.dwg", "Root/Proj/내 라이브러리 모음.dwg",
+])
+def test_block_library_rule_is_a_role_not_a_discipline(path):
+    d = b.classify_discipline(path, None, None, None)
+    assert (d["role"], d["code"], d["source"], d["review"]) == ("block_library", "LIBRARY", "block_library", False)
+    assert d["confidence"] == b.LIBRARY_CONFIDENCE >= 0.7
+
+
+def test_block_library_beats_sheet_prefix_keywords_and_votes():
+    d = b.classify_discipline("Root/xiLib/소방 A-101.dwg", "A-101", "소방", {"structural": 900})
+    assert d["role"] == "block_library" and d["code"] == "LIBRARY"
+
+
+def test_block_library_files_stay_drawing_nodes_but_leave_discipline_stats():
+    rows = [row("Root/Proj/xiLib/배관 심볼.dwg", md5="l1", project="Root/Proj"),
+            row("Root/Proj/블록라이브러리/문 블록.dwg", md5="l2", project="Root/Proj"),
+            row("Root/Proj/E-101 전등.dwg", md5="e1", project="Root/Proj"),
+            row("Root/Proj/미상 파일.dwg", md5="g1", project="Root/Proj")]
+    g = b.build_graph(rows, {})
+    drws = {n["props"]["file_name"]: n for n in g["nodes"].values() if n["type"] == "Drawing"}
+    lib = drws["배관 심볼.dwg"]
+    assert lib["props"]["asset_role"] == "block_library" and lib["props"]["discipline"] == "LIBRARY"
+    assert lib["props"]["review"] is False and "블록 라이브러리" in lib["search_text"]
+    assert "공종 일반" not in lib["search_text"]
+    assert drws["E-101 전등.dwg"]["props"]["asset_role"] == "drawing"
+    proj = g["nodes"][b.PROJECT_NODE]["props"]
+    assert proj["asset_roles"] == {"block_library": 2, "drawing": 2}
+    assert "LIBRARY" not in proj["disciplines"] and sum(proj["disciplines"].values()) == 2
+    sub = next(n for n in g["nodes"].values() if n["type"] == "SubProject")
+    assert sub["props"]["block_library_files"] == 2 and "LIBRARY" not in sub["props"]["disciplines"]
+    assert {r["node_id"] for r in g["review"]} == {drws["미상 파일.dwg"]["id"]}  # library rows never queued
+    assert any(v["node_id"] == lib["id"] and v["kind"] == "drawing" for v in g["vectors"])  # still retrievable
+
+
+@pytest.mark.parametrize("name, code, word", [
+    ("소방 스프링클러 계통도", "FIRE", "소방"), ("옥내소화 배관도", "FIRE", "옥내소화"), ("제연 설비", "FIRE", "제연"),
+    ("정보통신 배치", "COMM", "정보통신"), ("CCTV 배치", "COMM", "cctv"), ("홈넷 계통", "COMM", "홈넷"),
+    ("공조 덕트 상세", "MECH", "공조"), ("급탕 계통", "MECH", "급탕"), ("위생 기구", "MECH", "위생"),
+    ("기계실 상세", "MECH", "기계"), ("수변전 단선", "ELEC", "수변전"), ("조명 배치", "ELEC", "조명"),
+    ("전등 설비", "ELEC", "전등"), ("골조 입면", "STRUCT", "골조"), ("슬라브 배근", "STRUCT", "슬라브"),
+    ("볼트접합 상세", "STRUCT", "볼트접합"), ("기둥 일람", "STRUCT", "기둥"), ("맨홀 상세", "CIVIL", "맨홀"),
+    ("우수 계통", "CIVIL", "우수"), ("법면 처리", "CIVIL", "법면"), ("수목 식재", "LAND", "수목"),
+    ("정원 상세", "LAND", "정원"), ("잔디 계획", "LAND", "잔디"),
+    ("배치 계획", "ARCH", "배치"), ("측면 상세", "ARCH", "측면"), ("창호 일람", "ARCH", "창호"),
+    ("공통도 1", "ARCH", "공통도"), ("DECK 단면", "ARCH", "deck"),
+])
+def test_t3_keyword_rules_one_synthetic_name_per_token(name, code, word):
+    d = b.classify_discipline(f"Root/Proj/{name}.dwg", None, None, None)
+    # the listed token is in the name; where tokens overlap (소화/옥내소화, 통신/정보통신, ...) the hit is a
+    # sibling token of the same discipline, so assert the discipline and that the matched word is in the name
+    assert word in name.casefold() and d["keyword"] in name.casefold()
+    assert (d["code"], d["source"]) == (code, "keyword")
+    assert d["confidence"] == 0.75 and d["review"] is False and d["role"] == "drawing"
+
+
+def test_specific_trades_win_over_generic_architecture_words():
+    # 평면/단면 appear in structural and MEP sheets too: the specific trade is checked first
+    for name, code in [("소방 평면도", "FIRE"), ("전기 평면도", "ELEC"), ("구조 단면도", "STRUCT"),
+                       ("조경 배치도", "LAND"), ("토목 단면도", "CIVIL"), ("통신 평면도", "COMM")]:
+        assert b.classify_discipline(f"Root/{name}.dwg", None, None, None)["code"] == code, name
+
+
+def test_generic_equipment_word_does_not_hide_the_trade():
+    assert b.classify_discipline("Root/전기설비 평면도.dwg", None, None, None)["code"] == "ELEC"
+    assert b.classify_discipline("Root/소방설비 평면도.dwg", None, None, None)["code"] == "FIRE"
+    assert b.classify_discipline("Root/설비 배치.dwg", None, None, None)["code"] == "MECH"
+
+
+def test_weak_generic_words_guess_arch_but_stay_in_review():
+    for name in ("도면 1", "면적 산출"):
+        d = b.classify_discipline(f"Root/Proj/{name}.dwg", None, None, None)
+        assert (d["code"], d["source"], d["confidence"], d["review"]) == ("ARCH", "keyword", 0.65, True), name
+    # a strong word anywhere (here the folder) beats a weak word in the file name
+    d = b.classify_discipline("Root/소방/도면 1.dwg", None, None, None)
+    assert (d["code"], d["confidence"], d["review"]) == ("FIRE", 0.75, False)
+
+
+@pytest.mark.parametrize("name, code", [("E-내용.dwg", "ELEC"), ("AR_계획.dwg", "ARCH"), ("MC-1 test.dwg", "MECH"),
+                                        ("LA_정원.dwg", "LAND"), ("S1_x.dwg", "STRUCT")])
+def test_filename_prefix_rule_beats_keywords_but_not_parsed_sheet_number(name, code):
+    d = b.classify_discipline(f"Root/건축/{name}", None, None, None)
+    assert (d["code"], d["source"], d["confidence"]) == (code, "filename_prefix", 0.8)
+    assert b.classify_discipline("Root/건축/E-内.dwg", "A-1", None, None)["source"] == "sheet_prefix"
+
+
+@pytest.mark.parametrize("name", ["SMLAB_0814.dwg", "A동 평면.dwg", "XYZ_계획.dwg", "DW_a.dwg", "0812.dwg"])
+def test_filename_prefix_rule_ignores_project_codes_and_unknown_prefixes(name):
+    assert b.discipline_from_filename_prefix(f"Root/Proj/{name}") is None
+
+
+def test_unmatched_names_remain_general_and_reviewed():
+    for name in ("SMLAB_0814", "0812", "공장 증축"):
+        d = b.classify_discipline(f"Root/Proj/{name}.dwg", None, None, None)
+        assert (d["code"], d["confidence"], d["review"]) == ("GENERAL", 0.4, True), name
+
+
+def test_verify_pack_accepts_library_role_and_rejects_mismatch(tmp_path, monkeypatch, capsys):
+    src = tmp_path / "src"
+    src.mkdir()
+    rows = [row(f"루트/프로젝트/건축/A-{i:03d} 배치도 평면도 입면도 단면도 계단 창호.dwg", md5=f"d{i}",
+                project="루트/프로젝트") for i in range(1, 41)]
+    rows.append(row("루트/프로젝트/xiLib/배관 심볼.dwg", md5="lib1", project="루트/프로젝트"))
+    (src / "cad_all.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "out"
+    assert _run_main(b, monkeypatch, ["--src", str(src), "--out", str(out)]) == 0
+    capsys.readouterr()
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["asset_roles"] == {"block_library": 1, "drawing": 40}
+    assert manifest["counts"]["block_library"] == 1 and "LIBRARY" not in manifest["disciplines"]
+    code, rep = _verify(monkeypatch, capsys, out)
+    assert (code, rep["findings"]) == (0, ["NONE"])
+    _rewrite(out / "graph" / "kg_nodes.jsonl", lambda r: next(
+        n for n in r if n["type"] == "Drawing" and n["props"]["asset_role"] == "block_library")["props"].__setitem__(
+        "asset_role", "drawing"))
+    code, rep = _verify(monkeypatch, capsys, out)
+    assert code == 1 and any("asset_role" in f for f in rep["findings"])

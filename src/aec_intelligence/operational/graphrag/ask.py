@@ -260,7 +260,7 @@ def choose_route(linked: Linked) -> str:
 
 PACK_NODE_TYPES = ("LayerStandard", "LayerRole", "LibrarySymbol", "LibraryCategory", "BlockSpec", "HatchPattern",
                    "Linetype", "TextStyle", "MaterialClass", "CommandAlias", "ExternalCommand", "LispFunction",
-                   "ConfigSetting", "PlantHabit", "ViewType")
+                   "ConfigSetting", "PlantHabit", "ViewType", "SubProject")
 
 
 class GraphRAG:

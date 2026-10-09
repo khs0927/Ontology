@@ -9,9 +9,14 @@ Inputs (default C:\\CODE\\_data\\gdrive_cad, override with --src):
   cad_all.json   every CAD row on the Drive: path, ext, size, md5, project, mod, dup_of
   records.jsonl  deep-parse records (DWG -> DXF): layers, blocks, texts, rooms, sheet, counts.
                  Still growing: the builder is deterministic and idempotent, rerun it any time.
+  inventory.json full Drive inventory (CAD + related). PDF / xls / xlsx rows become metadata-only
+                 Document nodes (title from the file name, ext, size, sub_project, drive_path);
+                 nothing is downloaded or parsed.
 
 Design (C:\\CODE\\_herdr-bus\\out\\gdrive-cad-decisions.md):
   * one Drawing node per unique file (size+md5); later copies become props.duplicate_copies
+  * one Document node per unique PDF/xls/xlsx (size+md5); a Document -linkedTo-> Drawing when the
+    normalised stem matches the drawing's stem / sheet number / title inside the same sub-project
   * SubProject nodes per sub-project folder (type is SubProject, not Project: GraphRAG keeps exactly one
     type='Project' node per project_key, namely kg:p:GDRIVE_CAD)
   * discipline: sheet-number prefix 0.85 > folder/title keyword 0.75 > layer votes (<=0.8) > GENERAL 0.4;
@@ -44,7 +49,7 @@ PACK = HERE.parent
 PROJECT_KEY = "GDRIVE_CAD"
 PROJECT_NODE = f"kg:p:{PROJECT_KEY}"
 FINGERPRINT = "gdrive-cad-pack-v1"
-BUILDER_VERSION = 1
+BUILDER_VERSION = 2
 DEFAULT_SRC = Path(r"C:\CODE\_data\gdrive_cad")
 
 MAX_LAYERS = 4000
@@ -89,6 +94,9 @@ LAYER_DISC = {"architecture": "ARCH", "structural": "STRUCT", "mechanical": "MEC
               "telecom": "COMM", "communication": "COMM", "interior": "INTERIOR"}
 
 CAD_DWG = {"dwg", "dxf"}
+DOC_EXTS = {"pdf", "xls", "xlsx"}
+# Repo-copy folders dropped from cad_all.json (tools/select.py); documents skip them too so sub-projects line up.
+DOC_EXCLUDE_PREFIX = ("AEC-INTELLIGENCE/", "revit-mcp-guideline/")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE_RE = re.compile(r"\+?\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4}")
 _ORDER_PREFIX_RE = re.compile(r"^(?:\d{1,3}[_.]\s*|\d{1,3}\s+-\s+(?=[A-Za-z]{1,3}-?\d))")
@@ -276,10 +284,47 @@ def load_records(path: Path) -> tuple[dict[str, dict], int]:
     return recs, bad
 
 
+def project_of_path(path: str) -> str:
+    """Sub-project grouping identical to tools/select.py (cad_all.json): first 3 path segments,
+    4 under 1.회사/2.공모, the whole path when shallower."""
+    segs = str(path or "").split("/")[:-1]
+    if len(segs) <= 3:
+        return "/".join(segs) or "(root)"
+    if segs[0] == "1.회사" and segs[1] == "2.공모":
+        return "/".join(segs[:4])
+    return "/".join(segs[:3])
+
+
+_DOC_KEY_RE = re.compile(r"[\s\-_\.\[\](){}]+")
+
+
+def _doc_key(s: str) -> str:
+    return _DOC_KEY_RE.sub("", str(s or "").lower())
+
+
+def load_documents(path: Path) -> list[dict]:
+    """PDF / xls / xlsx metadata rows from inventory.json, with a sub-project; no content is read."""
+    if not path.is_file():
+        return []
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    out: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        p, ext = r.get("path") or "", str(r.get("ext") or "").lower()
+        if not p or ext not in DOC_EXTS or p.startswith(DOC_EXCLUDE_PREFIX):
+            continue
+        d = dict(r)
+        d["ext"], d["project"] = ext, project_of_path(p)
+        out.append(d)
+    return out
+
+
 # --------------------------------------------------------------------------- graph build
 def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MAX_LAYERS,
-                max_blocks: int = MAX_BLOCKS) -> dict:
+                max_blocks: int = MAX_BLOCKS, docs: list[dict] | None = None) -> dict:
     reps = group_duplicates(rows)
+    docs = docs or []
     path_to_rep = {p: rep["path"] for rep in reps for p in rep["_group_paths"]}
     rec_by_rep: dict[str, dict] = {}
     for p, rec in records.items():
@@ -486,9 +531,53 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
             add_edge(bid, "usedIn", d, inserts=a["drawings"][d])
         add_vector(bid, "block_spec", a["name"], "")
 
+    # ---- documents (PDF / xls / xlsx): metadata-only nodes, linked to drawings by stem
+    doc_reps = group_duplicates(docs)
+    draws_by_sub: dict[str, set] = {}
+    for did, stem, props, _text, sp, _disc, _rep in drawing_rows:
+        keys = {_doc_key(stem), _doc_key(props.get("sheet_number")), _doc_key(props.get("title"))}
+        draws_by_sub.setdefault(sp, set()).update((k, did) for k in keys if k)
+    for sp in draws_by_sub:
+        draws_by_sub[sp] = sorted(draws_by_sub[sp])
+
+    n_doc_dups = 0
+    doc_exts: collections.Counter = collections.Counter()
+    documents_total = len(doc_reps)
+    document_links = 0
+    for rep in doc_reps:
+        path, ext = rep["path"], rep["ext"]
+        stem = file_stem(path, ext)
+        sp = rep.get("project") or project_of_path(path)
+        sub_leaf = sp.rsplit("/", 1)[-1]
+        linked = [did for k, did in draws_by_sub.get(sp, []) if k == _doc_key(stem)]
+        n_doc_dups += len(rep["_copies"])
+        document_links += len(linked)
+        doc_exts[ext] += 1
+        did_doc = f"{PROJECT_KEY}:doc:" + (rep.get("md5") or sha1(path)[:32])
+        title = re.sub(r"\s+", " ", scrub_text(stem)).strip() or stem
+        props = {"path": path, "file_name": path.rsplit("/", 1)[-1], "ext": ext,
+                 "size": int(rep.get("size") or 0), "md5": rep.get("md5"),
+                 "mtime": (rep.get("mod") or "")[:10], "sub_project": sp, "title": title,
+                 "drive_path": path, "duplicate_count": len(rep["_copies"]),
+                 "duplicate_copies": rep["_copies"][:MAX_DUP_COPIES], "linked_drawings": linked}
+        parts = [f"문서 {scrub_text(stem)}", f"형식 {ext.upper()}", f"프로젝트 {scrub_text(sub_leaf)}",
+                 f"경로 {scrub_text(path)}"]
+        if props["size"] >= 0:
+            parts.append(f"크기 {props['size']}바이트")
+        if linked:
+            parts.append(f"연결 도면 {len(linked)}건")
+        add_node(did_doc, "Document", title, bound(". ".join(parts) + ".", MAX_SEARCH), **props)
+        add_edge(PROJECT_NODE, "hasDocument", did_doc)
+        if sp in sub_ids:
+            add_edge(sub_ids[sp], "hasDocument", did_doc)
+        for did in linked:
+            add_edge(did_doc, "linkedTo", did, match="stem")
+        add_vector(did_doc, "document", title, "", {"sub_project": sp, "drive_path": path, "ext": ext})
+
     return {"nodes": nodes, "edges": edges, "aliases": aliases, "vectors": vectors, "review": review,
             "status_counts": dict(status_counts), "layers_total": len(layer_agg), "blocks_total": len(block_agg),
-            "duplicate_copies": n_dup, "path_to_rep": path_to_rep}
+            "duplicate_copies": n_dup, "path_to_rep": path_to_rep, "documents": documents_total,
+            "document_dups": n_doc_dups, "document_links": document_links, "document_exts": dict(doc_exts)}
 
 
 # --------------------------------------------------------------------------- SQL
@@ -551,7 +640,7 @@ def write_jsonl(path: Path, rows) -> None:
 def input_fingerprint(src: Path, max_layers: int, max_blocks: int) -> str:
     h = hashlib.sha256()
     h.update(f"v{BUILDER_VERSION}|{max_layers}|{max_blocks}|{FINGERPRINT}".encode())
-    for name in ("cad_all.json", "records.jsonl"):
+    for name in ("cad_all.json", "records.jsonl", "inventory.json"):
         p = src / name
         if p.is_file():
             h.update(name.encode())
@@ -590,7 +679,8 @@ def main() -> int:
     rows = json.loads(cad_path.read_text(encoding="utf-8"))
     rows = [r for r in rows if r.get("path") and r.get("ext")]
     records, bad = load_records(src / "records.jsonl")
-    g = build_graph(rows, records, args.max_layers, args.max_blocks)
+    docs = load_documents(src / "inventory.json")
+    g = build_graph(rows, records, args.max_layers, args.max_blocks, docs)
     nodes, edges, aliases, vectors, review = g["nodes"], g["edges"], g["aliases"], g["vectors"], g["review"]
 
     # fail loudly on a graph that GraphRAG could not load
@@ -630,7 +720,10 @@ def main() -> int:
             "layer_standards": node_types["LayerStandard"], "block_specs": node_types["BlockSpec"],
             "duplicate_copies": g["duplicate_copies"], "review_queue": len(review),
             "layers_seen": g["layers_total"], "blocks_seen": g["blocks_total"],
+            "documents": node_types["Document"], "document_links": g["document_links"],
+            "document_duplicates": g["document_dups"],
         },
+        "document_formats": g["document_exts"],
         "caps": {"layers": args.max_layers, "blocks": args.max_blocks},
         "parse_status": g["status_counts"],
         "disciplines": dict(sorted(discs.items())),
@@ -644,6 +737,7 @@ def main() -> int:
     print(json.dumps(manifest["counts"], ensure_ascii=False, indent=1))
     print(f"node_types={dict(node_types)}")
     print(f"predicates={dict(preds)}")
+    print(f"document_formats={g['document_exts']}")
     print(f"disciplines={dict(discs)} parse_status={g['status_counts']}")
     print(f"out={out}")
     return 0

@@ -29,6 +29,16 @@ def row(path, ext="dwg", size=100, md5=None, dup_of=None, project=None):
     return r
 
 
+def docrow(path, ext="pdf", size=100, md5=None, dup_of=None, project=None):
+    r = {"path": path, "ext": ext, "size": size, "md5": md5 or f"d{abs(hash(path)) % 10**9}",
+         "mod": "2026-01-02T00:00:00.000Z", "group": "related"}
+    if dup_of:
+        r["dup_of"] = dup_of
+    if project is not None:
+        r["project"] = project
+    return r
+
+
 # ---- discipline rule -------------------------------------------------------------------------------
 @pytest.mark.parametrize("number, code", [("A-101", "ARCH"), ("S-201", "STRUCT"), ("M-301", "MECH"),
                                           ("E-02", "ELEC"), ("P-100", "PLUMB"), ("F-001", "FIRE"),
@@ -317,3 +327,72 @@ def test_renderer_shows_sub_project_and_path_only_when_pack_provides_them():
     assert "프로젝트 ProjA" in rich.text and "경로 Root/ProjA/x/X-1 Sample.dwg" in rich.text
     assert rich.path == "Root/ProjA/x/X-1 Sample.dwg"
     assert rich.text.startswith(plain.text)  # other projects' text is a strict prefix: unchanged
+
+
+# ---- documents (PDF / xls / xlsx) ------------------------------------------------------------------
+def test_documents_are_deduped_metadata_nodes():
+    docs = [docrow("Root/Proj/Sub/A-101 평면도.pdf", md5="h1", size=5, project="Root/Proj"),
+            docrow("Root/Proj/Other/A-101 평면도 copy.pdf", md5="h1", size=5, project="Root/Proj",
+                   dup_of="Root/Proj/Sub/A-101 평면도.pdf")]
+    g = b.build_graph([], {}, docs=docs)
+    ds = [n for n in g["nodes"].values() if n["type"] == "Document"]
+    assert len(ds) == 1
+    d = ds[0]
+    assert d["props"]["ext"] == "pdf" and d["props"]["title"] == "A-101 평면도"
+    assert d["props"]["drive_path"] == "Root/Proj/Sub/A-101 평면도.pdf"
+    assert d["props"]["sub_project"] == "Root/Proj"
+    assert d["props"]["duplicate_copies"] == ["Root/Proj/Other/A-101 평면도 copy.pdf"]
+    assert g["documents"] == 1 and g["document_dups"] == 1
+    assert any(e["predicate"] == "hasDocument" and e["src"] == b.PROJECT_NODE for e in g["edges"])
+    assert {v["kind"] for v in g["vectors"]} == {"document"}
+
+
+def test_document_links_to_drawing_by_stem_only_in_same_sub_project():
+    rows = [row("Root/Proj/Sub/A-101 평면도.dwg", md5="d1", project="Root/Proj")]
+    docs = [docrow("Root/Proj/Sub/A-101 평면도.pdf", md5="p1", project="Root/Proj"),
+            docrow("Root/Proj/Sub/A-101 평면도.xlsx", ext="xlsx", md5="p2", project="Root/Proj"),
+            docrow("Root/Proj/Sub/낯선이름.pdf", md5="p3", project="Root/Proj"),
+            docrow("Root/Other/A-101 평면도.pdf", md5="p4", project="Root/Other")]
+    g = b.build_graph(rows, {}, docs=docs)
+    did = next(n["id"] for n in g["nodes"].values() if n["type"] == "Drawing")
+    linked = {e["src"] for e in g["edges"] if e["predicate"] == "linkedTo" and e["dst"] == did}
+    matched = [n for n in g["nodes"].values() if n["type"] == "Document" and n["id"] in linked]
+    assert len(matched) == 2
+    assert all(n["props"]["sub_project"] == "Root/Proj" for n in matched)
+    assert g["document_links"] == 2
+
+
+def test_document_links_by_sheet_number_or_title_ignoring_separators():
+    rows = [row("Root/Proj/Sub/A-101 1층평면도.dwg", md5="d1", project="Root/Proj")]
+    docs = [docrow("Root/Proj/Sub/A101.pdf", md5="p1", project="Root/Proj"),
+            docrow("Root/Proj/Sub/1층평면도.pdf", md5="p2", project="Root/Proj")]
+    g = b.build_graph(rows, {}, docs=docs)
+    assert g["document_links"] == 2
+
+
+def test_document_text_is_scrubbed_and_bounded():
+    docs = [docrow("Root/Proj/Sub/연락 hong@example.com 010-1234-5678.pdf", md5="p1", project="Root/Proj")]
+    g = b.build_graph([], {}, docs=docs)
+    d = next(n for n in g["nodes"].values() if n["type"] == "Document")
+    assert "@" not in d["search_text"] and "010-1234-5678" not in d["search_text"]
+    assert len(d["search_text"]) <= b.MAX_SEARCH
+
+
+def test_project_of_path_matches_cad_sub_project_grouping():
+    assert b.project_of_path("A/B/C/D/x.dwg") == "A/B/C"
+    assert b.project_of_path("1.회사/2.공모/X/Y/z.pdf") == "1.회사/2.공모/X/Y"
+    assert b.project_of_path("x.pdf") == "(root)"
+    assert b.project_of_path("A/B/x.pdf") == "A/B"
+
+
+def test_load_documents_filters_extension_and_repo_copies(tmp_path):
+    inv = [docrow("Root/Proj/Sub/a.pdf", md5="h1"),
+           docrow("Root/Proj/Sub/b.xlsx", ext="xlsx", md5="h2"),
+           row("Root/Proj/Sub/c.dwg", md5="h3"),
+           docrow("AEC-INTELLIGENCE/copy.pdf", md5="h4"),
+           docrow("revit-mcp-guideline/copy.xls", ext="xls", md5="h5")]
+    p = tmp_path / "inventory.json"
+    p.write_text(json.dumps(inv, ensure_ascii=False), encoding="utf-8")
+    docs = b.load_documents(p)
+    assert [d["path"] for d in docs] == ["Root/Proj/Sub/a.pdf", "Root/Proj/Sub/b.xlsx"]
+    assert all(d["project"] == "Root/Proj/Sub" for d in docs)

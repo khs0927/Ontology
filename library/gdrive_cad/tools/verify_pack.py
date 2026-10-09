@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROJECT_KEY = "GDRIVE_CAD"
 DISCIPLINES = {"ARCH", "STRUCT", "MECH", "PLUMB", "ELEC", "FIRE", "CIVIL", "LAND", "COMM", "INTERIOR", "GENERAL"}
+DOC_EXTS = {"pdf", "xls", "xlsx"}
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE_RE = re.compile(r"\+?\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4}")
 MAX_SEARCH = 1500
@@ -135,6 +136,34 @@ def main() -> int:
     if len(rq) != len(review):
         findings.append("review_queue has duplicate rows")
 
+    # ---- documents (PDF / xls / xlsx): metadata nodes, Project hasDocument, linkedTo -> Drawing
+    docs = [n for n in nodes if n["type"] == "Document"]
+    doc_md5 = [n["props"].get("md5") for n in docs if n["props"].get("md5")]
+    if len(doc_md5) != len(set(doc_md5)):
+        findings.append("more than one Document node for the same md5 (duplicates must be duplicate_copies)")
+    doc_has_proj = {e["dst"] for e in edges if e["predicate"] == "hasDocument" and e["src"] == f"kg:p:{PROJECT_KEY}"}
+    for n in docs:
+        if n["props"].get("ext") not in DOC_EXTS:
+            findings.append(f"Document with unexpected ext {n['props'].get('ext')!r}: {n['id']}")
+            break
+        if not n["props"].get("drive_path") or not n["props"].get("sub_project"):
+            findings.append(f"Document missing drive_path/sub_project: {n['id']}")
+            break
+        if n["id"] not in doc_has_proj:
+            findings.append(f"Document without Project hasDocument edge: {n['id']}")
+            break
+    n_doc_links = 0
+    for e in edges:
+        if e["predicate"] == "hasDocument" and (byid[e["src"]]["type"] not in ("Project", "SubProject")
+                                                or byid[e["dst"]]["type"] != "Document"):
+            findings.append("hasDocument edge with wrong endpoint types")
+            break
+        if e["predicate"] == "linkedTo":
+            n_doc_links += 1
+            if byid[e["src"]]["type"] != "Document" or byid[e["dst"]]["type"] != "Drawing":
+                findings.append("linkedTo edge with wrong endpoint types")
+                break
+
     # ---- caps, usedIn
     caps = manifest.get("caps", {})
     n_layers = sum(1 for n in nodes if n["type"] == "LayerStandard")
@@ -163,7 +192,9 @@ def main() -> int:
 
     expected = {"kg_nodes": len(nodes), "kg_edges": len(edges), "kg_aliases": len(aliases),
                 "vector_rows": len(vectors), "drawings": len(drawings), "review_queue": len(review),
-                "layer_standards": n_layers, "block_specs": n_blocks,
+                "layer_standards": n_layers, "block_specs": n_blocks, "documents": len(docs),
+                "document_links": n_doc_links, "document_duplicates": sum(n["props"].get("duplicate_count") or 0
+                                                                          for n in docs),
                 "sub_projects": sum(1 for n in nodes if n["type"] == "SubProject")}
     for k, v in expected.items():
         if manifest["counts"].get(k) != v:
@@ -173,7 +204,7 @@ def main() -> int:
     predicates = collections.Counter(e["predicate"] for e in edges)
     print(json.dumps({
         "nodes": len(nodes), "edges": len(edges), "aliases": len(aliases), "vectors": len(vectors),
-        "review_queue": len(review),
+        "review_queue": len(review), "documents": len(docs), "document_links": n_doc_links,
         "node_types": dict(node_types.most_common()),
         "predicates": dict(predicates.most_common()),
         "hangul_chars": korean,

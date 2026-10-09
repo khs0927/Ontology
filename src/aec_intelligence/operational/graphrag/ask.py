@@ -352,7 +352,13 @@ class GraphRAG:
             # graph route only falls back to it when the graph found nothing.
             semantic_budget = None
             # Pack nodes are matched lexically on generic words ("해치 패턴"); let the vector leg re-rank them.
-            pack_only = bool(keys) and bool(items) and all(i.node_id and i.node_id.split(":")[0] in keys for i in items)
+            # Drawing nodes (:drw:) are not pack catalog nodes; do not mark them pack_only.
+            pack_only = (
+                bool(keys)
+                and bool(items)
+                and not any(i.node_id and (":drw:" in i.node_id or i.node_id.startswith("kg:drw:")) for i in items)
+                and all(i.node_id and i.node_id.split(":")[0] in keys for i in items)
+            )
             if route == "semantic" or not items or pack_only:
                 semantic_budget = _budget_ms("AEC_ASK_SEMANTIC_TIMEOUT_MS", DEFAULT_SEMANTIC_TIMEOUT_MS)
                 attr = asked_attribute(question)
@@ -634,7 +640,7 @@ class GraphRAG:
             return []
         from ..embeddings import HASH_MODEL, EmbeddingEndpointError, EmbeddingService, vector_literal
         try:
-            model, vecs = EmbeddingService(self.settings).embed_with_model([question])
+            model, vecs = EmbeddingService(self.settings, connect_timeout=1.0).embed_with_model([question])
         except EmbeddingEndpointError:
             return []
         if model == HASH_MODEL:
@@ -725,6 +731,9 @@ class GraphRAG:
                 return []
             from ..search import SearchRouter
             self._search = SearchRouter(self.db, self.settings)
+            if hasattr(self._search, "embedding_service") and self._search.embedding_service:
+                self._search.embedding_service.connect_timeout = min(self._search.embedding_service.connect_timeout, 1.0)
+                self._search.embedding_service.timeout = min(self._search.embedding_service.timeout, 1.0)
         project_ids = None
         if keys:
             project_ids = [r["alias"] for r in conn.execute(

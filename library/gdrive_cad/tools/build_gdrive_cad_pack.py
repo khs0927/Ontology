@@ -99,8 +99,15 @@ DOC_EXTS = {"pdf", "xls", "xlsx"}
 DOC_EXCLUDE_PREFIX = ("AEC-INTELLIGENCE/", "revit-mcp-guideline/")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE_RE = re.compile(r"\+?\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4}")
-_ORDER_PREFIX_RE = re.compile(r"^(?:\d{1,3}[_.]\s*|\d{1,3}\s+-\s+(?=[A-Za-z]{1,3}-?\d))")
-SHEET_NUMBER_RE = re.compile(r"([A-Z]{1,3}-?\d{2,4}(?:-\d{1,3})?)(?![A-Z0-9])")
+_ORDER_PREFIX_RE = re.compile(r"^(?:\d{1,3}[_.]\s*|\d{1,3}\s+-\s+(?=[A-Za-z가-힣]{1,3}-?\d))")
+SHEET_NUMBER_RE = re.compile(
+    r"([A-Z]{1,3}-?\d{2,4}(?:-\d{1,3})?|(?:소방|통신|토목|전기|기계|건축|구조)-?\d{1,4}(?:-\d{1,3})?)(?![A-Z0-9가-힣])"
+)
+
+KOREAN_DISC_PREFIX = {
+    "소방": "FIRE", "통신": "COMM", "토목": "CIVIL", "전기": "ELEC",
+    "기계": "MECH", "건축": "ARCH", "구조": "STRUCT",
+}
 
 
 # --------------------------------------------------------------------------- sheet / discipline rules
@@ -108,11 +115,11 @@ def _local_filename_sheet_fields(name):
     """Same contract as aec_intelligence.operational.parsers.filename_sheet_fields (fallback copy)."""
     stem = re.sub(r"\.(dwg|dxf|pdf)$", "", Path(str(name or "")).name, flags=re.IGNORECASE).strip()
     stem = _ORDER_PREFIX_RE.sub("", stem, count=1).strip()
-    match = SHEET_NUMBER_RE.match(stem.upper())
+    match = SHEET_NUMBER_RE.match(stem)
     if not match:
         return None, (stem.strip(" -_[]") or None)
     title = stem[match.end():]
-    title = re.sub(r"^\s*~\s*[A-Za-z]{0,3}-?\d{1,4}", "", title)
+    title = re.sub(r"^\s*~\s*[A-Za-z가-힣]{0,3}-?\d{1,4}", "", title)
     title = re.sub(r"[_\s\-\[\]]+", " ", title).strip()
     return match.group(1), (title or None)
 
@@ -151,6 +158,9 @@ def sheet_fields(path: str, ext: str, rec: dict | None):
 def discipline_from_sheet(number: str | None) -> str | None:
     if not number:
         return None
+    for ko, code in KOREAN_DISC_PREFIX.items():
+        if number.startswith(ko):
+            return code
     m = re.match(r"^([A-Z]+)", number.upper())
     if not m:
         return None
@@ -284,15 +294,22 @@ def load_records(path: Path) -> tuple[dict[str, dict], int]:
     return recs, bad
 
 
+GENERIC_DIRS = {"views", "dwg", "export", "도면", "cad"}
+
+
 def project_of_path(path: str) -> str:
-    """Sub-project grouping identical to tools/select.py (cad_all.json): first 3 path segments,
-    4 under 1.회사/2.공모, the whole path when shallower."""
+    """Sub-project grouping: first 3 path segments (4 under 1.회사/2.공모), walking up
+    past generic directories (views, dwg, export, 도면, cad) to the nearest meaningful folder."""
     segs = str(path or "").split("/")[:-1]
     if len(segs) <= 3:
-        return "/".join(segs) or "(root)"
-    if segs[0] == "1.회사" and segs[1] == "2.공모":
-        return "/".join(segs[:4])
-    return "/".join(segs[:3])
+        cand = segs
+    elif segs[0] == "1.회사" and segs[1] == "2.공모":
+        cand = segs[:4]
+    else:
+        cand = segs[:3]
+    while cand and cand[-1].lower() in GENERIC_DIRS:
+        cand = cand[:-1]
+    return "/".join(cand) or "(root)"
 
 
 _DOC_KEY_RE = re.compile(r"[\s\-_\.\[\](){}]+")
@@ -372,6 +389,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     proj_disc: collections.Counter = collections.Counter()
     proj_exts: collections.Counter = collections.Counter()
     status_counts: collections.Counter = collections.Counter()
+    file_name_counts = collections.Counter(rep["path"].rsplit("/", 1)[-1] for rep in reps)
     for rep in reps:
         path, ext = rep["path"], rep["ext"]
         rec = rec_by_rep.get(rep["path"])
@@ -400,9 +418,20 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         proj_disc[disc["code"]] += 1
         proj_exts[ext] += 1
 
-        props = {"path": path, "file_name": path.rsplit("/", 1)[-1], "ext": ext, "size": int(rep.get("size") or 0),
+        # Duplicate-name siblings: include distinguishing parent folder in search_text and title
+        fname = path.rsplit("/", 1)[-1]
+        parent_dir = path.rsplit("/", 2)[-2] if "/" in path else ""
+        is_dup_sibling = file_name_counts[fname] > 1
+
+        effective_title = title or stem_title
+        if is_dup_sibling and parent_dir and parent_dir != sub_leaf and effective_title:
+            props_title = f"{effective_title} ({parent_dir})"
+        else:
+            props_title = effective_title
+
+        props = {"path": path, "file_name": fname, "ext": ext, "size": int(rep.get("size") or 0),
                  "md5": rep.get("md5"), "mtime": (rep.get("mod") or "")[:10], "sub_project": sub_path,
-                 "sheet_number": number, "title": title or stem_title, "drive_path": path,
+                 "sheet_number": number, "title": props_title, "drive_path": path,
                  "sheet_source": sheet_src,
                  "discipline": disc["code"], "discipline_confidence": disc["confidence"],
                  "discipline_source": disc["source"], "review": disc["review"], "parse_status": status,
@@ -414,6 +443,8 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
             parts.append(f"제목 {title}")
         parts.append(f"공종 {DISCIPLINE_KO[disc['code']]}")
         parts.append(f"프로젝트 {sub_leaf}")
+        if parent_dir and parent_dir != sub_leaf:
+            parts.append(f"상위폴더 {parent_dir}")
         parts.append(f"경로 {path}")
         parts.append(f"형식 {ext.upper()}")
         if status == "unparsed_format":
@@ -435,7 +466,10 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
             if lnames:
                 parts.append("레이어: " + join_bounded(lnames, MAX_LAYER_CHARS, ", "))
             if texts:
-                parts.append("문자: " + join_bounded(texts, MAX_TEXTS_CHARS))
+                # Drawing-list sheets (도면목록/목록표): cap table text so they don't outrank target drawings
+                is_list_sheet = any(k in stem or (title and k in title) for k in ("도면목록", "도면 목록", "목록표"))
+                text_cap = 200 if is_list_sheet else MAX_TEXTS_CHARS
+                parts.append("문자: " + join_bounded(texts, text_cap))
             # aggregate global layers / blocks (once per unique drawing)
             for l in rec.get("layers") or []:
                 nm = (l.get("name") or "").strip()
@@ -499,6 +533,13 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         add_edge(PROJECT_NODE, "hasDrawing", did)
         add_vector(did, "drawing", stem, disc["code"],
                    {k: props.get(k) for k in ("sheet_number", "title", "sub_project", "drive_path") if props.get(k)})
+        # Register sheet_number aliases
+        s_num = props.get("sheet_number")
+        if s_num:
+            aliases.append({"alias_type": "sheet_number", "alias": s_num, "node_id": did})
+            compact_num = s_num.replace("-", "")
+            if compact_num != s_num:
+                aliases.append({"alias_type": "sheet_number", "alias": compact_num, "node_id": did})
         if disc["review"]:
             review.append({"node_id": did, "path": props["path"], "sheet_number": props["sheet_number"],
                            "title": props["title"], "discipline": disc["code"],
@@ -535,7 +576,9 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     doc_reps = group_duplicates(docs)
     draws_by_sub: dict[str, set] = {}
     for did, stem, props, _text, sp, _disc, _rep in drawing_rows:
-        keys = {_doc_key(stem), _doc_key(props.get("sheet_number")), _doc_key(props.get("title"))}
+        raw_title = props.get("title") or ""
+        base_title = raw_title.rsplit(" (", 1)[0] if " (" in raw_title else raw_title
+        keys = {_doc_key(stem), _doc_key(props.get("sheet_number")), _doc_key(raw_title), _doc_key(base_title)}
         draws_by_sub.setdefault(sp, set()).update((k, did) for k in keys if k)
     for sp in draws_by_sub:
         draws_by_sub[sp] = sorted(draws_by_sub[sp])

@@ -396,3 +396,53 @@ def test_load_documents_filters_extension_and_repo_copies(tmp_path):
     docs = b.load_documents(p)
     assert [d["path"] for d in docs] == ["Root/Proj/Sub/a.pdf", "Root/Proj/Sub/b.xlsx"]
     assert all(d["project"] == "Root/Proj/Sub" for d in docs)
+
+
+def test_retrieval_fixes_sheet_aliases_and_korean_prefix():
+    # 2a & 2b: Korean discipline prefix parsed as sheet_number and kg_aliases created
+    rows = [row("Root/Proj/소방/소방-05 A동지상2층소방설비평면도.dwg", md5="f1", project="Root/Proj")]
+    g = b.build_graph(rows, {})
+    drw = next(n for n in g["nodes"].values() if n["type"] == "Drawing")
+    assert drw["props"]["sheet_number"] == "소방-05"
+    assert drw["props"]["title"] == "A동지상2층소방설비평면도"
+    assert drw["props"]["discipline"] == "FIRE"
+
+    aliases = [a for a in g["aliases"] if a["node_id"] == drw["id"]]
+    sheet_aliases = {a["alias"] for a in aliases if a["alias_type"] == "sheet_number"}
+    assert "소방-05" in sheet_aliases
+    assert "소방05" in sheet_aliases
+
+
+def test_retrieval_fixes_project_of_path_generic_dirs():
+    # 2c: project_of_path walks up past generic directories (views, dwg, export, 도면, cad)
+    assert b.project_of_path("Root/Hillside/dwg/views/2층평면도.dwg") == "Root/Hillside"
+    assert b.project_of_path("Root/Proj/export/cad/도면/배치도.dwg") == "Root/Proj"
+
+
+def test_retrieval_fixes_duplicate_name_siblings():
+    # 2d: duplicate-name siblings include parent folder in title and search_text
+    rows = [
+        row("Root/1공장/도면.dwg", md5="m1", project="Root"),
+        row("Root/2공장/도면.dwg", md5="m2", project="Root"),
+    ]
+    g = b.build_graph(rows, {})
+    drawings = [n for n in g["nodes"].values() if n["type"] == "Drawing"]
+    assert len(drawings) == 2
+    titles = {d["props"]["title"] for d in drawings}
+    assert "도면 (1공장)" in titles
+    assert "도면 (2공장)" in titles
+    for d in drawings:
+        assert "상위폴더 1공장" in d["search_text"] or "상위폴더 2공장" in d["search_text"]
+
+
+def test_retrieval_fixes_drawing_list_sheets_capped():
+    # 2e: drawing list sheet text is capped to 200 chars in search_text
+    long_table_text = "일련번호 " * 100
+    meta = {"status": "ok", "texts": [long_table_text]}
+    rows = [row("Root/Proj/C-000 도면 목록표.dwg", md5="l1", project="Root/Proj")]
+    g = b.build_graph(rows, {"Root/Proj/C-000 도면 목록표.dwg": meta})
+    drw = next(n for n in g["nodes"].values() if n["type"] == "Drawing")
+    # search_text should not include the full 500-char table text
+    assert len(drw["search_text"]) < 400
+
+

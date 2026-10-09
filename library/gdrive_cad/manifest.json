@@ -1,8 +1,8 @@
 {
  "pack": "gdrive_cad",
  "project_key": "GDRIVE_CAD",
- "generated_at": "2026-10-09T17:50:07.490362+00:00",
- "input_fingerprint": "d2de57ed3433192f0e6848d123bbc909183b633b7bd3f495cc4784dcee84799b",
+ "generated_at": "2026-10-09T18:53:16.085121+00:00",
+ "input_fingerprint": "e492d51d3a13a2102f3c018c6e9341c87a698bdf4fd3acfb81f9a1235452790b",
  "builder_version": 2,
  "source_root": "gdrive (rclone remote; paths are Drive-relative)",
  "source_files": 13776,
@@ -11,19 +11,19 @@
  "filename_sheet_parser": "aec_intelligence.operational.parsers",
  "counts": {
   "kg_nodes": 28272,
-  "kg_edges": 92953,
-  "kg_aliases": 4,
+  "kg_edges": 92954,
+  "kg_aliases": 10295,
   "vector_rows": 28271,
   "drawings": 11440,
   "sub_projects": 282,
   "layer_standards": 4000,
   "block_specs": 3000,
   "duplicate_copies": 2336,
-  "review_queue": 1510,
+  "review_queue": 1511,
   "layers_seen": 26249,
   "blocks_seen": 8776,
   "documents": 9549,
-  "document_links": 543,
+  "document_links": 544,
   "document_duplicates": 3354
  },
  "document_formats": {
@@ -42,16 +42,16 @@
  },
  "disciplines": {
   "ARCH": 4345,
-  "CIVIL": 709,
+  "CIVIL": 708,
   "COMM": 314,
-  "ELEC": 653,
-  "FIRE": 539,
+  "ELEC": 619,
+  "FIRE": 546,
   "GENERAL": 1458,
   "INTERIOR": 61,
   "LAND": 274,
-  "MECH": 760,
+  "MECH": 765,
   "PLUMB": 149,
-  "STRUCT": 2178
+  "STRUCT": 2201
  },
  "node_types": [
   "BlockSpec",

@@ -15,7 +15,8 @@ python library\gdrive_cad\tools\verify_pack.py                                  
 python library\gdrive_cad\tools\load_gdrive_cad.py                                       # dry-run (기본)
 ```
 
-입력(`--src`): `cad_all.json`(전체 CAD 행), `records.jsonl`(DWG->DXF 심층 파싱, 계속 늘어남).
+입력(`--src`): `cad_all.json`(전체 CAD 행), `records.jsonl`(DWG->DXF 심층 파싱, 계속 늘어남),
+`inventory.json`(전체 인벤토리 — PDF/xls/xlsx 행이 `Document` 메타데이터 노드가 된다).
 records가 늘면 그냥 다시 실행하면 된다.
 
 ## 규칙 요약 (`C:\CODE\_herdr-bus\out\gdrive-cad-decisions.md`)
@@ -27,6 +28,8 @@ records가 늘면 그냥 다시 실행하면 된다.
 - 도면번호/제목: 타이틀블록(`source=title_block`)만 신뢰, 그 외는 드라이브 파일명(`filename_sheet_fields`).
 - DWG/DXF 이외(rvt/skp/pln/dwt/dwf)는 `parse_status=unparsed_format`, 심층 파싱 안 된 DWG는 `metadata_only`.
 - `LayerStandard`(<=4000) / `BlockSpec`(<=3000) 전역 노드, `usedIn` 엣지로 Drawing에 연결.
+- `Document`(PDF/xls/xlsx): 고유 파일(size+md5)당 1개, 파일명 제목·형식·크기·`sub_project`·`drive_path`만 보관(다운로드/파싱 없음). 같은
+  `sub_project` 폴더에서 파일명(stem)이 도면 stem/도면번호/제목과 일치하면 `Document -linkedTo-> Drawing`, Project/SubProject에는 `hasDocument` 엣지.
 - 실/문자/레이어명은 `search_text`(<=1500자)에 포함, 이메일/전화번호는 제거.
 - `kg_build_state.fingerprint = gdrive-cad-pack-v1` (`-pack-` 포함: 문서 없는 팩의 stale 삭제 방지).
 

@@ -1,0 +1,29 @@
+{
+ "pat_parse_failures": [],
+ "duplicate_content_groups": [
+  {
+   "content_sha256": "8344a9db5b968486975cd54b1fdb4c3ff3dd0ab56c9a341adc8ef55c6c4d8637",
+   "count": 2,
+   "files": [
+    "2024\\ZWCAD_backup_original.pgp",
+    "2024\\ZWCAD_bak.pgp"
+   ]
+  },
+  {
+   "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "count": 2,
+   "files": [
+    "_RecentColumnData.txt",
+    "_UserBlockFolder2.txt"
+   ]
+  },
+  {
+   "content_sha256": "2a43de3d25a5fd7bab6d05e946299ddbc855a874250ee29cda483d994078db07",
+   "count": 2,
+   "files": [
+    "Library\\가구\\의자\\장애인 의자.dwg",
+    "Library\\가구\\의자\\장애인의자.dwg"
+   ]
+  }
+ ]
+}

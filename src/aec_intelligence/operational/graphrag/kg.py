@@ -202,7 +202,9 @@ class KnowledgeGraphBuilder:
             extra = short_hash(json.dumps(self.catalog, ensure_ascii=False, sort_keys=True, default=str),
                                json.dumps(self.requirements, ensure_ascii=False, sort_keys=True, default=str), n=16)
             # Projects whose documents are all gone (or moved to another canonical project) go first.
-            stale = [k for k in state if k not in grouped and (not project_key or k == project_key)]
+            # Asset packs (fingerprint 'xxx-pack-vN', e.g. library/archioffice) have no documents by design.
+            stale = [k for k in state if k not in grouped and "-pack-" not in (state[k] or "")
+                     and (not project_key or k == project_key)]
             for key in stale:
                 with conn.transaction():
                     conn.execute("DELETE FROM aec.kg_nodes WHERE project_key=%s", (key,))

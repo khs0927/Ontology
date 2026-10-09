@@ -59,6 +59,7 @@ MAX_TEXTS_CHARS = 600   # drawing text labels inside search_text
 MAX_ROOMS_CHARS = 240
 MAX_LAYER_CHARS = 240
 MAX_DUP_COPIES = 25
+MAX_COPY_DIRS = 5  # duplicate-copy folders added to a drawing's search_text
 REVIEW_BELOW = 0.7
 
 DISCIPLINE_KO = {"ARCH": "건축", "STRUCT": "구조", "MECH": "기계", "PLUMB": "위생", "ELEC": "전기",
@@ -131,7 +132,7 @@ def _local_filename_sheet_fields(name):
     """Same contract as aec_intelligence.operational.parsers.filename_sheet_fields (fallback copy)."""
     stem = re.sub(r"\.(dwg|dxf|pdf)$", "", Path(str(name or "")).name, flags=re.IGNORECASE).strip()
     stem = _ORDER_PREFIX_RE.sub("", stem, count=1).strip()
-    match = SHEET_NUMBER_RE.match(stem)
+    match = SHEET_NUMBER_RE.match(stem.upper())  # Latin prefixes are case-insensitive; Hangul is unaffected
     if not match:
         return None, (stem.strip(" -_[]") or None)
     title = stem[match.end():]
@@ -353,9 +354,20 @@ def project_of_path(path: str) -> str:
         cand = segs[:4]
     else:
         cand = segs[:3]
-    while cand and cand[-1].lower() in GENERIC_DIRS:
-        cand = cand[:-1]
-    return "/".join(cand) or "(root)"
+    return _strip_generic_dirs(cand)
+
+
+def _strip_generic_dirs(segs: list[str]) -> str:
+    segs = list(segs)
+    while segs and segs[-1].lower() in GENERIC_DIRS:
+        segs.pop()
+    return "/".join(segs) or "(root)"
+
+
+def rep_project(rep: dict) -> str:
+    """cad_all.json's sub-project of a drawing, minus trailing generic folders (views, dwg, ...)."""
+    given = rep.get("project")
+    return _strip_generic_dirs(given.split("/")) if given and given != "(root)" else project_of_path(rep["path"])
 
 
 _DOC_KEY_RE = re.compile(r"[\s\-_\.\[\](){}]+")
@@ -420,7 +432,7 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
     # ---- sub-projects
     subs: dict[str, dict] = {}
     for rep in reps:
-        sp = rep.get("project") or "(root)"
+        sp = rep_project(rep)
         s = subs.setdefault(sp, {"drawings": 0, "dups": 0, "exts": collections.Counter(),
                                  "disc": collections.Counter(), "bytes": 0, "library": 0})
         s["drawings"] += 1
@@ -459,7 +471,9 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         status_counts[status] += 1
         stem = file_stem(path, ext)
         did = f"{PROJECT_KEY}:drw:" + (rep.get("md5") or sha1(path)[:32])
-        sub_path = rep.get("project") or "(root)"
+        # Derived from the path (not cad_all.json's raw `project`) so generic folders (views, dwg, ...)
+        # never become the project name.
+        sub_path = rep_project(rep)
         sub_leaf = sub_path.rsplit("/", 1)[-1]
         if disc["role"] == ROLE_BLOCK_LIBRARY:
             subs[sub_path]["library"] += 1
@@ -504,6 +518,10 @@ def build_graph(rows: list[dict], records: dict[str, dict], max_layers: int = MA
         if parent_dir and parent_dir != sub_leaf:
             parts.append(f"상위폴더 {scrub_text(parent_dir)}")
         parts.append(f"경로 {scrub_text(path)}")
+        # Byte-identical copies live in other folders: make their folder names searchable too.
+        copy_dirs = list(dict.fromkeys(c.rsplit("/", 2)[-2] for c in rep["_copies"][:MAX_COPY_DIRS] if "/" in c))
+        if copy_dirs:
+            parts.append("동일 파일 사본 폴더 " + ", ".join(scrub_text(d) for d in copy_dirs))
         parts.append(f"형식 {ext.upper()}")
         if status == "unparsed_format":
             parts.append("미해석 형식(메타데이터만)")

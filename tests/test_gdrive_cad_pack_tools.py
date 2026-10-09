@@ -882,3 +882,33 @@ def test_verify_pack_accepts_library_role_and_rejects_mismatch(tmp_path, monkeyp
         "asset_role", "drawing"))
     code, rep = _verify(monkeypatch, capsys, out)
     assert code == 1 and any("asset_role" in f for f in rep["findings"])
+
+
+def test_rep_project_strips_generic_folders_from_cad_all_project():
+    # c05db3a only changed project_of_path, but drawings take cad_all.json's `project`: views/dwg leaked through
+    assert b.rep_project({"path": "H/dwg/views/a.dwg", "project": "H/dwg/views"}) == "H"
+    assert b.rep_project({"path": "H/dwg/b.dwg", "project": "H/dwg"}) == "H"
+    assert b.rep_project({"path": "R/P/S/c.dwg", "project": "R/P/S"}) == "R/P/S"   # unchanged
+    assert b.rep_project({"path": "x.dwg", "project": "(root)"}) == "(root)"
+    assert b.rep_project({"path": "R/P/d.dwg"}) == "R/P"                              # no project: from the path
+    g = b.build_graph([row("hillside_villa_export/dwg/views/2층평면도.dwg", md5="v1",
+                           project="hillside_villa_export/dwg/views")], {})
+    drw = next(n for n in g["nodes"].values() if n["type"] == "Drawing")
+    assert drw["props"]["sub_project"] == "hillside_villa_export"
+    assert "프로젝트 hillside_villa_export" in drw["search_text"]
+    assert "프로젝트 views" not in drw["search_text"]
+
+
+def test_duplicate_copy_folders_are_searchable_on_the_representative():
+    rows = [row("Root/Proj/용도변경(기존)/1층평면도.dwg", md5="same", size=7, project="Root/Proj", dup_of=None),
+            row("Root/Proj/양정주 용도변경/1층평면도.dwg", md5="same", size=7, project="Root/Proj", dup_of="x")]
+    g = b.build_graph(rows, {})
+    drws = [n for n in g["nodes"].values() if n["type"] == "Drawing"]
+    assert len(drws) == 1
+    d = drws[0]
+    assert d["props"]["duplicate_count"] == 1 and len(d["props"]["duplicate_copies"]) == 1
+    copy_folder = d["props"]["duplicate_copies"][0].rsplit("/", 2)[-2]
+    assert f"동일 파일 사본 폴더 {copy_folder}" in d["search_text"]
+    # a drawing without copies gets no such part
+    g2 = b.build_graph([row("Root/Proj/a/x.dwg", md5="solo", project="Root/Proj")], {})
+    assert all("사본 폴더" not in n["search_text"] for n in g2["nodes"].values() if n["type"] == "Drawing")

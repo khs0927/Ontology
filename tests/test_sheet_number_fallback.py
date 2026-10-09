@@ -95,3 +95,10 @@ def test_title_block_number_wins_over_file_name(tmp_path: Path):
     result = parse_source(source, "doc_tb", tmp_path / "out", _settings(tmp_path))
     model = _views(result)["Model"]["properties"]
     assert model["drawingNumber"] == "A-202" and "drawingNumber_source" not in model
+
+
+def test_lowercase_latin_sheet_prefix_still_parsed():
+    # c05db3a dropped the .upper() before matching; Latin prefixes stay case-insensitive (output uppercase)
+    assert filename_sheet_fields("a-101 1층 평면도.dwg") == ("A-101", "1층 평면도")
+    assert filename_sheet_fields("s101_구조.dwg") == ("S101", "구조")
+    assert layout_sheet_number("a-101") == "A-101"

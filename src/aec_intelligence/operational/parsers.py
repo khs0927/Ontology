@@ -48,7 +48,7 @@ def filename_sheet_fields(name):
     """
     stem = re.sub(r'\.(dwg|dxf|pdf)$', '', Path(str(name or '')).name, flags=re.IGNORECASE).strip()
     stem = _ORDER_PREFIX_RE.sub('', stem, count=1).strip()
-    match = SHEET_NUMBER_RE.match(stem)
+    match = SHEET_NUMBER_RE.match(stem.upper())  # Latin prefixes are case-insensitive; Hangul is unaffected
     if not match:
         return None, (stem.strip(' -_[]') or None)
     title = stem[match.end():]
@@ -59,7 +59,7 @@ def filename_sheet_fields(name):
 
 def layout_sheet_number(layout_name):
     """A paper layout named after its sheet ("A-101", "S-002 구조평면도", "소방-05") carries that number; else None."""
-    match = SHEET_NUMBER_RE.match(str(layout_name or '').strip())
+    match = SHEET_NUMBER_RE.match(str(layout_name or '').strip().upper())
     return match.group(1) if match else None
 
 

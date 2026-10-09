@@ -35,6 +35,7 @@ REFUSAL = "제공된 도면 데이터에서 근거를 찾을 수 없습니다."
 PARTICLES = ("에서는", "에서", "에는", "으로", "까지", "부터", "이랑", "은", "는", "이", "가", "을", "를", "의", "에", "도",
              "만", "과", "와", "로", "나")
 MAX_CONTEXT = 12
+PACK_DF_CAP = 600  # a question term matching more pack drawings than this is too common to pick candidates
 SEMANTIC_MIN_SCORE = 0.35
 # Routes whose answer is an aggregate computed by the graph template itself: the LLM is skipped so numbers are
 # never re-summed or rounded by the model (the context line already states per-drawing and max counts).
@@ -153,6 +154,7 @@ class ContextItem:
     cid: str = ""
     citation: dict[str, Any] = field(default_factory=dict)
     path: str | None = None  # source file path (Drive relative path) when the node carries one
+    copies: list[str] = field(default_factory=list)  # byte-identical copies of `path` kept on the node
 
     def key(self) -> str:
         return self.node_id or (self.object_ids[0] if self.object_ids else ",".join(self.document_ids))
@@ -218,6 +220,13 @@ def unsupported_by_context(question: str, texts: list[str]) -> str | None:
         if ask_rx.search(question) and (evidence_rx is None or not evidence_rx.search(joined)):
             return f"asked attribute not in context: {ask_rx.search(question).group(0)}"
     return None
+
+
+def pack_terms(question: str) -> list[str]:
+    """Question words for drive-pack drawing ranking: punctuation removed, decimals ("7.0m") kept."""
+    raw = re.sub(r"[?？,!]", " ", question)
+    raw = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", raw)
+    return list(dict.fromkeys(t for t in raw.split() if len(t) >= 2))[:8]
 
 
 def _dedupe(items: list[ContextItem]) -> list[ContextItem]:
@@ -570,13 +579,68 @@ class GraphRAG:
                 + (", 같은 도면의 최신본" if p.get("series_latest") else "")
                 + (f", 프로젝트 {str(p['sub_project']).rsplit('/', 1)[-1]}" if p.get("drive_path") and p.get("sub_project") else "")
                 + (f", 경로 {p['drive_path']}" if p.get("drive_path") else ""))
+        copies = [c for c in (p.get("duplicate_copies") or []) if isinstance(c, str)] if p.get("drive_path") else []
+        if copies:
+            n_dup = int(p.get("duplicate_count") or len(copies))
+            text += f", 동일 파일 사본 {n_dup}건: " + "; ".join(copies[:3]) + (" 외" if n_dup > 3 else "")
         item = ContextItem("graph", text, score, r["id"], r["document_ids"], r["object_ids"])
         item.path = p.get("drive_path") or None
+        item.copies = copies
         return item
+
+    def _pack_drawings(self, conn, question, keys, limit: int = 10) -> list[ContextItem] | None:
+        """Ranking for drive-pack drawing nodes (props.drive_path, e.g. GDRIVE_CAD); None for other projects.
+
+        A whole-question word_similarity ties every sibling whose title shares the generic words, drops decimals
+        ("7.0m" -> "0m") and cannot see a title written without spaces. Here each question term is scored on its
+        own (so project words and title words need not be adjacent), a space-less form of the question scores
+        titles such as "A동지상2층소방설비평면도", and candidates come from the terms that are rare in the pack
+        (a term in every row, like "도면", would otherwise pull in the whole project)."""
+        if not keys or not conn.execute(
+                "SELECT 1 FROM aec.kg_nodes n WHERE n.type = 'Drawing' AND n.props ? 'drive_path' "
+                "AND n.project_key = ANY(%s) LIMIT 1", (keys,)).fetchone():
+            return None
+        terms = pack_terms(question)
+        if not terms:
+            return None
+        base = "n.type = 'Drawing' AND n.props ? 'drive_path' AND n.project_key = ANY(%s)"
+        rare = []
+        for t in terms:
+            df = conn.execute(f"SELECT count(*) AS c FROM (SELECT 1 FROM aec.kg_nodes n WHERE {base} "
+                              f"AND n.search_text %%> %s LIMIT {PACK_DF_CAP + 1}) x", (keys, t)).fetchone()["c"]
+            if 0 < df <= PACK_DF_CAP:
+                rare.append(t)
+        whole, compact = " ".join(terms), "".join(terms)
+        if rare:
+            cand_sql, cand_params = f"{base} AND n.search_text %%> ANY(%s::text[])", [keys, rare]
+        else:  # every term is common (or unknown): fall back to the best whole-question matches
+            cand_sql = f"{base} AND %s <%% n.search_text"
+            cand_params = [keys, whole]
+        rows = conn.execute(f"""
+            SELECT n.id, n.name,
+                   (SELECT avg(word_similarity(t, n.search_text)) FROM unnest(%s::text[]) t) AS tsim,
+                   word_similarity(%s, n.search_text) AS wsim, word_similarity(%s, n.search_text) AS csim
+            FROM aec.kg_nodes n WHERE {cand_sql}""", [terms, whole, compact, *cand_params]).fetchall()
+        if not rows:
+            return []
+        scored = []
+        for r in rows:
+            sim = 0.5 * float(r["tsim"] or 0) + 0.5 * max(float(r["wsim"] or 0), float(r["csim"] or 0))
+            # equal scores: the title closest in length to what was asked, then name order
+            scored.append((-round(sim, 3), len(r["name"]), r["name"], r["id"], sim))
+        scored.sort()
+        top = scored[:limit]
+        by_id = {r["id"]: r for r in self._nodes(conn, """
+            SELECT n.id, n.project_key, n.type, n.name, n.props, n.object_ids, n.document_ids
+            FROM aec.kg_nodes n WHERE n.id = ANY(%s)""", [[x[3] for x in top]])}
+        return [self._drawing_item(conn, by_id[x[3]], 0.6 + 0.4 * x[4]) for x in top if x[3] in by_id]
 
     def _drawings(self, conn, question, keys, cypher) -> list[ContextItem]:
         pf, pp = self._project_filter(keys, "n")
         cypher.append("MATCH (p:Project {key: $project})-[:hasDrawing]->(d:Drawing) RETURN d ORDER BY similarity")
+        packed = self._pack_drawings(conn, question, keys)
+        if packed:
+            return packed
         terms = [t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2]
         rows = self._nodes(conn, f"""
             SELECT n.id, n.project_key, n.type, n.name, n.props, n.object_ids, n.document_ids,
@@ -688,6 +752,9 @@ class GraphRAG:
         return out
 
     def _kg_lexical(self, conn, question, keys) -> list[ContextItem]:
+        packed = self._pack_drawings(conn, question, keys, limit=6)
+        if packed:
+            return packed
         pf, pp = self._project_filter(keys, "n")
         terms = " ".join(t for t in re.split(r"\s+", re.sub(r"[?？.,!]", " ", question)) if len(t) >= 2)
         if not terms:
@@ -827,6 +894,8 @@ class GraphRAG:
             }
             if item.path:
                 item.citation["path"] = item.path
+            if item.copies:
+                item.citation["duplicate_paths"] = item.copies
 
     # ------------------------------------------------------------------ answer
     def ask(self, question: str, *, project: str | None = None, top_k: int = MAX_CONTEXT,

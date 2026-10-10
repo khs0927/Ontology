@@ -64,7 +64,12 @@ def slug(value: str) -> str:
     return s.strip("-")
 
 
-DIM_RE = re.compile(r"(\d{2,5})\s*[xX×]\s*(\d{2,5})")
+# Accepts "1400x1250", "1400 × 1250", "1400(W) x 1250(D)", "1400W x 1250H",
+# "W1400 x D1250", "1400mm x 1250mm". Groups 1 and 2 are the two numbers.
+_DIM_LABEL = r"[WwHhDdLl]"
+_DIM_PRE = rf"(?:(?<![A-Za-z]){_DIM_LABEL}\s*[:=]?\s*)?"
+_DIM_SUF = rf"\s*(?:mm|㎜)?\s*(?:\(\s*[A-Za-z]{{1,3}}\s*\)|{_DIM_LABEL}(?![A-Za-z]))?\s*(?:mm|㎜)?"
+DIM_RE = re.compile(rf"{_DIM_PRE}(\d{{2,5}}){_DIM_SUF}\s*[xX×*]\s*{_DIM_PRE}(\d{{2,5}})(?!\d)")
 
 # ---------------------------------------------------------------- taxonomy ----
 
@@ -395,6 +400,22 @@ def parse_lsp_defuns(text: str) -> list[dict]:
 
 
 # ------------------------------------------------------------------ build -----
+
+def build_jsonld(nodes: list[dict], edges: list[dict]) -> dict:
+    """JSON-LD graph containing every node and every edge."""
+    return {
+        "@context": {"aec": "https://aec.local/ontology#", "name": "aec:name",
+                     "type": "@type", "edges": "aec:edges"},
+        "@graph": [
+            {"@id": n["id"], "@type": n["type"], "name": n["name"],
+             "project_key": n["project_key"], "props": n["props"]}
+            for n in nodes
+        ] + [
+            {"@id": e["src"], "edges": [{"predicate": e["predicate"], "target": e["dst"]}]}
+            for e in edges
+        ],
+    }
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -847,18 +868,7 @@ def main() -> int:
     write_jsonl(out / "graph" / "kg_aliases.jsonl", aliases)
     write_jsonl(out / "vectors" / "vector_corpus.jsonl", vector_rows)
 
-    jsonld = {
-        "@context": {"aec": "https://aec.local/ontology#", "name": "aec:name",
-                     "type": "@type", "edges": "aec:edges"},
-        "@graph": [
-            {"@id": n["id"], "@type": n["type"], "name": n["name"],
-             "project_key": n["project_key"], "props": n["props"]}
-            for n in nodes.values()
-        ] + [
-            {"@id": e["src"], "edges": [{"predicate": e["predicate"], "target": e["dst"]}]}
-            for e in edges[:0]
-        ],
-    }
+    jsonld = build_jsonld(list(nodes.values()), edges)
     (out / "graph" / "graph.jsonld").write_text(
         json.dumps(jsonld, ensure_ascii=False, indent=1), encoding="utf-8")
 

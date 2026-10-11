@@ -12,26 +12,29 @@
 | 항목 | 값 |
 |---|---|
 | source_files (드라이브 원본 파일 수) | 13,776 |
-| records_parsed (심층 파싱된 DWG/DXF) | 788 |
+| records_parsed (심층 파싱된 DWG/DXF) | 1,288 |
 | drawings (고유 도면 노드) | 11,440 |
-| sub_projects (하위 프로젝트 노드) | 282 |
+| sub_projects (하위 프로젝트 노드) | 281 |
 | duplicate_copies (중복 사본) | 2,336 |
-| kg_nodes | 28,272 |
-| kg_edges | 92,953 |
-| kg_aliases | 4 |
-| vector_rows | 28,271 |
+| kg_nodes | 28,271 |
+| kg_edges | 128,063 |
+| kg_aliases | 10,413 |
+| vector_rows | 28,270 |
 | layer_standards (상한 4,000) | 4,000 |
 | block_specs (상한 3,000) | 3,000 |
-| layers_seen / blocks_seen | 26,249 / 8,776 |
+| layers_seen / blocks_seen | 35,111 / 12,049 |
 | documents (PDF/xls/xlsx 메타데이터) | 9,549 |
-| document_links (Document→Drawing) | 543 |
+| document_links (Document→Drawing) | 544 |
 | document_duplicates | 3,354 |
-| review_queue (공종 신뢰도 < 0.7) | 1,510 |
+| review_queue (공종 신뢰도 < 0.7) | 801 |
 
 - 문서 형식: `pdf` 7,925 / `xlsx` 701 / `xls` 923.
-- 파싱 상태: `metadata_only` 10,573 / `parsed` 788 / `unparsed_format` 79.
-- 공종(discipline) 11종: ARCH 4,345 · STRUCT 2,178 · GENERAL 1,458 · MECH 760 · CIVIL 709 ·
-  ELEC 653 · FIRE 539 · COMM 314 · LAND 274 · PLUMB 149 · INTERIOR 61.
+- 파싱 상태: `metadata_only` 10,073 / `parsed` 1,288 / `unparsed_format` 79.
+- 공종(discipline) 11종: ARCH 4,784 · STRUCT 1,648 · GENERAL 488 · MECH 801 · CIVIL 756 ·
+  ELEC 609 · FIRE 536 · COMM 292 · LAND 272 · PLUMB 67 · INTERIOR 30.
+- 커뮤니티 요약: 18개 모두 `DONE`.
+- `duplicate_copies` 2,336은 중복 사본 **총수**, `duplicate_count > 0`인 도면 **1,579종**과는
+  다른 지표다(한 도면이 여러 사본을 가질 수 있음).
 - 노드 타입: `Project` · `SubProject` · `Drawing` · `Document` · `LayerStandard` · `BlockSpec`.
 - 엣지 술어: `hasSubProject` · `hasDrawing` · `hasDocument` · `linkedTo` · `usedIn`.
 - 임베딩: 모델 `bge-m3`, 차원 1024, 저장 위치 `aec.text_vectors`(halfvec).
@@ -161,12 +164,12 @@ python -m aec_intelligence.operational.cli ask "<질문>" --project GDRIVE_CAD -
 
 ## 6. 알려진 한계
 
-- **메타데이터 전용 도면**: `metadata_only` 10,573건 — 심층 파싱(DXF 변환)되지 않은 DWG는
+- **메타데이터 전용 도면**: `metadata_only` 10,073건 — 심층 파싱(DXF 변환)되지 않은 DWG는
   이름/크기/경로 등 메타데이터만 노드화된다.
 - **미지원 형식**: `unparsed_format` 79건 — `rvt/skp/pln/dwt/dwf` 등은 파싱하지 않는다.
 - **문서는 메타데이터만**: PDF/xls/xlsx(9,549건)는 파일명·형식·크기·소속만 보관하고
-  **내용을 다운로드/파싱하지 않는다**. 그중 543건만 `Document -linkedTo-> Drawing` 으로 연결된다.
-- **검토 대기열**: 공종 신뢰도 < 0.7 인 1,510건은 `assets/review_queue.jsonl` 로 빠져 수동 검토 대상이다.
+  **내용을 다운로드/파싱하지 않는다**. 그중 544건만 `Document -linkedTo-> Drawing` 으로 연결된다.
+- **검토 대기열**: 공종 신뢰도 < 0.7 인 801건은 `assets/review_queue.jsonl` 로 빠져 수동 검토 대상이다.
 - **live aec-api 경로 렌더링**: 서비스가 파일 경로를 렌더링하려면 **재배포가 필요**하다.
 - **중복 사본**: 도면 2,336 / 문서 3,354건은 별도 노드가 아니라 `props.duplicate_copies` 로만 집계된다.
 - 생성 데이터(약 60MB, 실제 폴더/파일명 포함)는 저장소에 없으므로 다른 PC에서는 반드시 로컬 재생성해야 한다.

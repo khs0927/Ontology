@@ -17,6 +17,9 @@ from aec_intelligence.operational.parsers import filename_sheet_fields, layout_s
     ("T-18-지붕 통신 설비도.dwg", ("T-18", "지붕 통신 설비도")),
     ("S-101~132 구조평면도.dxf", ("S-101", "구조평면도")),
     ("MA-005_3층 배관도.pdf", ("MA-005", "3층 배관도")),
+    ("소방-05 A동지상2층소방설비평면도.dwg", ("소방-05", "A동지상2층소방설비평면도")),
+    ("통신-01 구내통신선로설비도.dwg", ("통신-01", "구내통신선로설비도")),
+    ("토목-02 토공계획평면도.dwg", ("토목-02", "토공계획평면도")),
     ("지하2층평면도.dxf", (None, "지하2층평면도")),
     ("19 - 옹벽(H=2.0m)구조도.dxf", (None, "19 - 옹벽(H=2.0m)구조도")),
     ("2024 설계도.dwg", (None, "2024 설계도")),
@@ -92,3 +95,10 @@ def test_title_block_number_wins_over_file_name(tmp_path: Path):
     result = parse_source(source, "doc_tb", tmp_path / "out", _settings(tmp_path))
     model = _views(result)["Model"]["properties"]
     assert model["drawingNumber"] == "A-202" and "drawingNumber_source" not in model
+
+
+def test_lowercase_latin_sheet_prefix_still_parsed():
+    # c05db3a dropped the .upper() before matching; Latin prefixes stay case-insensitive (output uppercase)
+    assert filename_sheet_fields("a-101 1층 평면도.dwg") == ("A-101", "1층 평면도")
+    assert filename_sheet_fields("s101_구조.dwg") == ("S101", "구조")
+    assert layout_sheet_number("a-101") == "A-101"

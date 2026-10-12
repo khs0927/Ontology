@@ -123,16 +123,7 @@ fi
 if [[ -z "${TARGET_FILE}" ]]; then
     log "복원할 파일명이 지정되지 않아 최신 백업 파일을 탐색합니다..."
     
-    LATEST_FILE=$(rclone lsf "${RCLONE_REMOTE}" --files-only --sort time --reverse 2>/dev/null | grep -E '\.dump)();
-      return { result };
-    } catch (err) {
-      const message = (err && err.message) ? err.message : String(err);
-      const stack = (err && err.stack) ? err.stack : undefined;
-      return { err: message, stack };
-    }
-  }
-}
- | head -n 1 || true)
+    LATEST_FILE=$(rclone lsf "${RCLONE_REMOTE}" --files-only --sort time --reverse 2>/dev/null | grep -E '\.dump$' | head -n 1 || true)
     
     if [[ -z "${LATEST_FILE}" ]]; then
         error "원격 저장소(${RCLONE_REMOTE})에서 .dump 확장자를 가진 백업 파일을 찾을 수 없습니다."

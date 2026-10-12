@@ -81,7 +81,7 @@ Portable tables always include JSONL. If `pyarrow` is installed, Parquet is emit
 
 For deployments using the `docker-compose.yml` stack, the `aec-db` service runs PostgreSQL 16 with the Apache AGE graph database extension. To protect against data loss without consuming constrained host disk space, Zero-Disk streaming backup and restore scripts are provided:
 
-- `scripts/ops/backup_db.sh`: Streams `pg_dump -F c -Z 6` directly to Google Drive (`gdrive:AEC-INTELLIGENCE/08_BACKUPS/db`) via `rclone rcat` and enforces a 30-day retention policy.
+- `scripts/ops/backup_db.sh`: Streams `pg_dump -F c -Z 6` directly to Google Drive (`gdrive:AEC-INTELLIGENCE/backups`) via `rclone rcat` and enforces a 30-day retention policy.
 - `scripts/ops/restore_db.sh`: Restores directly from Google Drive into `aec-db` via `rclone cat | docker exec -i aec-db pg_restore ...` with safety confirmation and latest-backup discovery.
 - Detailed operational guide and disaster recovery runbook: [`docs/database-backup-restore.md`](docs/database-backup-restore.md).
 

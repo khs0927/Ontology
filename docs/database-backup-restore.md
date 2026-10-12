@@ -30,7 +30,7 @@ AEC-INTELLIGENCE의 [docker-compose.yml](https://github.com/khs0927/Ontology/blo
 +───────────────────────┬─────────────────────────────────────────────────+
                         │ Zero-Disk Streaming (Pipe)
                         ▼
-       [ rclone (gdrive:AEC-INTELLIGENCE/08_BACKUPS/db) ]
+       [ rclone (gdrive:AEC-INTELLIGENCE/backups) ]
 ```
 
 * **엔진**: PostgreSQL 16 및 Apache AGE 1.6.0 (그래프 데이터베이스 확장)
@@ -107,11 +107,11 @@ rclone lsd gdrive:AEC-INTELLIGENCE/
 ```
 
 ### 3.2. 저장소 경로 및 보존 주기 (Retention Policy)
-* **원격지 기본 경로**: `gdrive:AEC-INTELLIGENCE/08_BACKUPS/db/`
+* **원격지 기본 경로**: `gdrive:AEC-INTELLIGENCE/backups/`
 * **파일 명명 규칙**: `aec_db_backup_{YYYYMMDD_HHMMSS}.dump`
 * **보존 기간 (30일)**: 백업 성공 직후 30일이 경과한 백업 파일은 자동 삭제됩니다.
   ```bash
-  rclone delete --min-age 30d "gdrive:AEC-INTELLIGENCE/08_BACKUPS/db"
+  rclone delete --min-age 30d "gdrive:AEC-INTELLIGENCE/backups"
   ```
 
 ---
@@ -157,7 +157,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 복원을 수행하기 전, 원격지에 저장된 덤프 파일이 깨지지 않았는지 로컬 다운로드 없이 실시간 검증합니다.
 
 ```bash
-rclone cat "gdrive:AEC-INTELLIGENCE/08_BACKUPS/db/<TARGET_BACKUP>.dump" \
+rclone cat "gdrive:AEC-INTELLIGENCE/backups/<TARGET_BACKUP>.dump" \
   | pg_restore --list \
   | head -n 40
 ```

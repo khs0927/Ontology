@@ -10,7 +10,7 @@
             Also stops a running re-embed (\AEC\AEC-Reembed / reembed.ps1): it commits per chunk, so
             killing it loses nothing, and it must not write vectors while a migration runs.
   -Resume : remove the stop file and start the \AEC\AEC-Bulk-Workers task (and \AEC\AEC-Reembed
-            when it is registered).
+            when it is registered and enabled).
   Long jobs (large DWG/PDF) can take 10+ minutes; a job killed mid-run is retried after its lease expires.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\ops\stop-workers.ps1 -Drain -TimeoutMin 30
@@ -75,9 +75,12 @@ if ($Resume) {
     if (Test-Path -LiteralPath $stopFile) { Remove-Item -LiteralPath $stopFile -Force }
     Start-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName
     Write-Host "resumed $TaskPath$TaskName"
-    if (Get-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed' -ErrorAction SilentlyContinue) {
+    $reembedTask = Get-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed' -ErrorAction SilentlyContinue
+    if ($reembedTask -and $reembedTask.State -ne 'Disabled') {
         Start-ScheduledTask -TaskPath $TaskPath -TaskName 'AEC-Reembed'
         Write-Host "resumed $($TaskPath)AEC-Reembed"
+    } elseif ($reembedTask) {
+        Write-Host "skipped $($TaskPath)AEC-Reembed (disabled)"
     }
     exit 0
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 import json
+from pathlib import Path
 
 import pytest
 
@@ -315,7 +316,7 @@ def test_binding_registry_persists_only_under_runtime_and_roundtrips(tmp_path):
     saved = registry.save_runtime(tmp_path)
     assert saved["canonical_mutation"] is False
     assert saved["count"] == 1
-    assert saved["path"].endswith("runtime/ragflow/bindings.json")
+    assert Path(saved["path"]).parts[-3:] == ("runtime", "ragflow", "bindings.json")
 
     restored = RagflowBindingRegistry.load_runtime(tmp_path)
     assert restored.snapshot() == registry.snapshot()

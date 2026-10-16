@@ -102,7 +102,7 @@ $containerDump = "/tmp/restore-drill-$PID.dump"
 & docker cp $Dump "${Container}:$containerDump" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'docker cp of the dump failed' }
 $t = Measure-Command {
-    & docker exec -e 'PGOPTIONS=-c max_parallel_maintenance_workers=0' $Container pg_restore -U aec -d $Scratch --no-owner $containerDump 2> $restoreErr
+    & docker exec -e 'PGOPTIONS=-c max_parallel_maintenance_workers=0 -c maintenance_work_mem=64MB -c statement_timeout=0 -c lock_timeout=0' $Container pg_restore -U aec -d $Scratch --no-owner $containerDump 2> $restoreErr
 }
 $restoreExit = $LASTEXITCODE
 $errs = @(Get-Content -LiteralPath $restoreErr -ErrorAction SilentlyContinue | Where-Object { $_ -match 'error' })

@@ -47,9 +47,13 @@ def test_reject_unsafe_probe(change):
 def test_host_provider_mismatch_is_rejected():
     identity=dict(IDENTITY,provider_id='freecad')
     data=dict(schema_version=1,identity=identity,read_only=True,mutation_count=0,
-              capabilities=['health'],host='rhino',host_version='8')
+              capabilities=['health'],host='rhino',host_version='8',
+              authenticated=False,complete=True)
     with pytest.raises(ValueError):
-        ingest_readonly_probe(json.dumps(data).encode(),expected_identity=identity)
+        ingest_readonly_probe(json.dumps(data).encode(),expected_identity=identity,expected_capabilities=['health'])
+    # Same payload with a matching host is accepted, so the rejection above is the host check.
+    ok=ingest_readonly_probe(json.dumps(dict(data,host='FreeCAD')).encode(),expected_identity=identity,expected_capabilities=['health'])
+    assert ok['status']=='DECLARED'
 
 
 def test_duplicate_json_and_nan_rejected():

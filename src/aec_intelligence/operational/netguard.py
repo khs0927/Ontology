@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import socket
 import urllib.request
 from urllib.parse import urlparse
 
@@ -14,24 +13,47 @@ LOCAL_HOSTNAMES = {"localhost", "host.docker.internal", "ollama", "gateway.docke
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+# Explicit local ranges. Python's ``ip.is_private`` is deliberately NOT used: it also counts e.g.
+# 198.18.0.0/15 (benchmarking; used by fake-IP DNS resolvers), 192.0.2.0/24 and other special ranges as
+# "private", which would let a public hostname masquerade as local.
+_LOCAL_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+    "::1/128", "fc00::/7", "fe80::/10",
+))
+
+
+def _local_hostnames() -> set[str]:
+    """Built-in names plus an explicit operator allow-list (``AEC_LOCAL_HOSTNAMES=a,b``)."""
+    extra = {h.strip().lower().rstrip(".") for h in os.getenv("AEC_LOCAL_HOSTNAMES", "").split(",") if h.strip()}
+    return LOCAL_HOSTNAMES | extra
+
+
+def _is_local_ip(addr: ipaddress._BaseAddress) -> bool:
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return any(addr in net for net in _LOCAL_NETWORKS if net.version == addr.version)
+
+
 def is_local_endpoint(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
+    """True only for literal local IPs or explicitly allow-listed hostnames.
+
+    DNS is never consulted: a resolve-then-connect check is defeated by DNS rebinding and by resolvers
+    that hand out private-looking fake IPs, so an arbitrary hostname is always treated as remote.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
         return False
-    host = (parsed.hostname or "").lower()
-    if host in LOCAL_HOSTNAMES:
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    if host in _local_hostnames() or host.endswith(".localhost"):
         return True
     try:
-        addr = ipaddress.ip_address(host)
+        addr = ipaddress.ip_address(host.split("%")[0])
     except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except (OSError, UnicodeError):
-            return False
-        addrs = {ipaddress.ip_address(i[4][0].split("%")[0]) for i in infos}
-        # Every address the name resolves to must be local (no mixed public/private answers).
-        return bool(addrs) and all(a.is_loopback or a.is_private or a.is_link_local for a in addrs)
-    return addr.is_loopback or addr.is_private or addr.is_link_local
+        return False
+    return _is_local_ip(addr)
 
 
 def remote_allowed(env_name: str) -> bool:

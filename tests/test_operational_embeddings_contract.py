@@ -264,3 +264,28 @@ def test_healthz_surfaces_the_embedding_state(monkeypatch, tmp_path):
     assert body["status"] == "ok"  # liveness is unchanged: a degraded stage must not restart the API
     assert body["embeddings"]["degraded"] is True
     assert body["embeddings"]["model"] == emb.HASH_MODEL
+
+
+def test_is_local_endpoint_never_trusts_dns(monkeypatch):
+    import socket
+
+    from aec_intelligence.operational import netguard
+
+    def boom(*a, **k):
+        raise AssertionError("netguard must not resolve DNS")
+
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+    monkeypatch.delenv("AEC_LOCAL_HOSTNAMES", raising=False)
+    assert not netguard.is_local_endpoint("https://api.example.com")  # even if DNS says 198.18.x / 10.x
+    assert not netguard.is_local_endpoint("http://198.18.0.1/")  # benchmark range (fake-IP DNS)
+    assert not netguard.is_local_endpoint("http://100.64.0.1/")  # CGNAT
+    assert not netguard.is_local_endpoint("http://192.0.2.1/")  # TEST-NET
+    assert not netguard.is_local_endpoint("http://0.0.0.0/")
+    assert not netguard.is_local_endpoint("http://[::ffff:8.8.8.8]/")
+    assert netguard.is_local_endpoint("http://[::1]:11434")
+    assert netguard.is_local_endpoint("http://[::ffff:127.0.0.1]/")
+    assert netguard.is_local_endpoint("http://172.20.1.2/")
+    assert netguard.is_local_endpoint("http://ollama.localhost/")
+    assert not netguard.is_local_endpoint("http://gpu-box.lan/")
+    monkeypatch.setenv("AEC_LOCAL_HOSTNAMES", "gpu-box.lan")
+    assert netguard.is_local_endpoint("http://gpu-box.lan/")

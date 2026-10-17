@@ -186,3 +186,60 @@ def test_main_uses_build_jsonld_and_never_slices_edges():
     slices = [s for s in ast.walk(main) if isinstance(s, ast.Subscript) and isinstance(s.slice, ast.Slice)
               and isinstance(s.value, ast.Name) and s.value.id == "edges"]
     assert not slices, "main() must not slice edges when exporting JSON-LD"
+
+
+def test_links_cleared_and_rebuilt_after_prune(fake_db):
+    assert loader.apply("postgresql://fake", sql_only=False) == 0
+    log = fake_db
+    prune = max(_idx(log, "DELETE FROM aec.objects"))
+    clear = _idx(log, "SET object_ids = '{}', document_ids = '{}'")
+    link = _idx(log, "SET object_ids = ARRAY[o.id]")
+    assert clear and link
+    # final clear + relink both happen after the prune, clear before link
+    assert max(clear) > prune and max(link) > max(clear)
+    assert "project_key = 'ARCHIOFFICE'" in log[max(clear)][0]
+    assert log[-1][0] == "COMMIT"
+
+
+def test_sql_only_clears_then_relinks_existing_objects(fake_db):
+    assert loader.apply("postgresql://fake", sql_only=True) == 0
+    log = fake_db
+    clear = _idx(log, "SET object_ids = '{}', document_ids = '{}'")
+    link = _idx(log, "SET object_ids = ARRAY[o.id]")
+    assert clear and link and max(link) > max(clear)
+    assert not _idx(log, "DELETE FROM aec.objects")
+
+
+@pytest.mark.parametrize("corpus", [
+    [],
+    [{"node_id": "", "kind": "k", "content_hash": "h", "text": "t"}],
+    [{"kind": "k", "content_hash": "h", "text": "t"}],
+    [_vec(1), _vec(1)],
+])
+def test_sql_only_ignores_vector_corpus(fake_db, monkeypatch, corpus):
+    read = []
+
+    def rows(p):
+        read.append(p.name)
+        return corpus if p.name == "vector_corpus.jsonl" else [{"id": "n"}]
+
+    monkeypatch.setattr(loader, "load_jsonl", rows)
+    assert loader.apply("postgresql://fake", sql_only=True) == 0
+    assert "vector_corpus.jsonl" not in read
+    assert fake_db[-1][0] == "COMMIT"
+
+
+@pytest.mark.parametrize("corpus", [
+    [],
+    [{"node_id": "", "kind": "k", "content_hash": "h", "text": "t"}],
+    [_vec(1), _vec(1)],
+])
+def test_full_load_refuses_invalid_corpus_before_any_write(fake_db, monkeypatch, corpus):
+    monkeypatch.setattr(loader, "load_jsonl",
+                        lambda p: corpus if p.name == "vector_corpus.jsonl" else [{"id": "n"}])
+    with pytest.raises(ValueError):
+        loader.apply("postgresql://fake", sql_only=False)
+    writes = [s for s, _ in fake_db
+              if s.split(" ", 1)[0] in ("INSERT", "UPDATE", "DELETE") or "BEGIN;" in s]
+    assert writes == []
+    assert ("COMMIT", None) not in fake_db

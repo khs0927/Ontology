@@ -79,3 +79,36 @@
 | `postgresql-client-16` 설치 실패 | `ubuntu-latest`가 Ubuntu 26.04로 바뀌어 해당 패키지가 없음 | PostgreSQL 16 잡을 `ubuntu-24.04`에 고정, `upload-artifact@v5` |
 
 최종 CI(`ca47d39`): 8개 검사 모두 통과. 여기에 DB 전체 테스트와 E2E 스모크가 포함된다.
+
+## 7. Local Windows run (2026-11-05)
+
+사용자 PC(Windows 10, 시스템 로캘 cp949, Python 3.13, PowerShell 5.1, ODA File Converter 27.1.0, FreeCAD 1.1)에서 실행했다. 클라우드가 건너뛴 도구 의존 테스트가 대상이다.
+
+| 명령 | 결과 |
+|---|---|
+| `python -m pytest tests` (`PYTHONUTF8` 없음, DB 없음) | 792 통과 / 0 실패 / 38 건너뜀 |
+| ODA 실변환: `test_dwg.py`, `test_cross_format_acceptance.py` | 통과. `simple_house.dwg`가 정답 값과 일치 |
+| PowerShell: `test_restore_drill_ops.py` (5.1) | 통과 |
+| FreeCAD: `test_native_ifc_probe_*` 2건 | 통과 |
+| 실제 ODA로 한글·공백 경로 변환 (`select_dwg_converter("auto", ...)`) | SUCCESS, 엔티티 149개 |
+| `scripts/` 아래 `.ps1` 19개를 PowerShell 5.1 파서로 검사 | 구문 오류 0 |
+| 확장 계약 테스트 (external_capabilities / drawing_context / intelligence_fabric) | 97 / 135 / 13 통과 |
+| ruff (src tests extensions scripts library) | 통과 |
+
+이번 실행에서 찾아 고친 문제:
+
+| 문제 | 원인 | 수정 |
+|---|---|---|
+| MCP stdio 서버가 한국어 Windows에서 깨짐 (실제 제품 버그) | 파이프 stdio가 로캘을 따라 cp949로 동작. 클라이언트에 cp949 바이트를 보내고, cp949에 없는 문자에서는 서버가 멈출 수 있음. GitHub Windows 러너는 영어 로캘이라 드러나지 않음 | `aec-mcp` 시작 시 stdin/stdout을 UTF-8로 고정, 회귀 테스트 추가 (수정 없이는 실패 확인) |
+| `test_oda_converter_tolerates_undecodable_console_output` 실패 | 가짜 ODA를 `.sh`로 만들어 Windows에서 실행 불가 | Windows에서는 `.cmd` 래퍼 사용 |
+
+남은 일:
+
+| 항목 | 필요한 것 |
+|---|---|
+| 건너뛴 DB 테스트 33건, `pg_dump` 백업·복원 테스트 1건, E2E 스모크의 Windows 실행 | Docker Desktop의 `aec-db` 기동 또는 로컬 PostgreSQL (이번 실행 때 Docker 엔진 꺼짐). Linux에서는 GitHub CI가 검증 |
+| FreeCAD+Blender 연계 테스트 1건 | `blender.exe`. `runtime\external\blender-5.2.0` 폴더에 실행 파일이 없음 |
+| QGIS 1건, LibreDWG 1건 | 이 PC에 미설치 |
+| 심볼릭 링크 테스트 1건 | Windows 심볼릭 링크 권한 |
+| bge-m3·qwen3 실제 답변 품질 | Ollama 미설치·미실행 |
+| 4절의 나머지 항목(AutoCAD 재작성, `drafting_kb.json` 적재, 대량 수집 게이트) | 이번 실행 범위 밖 |

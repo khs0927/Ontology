@@ -90,6 +90,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,cad,bim,shacl,semantic,parquet,operational]"
 
+      - name: PostgreSQL 16 client tools (backup/restore tests use the server's major version)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends postgresql-client-16
+          /usr/lib/postgresql/16/bin/pg_restore --version
+
       - name: Check database extensions (pgvector >= 0.7 for halfvec)
         run: |
           docker exec aec-db psql -U aec -d aec -c "CREATE EXTENSION IF NOT EXISTS vector" \

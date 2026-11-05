@@ -96,6 +96,8 @@ jobs:
             -tAc "SELECT extversion FROM pg_extension WHERE extname='vector'"
 
       - name: Full test suite against PostgreSQL (no DB test may be skipped)
+        # Explicit bash = 'bash -eo pipefail': without it a failing pytest is hidden by '| tee'.
+        shell: bash
         env:
           AEC_TEST_DATABASE_URL: postgresql://aec:ci@localhost:55432/aec
         run: |

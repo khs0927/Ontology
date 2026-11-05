@@ -15,14 +15,16 @@ needs no network and no model download. Its vectors are not semantic; this prove
 
     python scripts/e2e/e2e_smoke.py --dsn postgresql://aec@127.0.0.1:55432/aec_e2e
 
-The database is DESTROYED-AND-REBUILT only in the sense that rows are added; use a throwaway database
-whose name contains 'e2e' or 'test' (enforced unless --allow-any-db).
+Use a FRESHLY CREATED throwaway database whose name contains 'e2e' or 'test' (enforced unless
+--allow-any-db). The run adds rows and refuses a database that already holds ingestion jobs, because a
+second run would be deduplicated against the first and prove nothing.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -31,7 +33,6 @@ import tempfile
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -160,24 +161,59 @@ def stage_mcp_stdio(r: Run, work: Path, env: dict) -> None:
     r.check("mcp stdio validate_repository", call.get("status") == "SUCCESS", call.get("status"))
 
 
-def stage_operational(r: Run, env: dict) -> None:
+def database_name(dsn: str) -> str:
+    """dbname of a URL or key/value libpq DSN (libpq defaults it to the user name)."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    params = conninfo_to_dict(dsn)
+    return str(params.get("dbname") or params.get("user") or os.environ.get("PGDATABASE") or "")
+
+
+def job_states(dsn: str, job_ids: list[str]) -> dict[str, str]:
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        rows = conn.execute("SELECT id::text, state FROM aec.jobs WHERE id = ANY(%s::uuid[])", (job_ids,)).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def existing_jobs(dsn: str) -> int:
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        if conn.execute("SELECT to_regclass('aec.jobs')").fetchone()[0] is None:
+            return 0
+        return conn.execute("SELECT count(*) FROM aec.jobs").fetchone()[0]
+
+
+JOB_ID = re.compile(r"Job ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def stage_operational(r: Run, env: dict, dsn: str) -> None:
     op = [PY, "-m", "aec_intelligence.operational.cli"]
     for attempt in (1, 2):
         res = run(op + ["init-db"], env=env)
         r.check(f"init-db run {attempt}", res.returncode == 0, (res.stdout + res.stderr).strip().splitlines()[-1:])
+    job_ids: list[str] = []
     for path, project in (("fixtures/simple_house.dxf", "E2E-HOUSE"), ("fixtures/simple_house.ifc", "E2E-IFC")):
         res = run(op + ["ingest", str(REPO / path), "--project-id", project, "--discipline", "architecture"], env=env)
+        job_ids += JOB_ID.findall(res.stdout)
         r.check(f"enqueue {Path(path).name}", res.returncode == 0 and "Enqueued" in res.stdout, res.stdout.strip()[-120:])
-    processed = 0
-    for _ in range(10):
+    runs = 0
+    for _ in range(10):  # a failing job is retried (max attempts), so bound the loop and check states after
         res = run(op + ["worker", "--once"], env=env)
         if res.returncode != 0 or "True" not in res.stdout:
             break
-        processed += 1
-    r.check("worker drained queue", processed >= 2, f"{processed} jobs processed")
+        runs += 1
+    states = job_states(dsn, job_ids) if job_ids else {}
+    r.check("worker ingested every job", len(job_ids) == 2 and set(states.values()) == {"SUCCEEDED"},
+            {"worker_runs": runs, "states": sorted(states.values())})
     res = run(op + ["search", "벽체", "--project-id", "E2E-HOUSE", "--top-k", "3"], env=env)
     doc = last_json(res.stdout) or {}
     r.check("search 벽체", res.returncode == 0 and doc.get("total_hits", 0) >= 1, f"hits={doc.get('total_hits')}")
+    res = run(op + ["search", "External Wall", "--project-id", "E2E-IFC", "--top-k", "3"], env=env)
+    doc = last_json(res.stdout) or {}
+    r.check("search IFC project", res.returncode == 0 and doc.get("total_hits", 0) >= 1, f"hits={doc.get('total_hits')}")
     res = run(op + ["kg-build"], env=env)
     r.check("kg-build", res.returncode == 0, (res.stderr.strip().splitlines() or [""])[-1][:160])
     res = run(op + ["kg-stats"], env=env)
@@ -206,16 +242,24 @@ def stage_knowledge_pack(r: Run, env: dict, dsn: str) -> None:
     r.check("graph rag refuses ungrounded question", doc.get("refused") is True, doc.get("warnings"))
 
 
-def stage_api(r: Run, env: dict) -> None:
+def log_tail(path: Path, lines: int = 8) -> str:
+    try:
+        return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+    except OSError:
+        return ""
+
+
+def stage_api(r: Run, env: dict, logs: Path) -> None:
     port = free_port()
+    log = logs / "api.log"
     api_env = {**env, "AEC_API_TOKEN": TOKEN, "AEC_IMPORT_ROOTS": str(REPO / "fixtures")}
     proc = subprocess.Popen([PY, "-m", "uvicorn", "aec_intelligence.operational.api:create_app", "--factory",
                              "--host", "127.0.0.1", "--port", str(port)], env=api_env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                            stdout=subprocess.DEVNULL, stderr=log.open("w", encoding="utf-8"))
     base = f"http://127.0.0.1:{port}"
     auth = {"Authorization": f"Bearer {TOKEN}"}
     try:
-        if not r.check("api starts", wait_http(base + "/healthz", 60)):
+        if not r.check("api starts", wait_http(base + "/healthz", 60), None if proc.poll() is None else log_tail(log)):
             return
         status, body = http("GET", base + "/healthz")
         r.check("api /healthz", status == 200 and json.loads(body).get("status") == "ok", status)
@@ -226,7 +270,7 @@ def stage_api(r: Run, env: dict) -> None:
         status, _ = http("POST", base + "/v1/ingestions", {"path": "/etc/hostname"}, headers=auth)
         r.check("api import-root guard", status in (400, 403), status)
         status, body = http("POST", base + "/v1/ingestions",
-                            {"path": str(REPO / "fixtures" / "simple_house.dxf"), "project_id": "E2E-API"}, headers=auth)
+                            {"path": str(REPO / "fixtures" / "simple_house_geometry.ifc"), "project_id": "E2E-API"}, headers=auth)
         r.check("api enqueue ingestion", status == 202, status)
         status, body = http("POST", base + "/v1/search", {"query": "벽체", "top_k": 3}, headers=auth)
         r.check("api search", status == 200 and json.loads(body).get("total_hits", 0) >= 1, status)
@@ -246,14 +290,15 @@ def stage_api(r: Run, env: dict) -> None:
             proc.kill()
 
 
-def stage_mcp_http(r: Run, work: Path, env: dict) -> None:
+def stage_mcp_http(r: Run, work: Path, env: dict, logs: Path) -> None:
     port = free_port()
+    log = logs / "mcp_http.log"
     proc = subprocess.Popen([PY, "-m", "aec_intelligence.mcp_http", "--root", str(work), "--port", str(port)],
-                            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                            env=env, stdout=subprocess.DEVNULL, stderr=log.open("w", encoding="utf-8"))
     url = f"http://127.0.0.1:{port}/mcp"
     accept = {"Accept": "application/json, text/event-stream"}
     try:
-        if not r.check("mcp http starts", wait_http(url, 30)):
+        if not r.check("mcp http starts", wait_http(url, 30), None if proc.poll() is None else log_tail(log)):
             return
         status, body = http("POST", url, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "1"}}},
@@ -286,9 +331,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.dsn:
         parser.error("--dsn (or AEC_E2E_DATABASE_URL) is required")
-    dbname = urllib.parse.urlsplit(args.dsn).path.lstrip("/")
+    try:
+        dbname = database_name(args.dsn)
+    except Exception as exc:  # noqa: BLE001 - psycopg missing or an unparseable DSN
+        parser.error(f"cannot read the database name from --dsn: {exc}")
     if not args.allow_any_db and not any(tag in dbname.lower() for tag in ("e2e", "test")):
         parser.error(f"refusing database {dbname!r}: name must contain 'e2e' or 'test' (or pass --allow-any-db)")
+    try:
+        leftover = existing_jobs(args.dsn)
+    except Exception as exc:  # noqa: BLE001
+        print(f"cannot connect to {dbname!r}: {exc}", file=sys.stderr)
+        return 2
+    if leftover:
+        print(f"refusing database {dbname!r}: it already holds {leftover} ingestion jobs; "
+              "create a fresh database for each run", file=sys.stderr)
+        return 2
 
     r = Run()
     stub_port = free_port()
@@ -311,10 +368,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for stage in (lambda: stage_prototype(r, work / "repo", env),
                       lambda: stage_mcp_stdio(r, work / "repo", env),
-                      lambda: stage_operational(r, env),
+                      lambda: stage_operational(r, env, args.dsn),
                       lambda: stage_knowledge_pack(r, env, args.dsn),
-                      lambda: stage_api(r, env),
-                      lambda: stage_mcp_http(r, work / "repo", env)):
+                      lambda: stage_api(r, env, work),
+                      lambda: stage_mcp_http(r, work / "repo", env, work)):
             try:
                 stage()
             except Exception as exc:  # noqa: BLE001 - a crashed stage is a failed check, keep going

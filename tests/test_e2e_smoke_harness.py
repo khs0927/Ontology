@@ -68,3 +68,13 @@ def test_last_json_reads_pretty_printed_cli_output():
     smoke = _load("e2e_smoke")
     assert smoke.last_json('log line\n{\n  "status": "SUCCESS"\n}\n') == {"status": "SUCCESS"}
     assert smoke.last_json("no json") is None
+
+
+@pytest.mark.parametrize("dsn", ["host=e2e-db dbname=aec", "dbname=prod user=test", "postgresql://test@h/prod"])
+def test_smoke_guard_reads_the_real_dbname(dsn, capsys):
+    pytest.importorskip("psycopg")
+    smoke = _load("e2e_smoke")
+    with pytest.raises(SystemExit) as exc:
+        smoke.main(["--dsn", dsn])
+    assert exc.value.code == 2
+    assert "refusing database" in capsys.readouterr().err

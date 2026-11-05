@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -34,6 +35,20 @@ def test_mcp_stdio_cli_emits_only_jsonrpc_on_stdout(tmp_path: Path):
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
         json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
     ]) + "\n"
-    completed = subprocess.run([sys.executable, "-m", "aec_intelligence.mcp_stdio", "--root", str(tmp_path)], input=payload, text=True, capture_output=True, check=True)
+    completed = subprocess.run([sys.executable, "-m", "aec_intelligence.mcp_stdio", "--root", str(tmp_path)], input=payload, text=True, encoding="utf-8", capture_output=True, check=True)
     assert completed.stderr == ""
     assert [json.loads(line)["jsonrpc"] for line in completed.stdout.splitlines()] == ["2.0", "2.0"]
+
+
+def test_mcp_stdio_cli_speaks_utf8_whatever_the_locale(tmp_path: Path):
+    # PYTHONIOENCODING stands in for a Korean Windows console, where piped stdio defaults to cp949.
+    # The unknown method name round-trips through stdin and stdout; U+1F3D7 does not exist in cp949.
+    method = "도면\U0001F3D7"
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method}, ensure_ascii=False) + "\n"
+    completed = subprocess.run(
+        [sys.executable, "-m", "aec_intelligence.mcp_stdio", "--root", str(tmp_path)],
+        input=payload.encode("utf-8"), capture_output=True, check=True,
+        env={**os.environ, "PYTHONIOENCODING": "cp949", "PYTHONUTF8": "0"},
+    )
+    assert json.loads(completed.stdout.decode("utf-8"))["error"]["message"] == f"Method not found: {method}"
+    assert b"\r" not in completed.stdout

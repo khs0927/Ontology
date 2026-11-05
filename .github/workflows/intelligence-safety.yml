@@ -65,7 +65,9 @@ jobs:
         run: python -m pytest -q extensions/external_capabilities/tests
 
   operational-postgres:
-    runs-on: ubuntu-latest
+    # Pinned: the server is PostgreSQL 16, and its matching client (postgresql-client-16, used by the
+    # backup/restore tests) is in Ubuntu 24.04's archive but not in ubuntu-latest (26.04) any more.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -120,7 +122,7 @@ jobs:
 
       - name: Upload E2E report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-report
           path: e2e-report.json

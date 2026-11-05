@@ -70,3 +70,12 @@
 | 낮음 | 같은 DB 재실행 시 중복 제거로 결과가 바뀜 | 기존 작업이 있는 DB는 거부, API 적재는 별도 픽스처 사용 |
 | 낮음 | key/value DSN에서 DB 이름 검사를 우회 가능 | `psycopg.conninfo`로 실제 dbname 확인 |
 | 낮음 | 서버 stderr 파이프를 읽지 않음 | 작업 폴더의 로그 파일로 기록, 기동 실패 시 꼬리 출력 |
+
+## 6. GitHub CI에서 드러난 문제와 수정
+
+| 문제 | 원인 | 수정 |
+|---|---|---|
+| 백업·복원 테스트 실패 (`unrecognized configuration parameter "transaction_timeout"`) | 러너의 PostgreSQL 클라이언트가 17 이상으로 올라가 PG16 서버에 모르는 설정을 보냄. 클라이언트가 서버보다 새 PC에서도 같은 일이 생김 | `backup.py`가 서버 주 버전과 같은 `/usr/lib/postgresql/<버전>/bin` 도구를 먼저 사용 (단위 테스트 추가) |
+| `postgresql-client-16` 설치 실패 | `ubuntu-latest`가 Ubuntu 26.04로 바뀌어 해당 패키지가 없음 | PostgreSQL 16 잡을 `ubuntu-24.04`에 고정, `upload-artifact@v5` |
+
+최종 CI(`ca47d39`): 8개 검사 모두 통과. 여기에 DB 전체 테스트와 E2E 스모크가 포함된다.

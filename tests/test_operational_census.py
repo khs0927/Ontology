@@ -170,6 +170,19 @@ def test_restore_disables_parallel_index_builds(tmp_path):
 
 # ------------------------------------------------------------------------------------------
 
+def test_tool_prefers_client_matching_server_major(tmp_path, monkeypatch):
+    for version in ("16", "18"):
+        exe = tmp_path / version / "bin" / "pg_restore"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("")
+    monkeypatch.setattr(backup, "PG_BIN_ROOT", tmp_path)
+    monkeypatch.setattr(backup.shutil, "which", lambda name: "/usr/bin/" + name)
+    assert backup._tool("pg_restore", None, 16) == str(tmp_path / "16" / "bin" / "pg_restore")
+    assert backup._tool("pg_restore", None, 17) == "/usr/bin/pg_restore"  # no 17 client: PATH
+    assert backup._tool("pg_restore", None, None) == "/usr/bin/pg_restore"
+    assert backup._tool("pg_restore", "/opt/explicit", 16) == "/opt/explicit"
+
+
 def test_census_exclude_by_name_glob_and_path_prefix(tmp_path):
     root = _tree(tmp_path)
     (root / "hillside_villa_export").mkdir()

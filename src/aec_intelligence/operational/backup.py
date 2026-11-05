@@ -58,9 +58,31 @@ def _dsn_parts(dsn: str) -> dict[str, str]:
             "dbname": (parsed.path or "/aec").lstrip("/") or "aec"}
 
 
-def _tool(name: str, explicit: str | None) -> str | None:
+PG_BIN_ROOT = Path("/usr/lib/postgresql")
+
+
+def server_major(dsn: str) -> int | None:
+    """Major version of the server behind ``dsn`` (None when it cannot be asked)."""
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn, connect_timeout=10) as conn:
+            return int(conn.execute("SHOW server_version_num").fetchone()[0]) // 10000
+    except Exception:  # noqa: BLE001 - only a preference for the client binary
+        return None
+
+
+def _tool(name: str, explicit: str | None, major: int | None = None) -> str | None:
+    """Locate pg_dump/pg_restore. With the server's ``major`` known, a Debian/Ubuntu client of that exact
+    version wins over PATH: a newer pg_restore emits settings an older server rejects (pg_restore 17+
+    sends ``SET transaction_timeout``, unknown to PostgreSQL 16), and a newer pg_dump writes archive
+    versions an older pg_restore cannot read."""
     if explicit:
         return explicit
+    if major:
+        matching = PG_BIN_ROOT / str(major) / "bin" / name
+        if matching.exists():
+            return str(matching)
     found = shutil.which(name)
     if found:
         return found
@@ -78,7 +100,7 @@ def run_backup(dsn: str, target: str | Path, keep: int = 14, prefix: str = DEFAU
     folder.mkdir(parents=True, exist_ok=True)
     final = folder / backup_name(prefix, now)
     partial = final.with_name(final.name + ".partial")
-    executable = None if docker_container else _tool("pg_dump", pg_dump)
+    executable = None if docker_container else _tool("pg_dump", pg_dump, None if pg_dump else server_major(dsn))
     if executable:
         command = [executable, "-Fc", "-Z", "6", "--dbname", dsn]
     else:
@@ -130,7 +152,8 @@ def run_restore(dsn: str, dump: str | Path, yes: bool = False, docker_container:
     dump = Path(dump)
     if not dump.is_file():
         raise FileNotFoundError(dump)
-    executable = None if docker_container else _tool("pg_restore", pg_restore)
+    executable = None if docker_container else _tool("pg_restore", pg_restore,
+                                                      None if pg_restore else server_major(dsn))
     if not executable and not docker_container:
         raise RuntimeError("pg_restore not found on PATH; pass --docker-container aec-db")
     command, env = restore_command(dsn, dump, docker_container, executable, docker=docker, clean=clean)

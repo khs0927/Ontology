@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -450,7 +449,6 @@ def main() -> int:
     _vector_ids: set[str] = set()
     _edge_keys: set[tuple[str, str, str]] = set()
     _alias_keys: set[tuple[str, str, str]] = set()
-    command_seen: set[str] = set()
 
     def add_node(nid, ntype, name, search_text, **props):
         if nid in nodes:
@@ -626,7 +624,6 @@ def main() -> int:
             text, enc = read_text(path)
             parsed = parse_cfg(text)
             sid = f"{PROJECT_KEY}:setfile:{slug(rel_str.rsplit('.', 1)[0])}"
-            spec_txt = "; ".join(f"{s['block_name']}={s['description']}" for s in parsed["block_specs"])
             summary = (f"ArchiOffice 심볼 배치 설정 '{path.name}' ({cls['category_label']}, "
                        f"{cls['subtype_label']}"
                        f"{', 대상 도면층 ' + parsed['layer'] if parsed['layer'] else ''}"
@@ -781,7 +778,6 @@ def main() -> int:
 
         # ---- binary symbol files (.dwg/.dwt/.slb/.bak/.exe)
         if ext in (".dwg", ".dwt", ".slb", ".bak"):
-            ntype = "SymbolSetFile" if ext == ".slb" else "LibrarySymbol"
             nid = f"{PROJECT_KEY}:symbol:{slug(rel_str.rsplit('.', 1)[0])}"
             bits = [f"ArchiOffice {cls['category_label']} 심볼 '{stem}'",
                     cls["subtype_label"], f"파일 형식 {ext.lstrip('.').upper()}"]

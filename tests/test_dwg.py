@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -70,9 +71,13 @@ def test_oda_converter_tolerates_undecodable_console_output(tmp_path: Path):
         "sys.stdout.buffer.write(b'\\xb5\\xb5\\xb8\\xe9 \\xff ok\\n')\n",
         encoding="utf-8",
     )
-    wrapper = tmp_path / "oda.sh"
-    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8")
-    wrapper.chmod(0o755)
+    if os.name == "nt":
+        wrapper = tmp_path / "oda.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{fake}" %*\n', encoding="utf-8")
+    else:
+        wrapper = tmp_path / "oda.sh"
+        wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
     result = ODAConverter(str(wrapper)).convert_to_dxf(source, tmp_path / "converted")
     assert result.status == "SUCCESS"
     assert "ok" in result.checks["stdout"]

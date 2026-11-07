@@ -29,7 +29,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -92,6 +91,18 @@ LINK_SQL = (
 )
 
 
+CLEAR_LINKS_SQL = (
+    "UPDATE aec.kg_nodes SET object_ids = '{}', document_ids = '{}' "
+    "WHERE project_key = 'ARCHIOFFICE'"
+)
+
+
+def relink_nodes(cur) -> None:
+    """Clear every ARCHIOFFICE node link, then rebuild from objects that still exist."""
+    cur.execute(CLEAR_LINKS_SQL)
+    cur.execute(LINK_SQL)
+
+
 def validate_vectors(vectors: list[dict]) -> None:
     """Refuse an empty/invalid corpus so stale-object pruning can never wipe the project."""
     if not vectors:
@@ -131,9 +142,10 @@ def apply(dsn: str, sql_only: bool) -> int:
         print("BLOCKED: psycopg is not installed in this interpreter; cannot reach the database.",
               file=sys.stderr)
         return 3
-    manifest = json.loads((PACK / "manifest.json").read_text(encoding="utf-8"))
+    json.loads((PACK / "manifest.json").read_text(encoding="utf-8"))  # fail early on a corrupt manifest
     nodes = load_jsonl(PACK / "graph" / "kg_nodes.jsonl")
-    vectors = load_jsonl(PACK / "vectors" / "vector_corpus.jsonl")
+    # --sql-only never touches objects/vectors/pruning, so it neither reads nor validates the corpus.
+    vectors = [] if sql_only else load_jsonl(PACK / "vectors" / "vector_corpus.jsonl")
     sql_file = PACK / "sql" / "archioffice_kg_load.sql"
 
     with psycopg.connect(dsn) as conn:
@@ -142,12 +154,13 @@ def apply(dsn: str, sql_only: bool) -> int:
             cur.execute("SELECT 1 FROM aec.kg_nodes LIMIT 1")
             cur.execute("SELECT 1 FROM aec.text_vectors LIMIT 1")
             print(f"connected; applying {sql_file.name}")
-            validate_vectors(vectors)
+            if not sql_only:
+                validate_vectors(vectors)  # before any write
             cur.execute(sql_file.read_text(encoding="utf-8"))
             print(f"kg load committed: nodes={len(nodes)}")
             if sql_only:
                 # link to pack objects that already exist (idempotent with the SQL's own link)
-                cur.execute(LINK_SQL)
+                relink_nodes(cur)
                 conn.commit()
                 return 0
 
@@ -195,9 +208,10 @@ def apply(dsn: str, sql_only: bool) -> int:
                         "revision=EXCLUDED.revision, content_hash=EXCLUDED.content_hash",
                     (oid, MODEL, v["content_hash"]))
                 seen_hash.add(v["content_hash"])
-            # objects now exist: (re)link kg nodes (the SQL ran before objects on a clean DB)
-            cur.execute(LINK_SQL)
+            # prune first so no node keeps a link to a deleted object, then rebuild all links
+            # (the SQL script ran before objects existed on a clean DB)
             prune_stale_objects(cur, vectors)
+            relink_nodes(cur)
         conn.commit()
     print(f"APPLIED objects={len(vectors)} distinct_text_vectors={len(seen_hash)}")
     print("NOTE: this script does not run kg-summarize; run "

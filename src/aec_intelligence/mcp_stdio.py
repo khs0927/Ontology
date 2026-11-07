@@ -108,10 +108,20 @@ class MCPStdioServer:
         return 0
 
 
+def _force_utf8_stdio() -> None:
+    """MCP messages are UTF-8, but piped stdio follows the locale (cp949 on Korean Windows).
+
+    Left alone, the server sends clients cp949 bytes and dies on any character cp949 lacks.
+    """
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="aec-mcp", description="AEC CAIR MCP stdio server")
     parser.add_argument("--root", default=".", help="repository root")
     args = parser.parse_args(argv)
+    _force_utf8_stdio()
     return MCPStdioServer(args.root).run()
 
 

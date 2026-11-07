@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
+import re
 import uuid
 
 import psycopg
@@ -31,6 +32,31 @@ def graph_name(project: str) -> str:
 
 
 MIGRATION_LOCK = 7_146_221_001  # pg_advisory_lock key: one migration runner at a time
+
+# halfvec (migration 0003) arrived in pgvector 0.7.0. Older builds (e.g. Ubuntu 24.04's packaged 0.6.0)
+# fail deep inside the migration with 'type "halfvec" does not exist'; check up front instead.
+MIN_PGVECTOR_FOR_HALFVEC = (0, 7, 0)
+
+
+def _version_tuple(text):
+    """'0.8.1' -> (0, 8, 1); tolerant of suffixes like '0.7.0-dev'. None for an unparseable value."""
+    match = re.match(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?', str(text or '').strip())
+    if not match:
+        return None
+    return tuple(int(group or 0) for group in match.groups())
+
+
+def require_halfvec_support(conn):
+    """Raise a clear error when the installed pgvector cannot provide ``halfvec``."""
+    row = conn.execute("SELECT extversion FROM pg_extension WHERE extname='vector'").fetchone()
+    version = row[0] if row else None
+    parsed = _version_tuple(version)
+    if parsed is None or parsed < MIN_PGVECTOR_FOR_HALFVEC:
+        need = '.'.join(map(str, MIN_PGVECTOR_FOR_HALFVEC))
+        raise RuntimeError(
+            f"pgvector {version or 'not installed'} has no halfvec type; migration 0003_text_vectors needs "
+            f"pgvector >= {need}. Use the bundled docker/Dockerfile.db image, or install a newer pgvector "
+            "and run 'ALTER EXTENSION vector UPDATE'.")
 
 
 class Database:
@@ -80,8 +106,11 @@ class Database:
             for path in sorted(MIGRATIONS_DIR.glob('[0-9][0-9][0-9][0-9]_*.sql')):
                 if path.stem in done:
                     continue
+                body = path.read_text(encoding='utf-8-sig')
+                if 'halfvec' in body:
+                    require_halfvec_support(conn)
                 with conn.transaction():
-                    conn.execute(path.read_text(encoding='utf-8-sig'))
+                    conn.execute(body)
                     conn.execute('INSERT INTO aec.schema_migrations(version) VALUES(%s)', (path.stem,))
                 applied.append(path.stem)
             conn.execute('SELECT pg_advisory_unlock(%s)', (MIGRATION_LOCK,))

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/khs0927/Ontology-platform/contracts/aec-cair-snapshot-1.schema.json",
+  "title": "khs0927/Ontology CAIR snapshot (03_CAIR/project-cair.json)",
+  "description": "Output of khs0927/Ontology aec_intelligence.cair.CAIRSnapshot.to_dict() (pinned d81598f; CAIR_SCHEMA_VERSION 0.x, currently '0.1.0'), written by `aec ingest-dxf` / `aec ingest-file`. Consumed by sion_cair.ingest (consolidation phase 1): objects become unverified Concept nodes EXTRACTED_FROM one Artifact node per source file, with one evidence row each. Only the fields Sion reads are constrained; producers may add fields.",
+  "x-sion-contract": {
+    "status": "pinned",
+    "pinned": true,
+    "upstream": "khs0927/Ontology",
+    "upstream_commit": "d81598f"
+  },
+  "type": "object",
+  "required": ["schema_version", "snapshot_id", "created_at", "project_id", "status", "metadata", "objects", "relations"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$"},
+    "snapshot_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "project_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+    "status": {"enum": ["SUCCESS", "SUCCESS_WITH_WARNINGS", "PARTIAL", "FAILED", "REQUIRES_REVIEW"]},
+    "metadata": {"type": "object"},
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "project_id", "type", "source", "properties", "classification", "provenance"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^aec://project/"},
+          "project_id": {"type": "string", "minLength": 1},
+          "type": {"type": "string", "minLength": 1},
+          "source": {
+            "type": "object",
+            "required": ["file", "format"],
+            "properties": {
+              "file": {"type": "string"},
+              "format": {"type": "string", "minLength": 1},
+              "entity_id": {"type": ["string", "null"]},
+              "layer": {"type": ["string", "null"]},
+              "artifact_id": {"type": ["string", "null"]}
+            }
+          },
+          "geometry_ref": {"type": ["string", "null"]},
+          "bbox": {"type": "object"},
+          "properties": {"type": "object"},
+          "classification": {
+            "type": ["object", "null"],
+            "required": ["label", "confidence", "method", "state"],
+            "properties": {
+              "label": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "method": {"type": "string"},
+              "evidence": {"type": "array", "items": {"type": "string"}},
+              "state": {"type": "string"}
+            }
+          },
+          "provenance": {
+            "type": ["object", "null"],
+            "required": ["source_format", "source_hash", "parser", "parser_version"],
+            "properties": {
+              "source_format": {"type": "string"},
+              "source_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+              "parser": {"type": "string"},
+              "parser_version": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["subject", "predicate", "object", "confidence"],
+        "properties": {
+          "subject": {"type": "string", "minLength": 1},
+          "predicate": {"type": "string", "minLength": 1},
+          "object": {"type": "string", "minLength": 1},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "provenance": {"type": "object"}
+        }
+      }
+    }
+  }
+}

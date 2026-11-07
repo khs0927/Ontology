@@ -500,6 +500,43 @@ def storey_from(*candidates: tuple[str, str]) -> dict[str, str]:
     return {}
 
 
+_LAYER_SEPARATORS = re.compile(r"[-_.$|:/\\]+")
+
+
+def storey_from_layer(layer: str | None) -> dict[str, str]:
+    """Storey named by a CAD layer such as 'A-1F-WALL', 'S_B1_COL' or '2층-가구'; {} when none or several.
+
+    Layer names glue tokens with '-', '_' or '.', which the storey pattern otherwise reads as ranges or
+    as part of a word, so separators become spaces first. Ranges ('1F~3F') still name no single storey.
+    """
+    text = str(layer or "").strip()
+    if not text or text == "0":
+        return {}
+    found = storey_from(("layer", _LAYER_SEPARATORS.sub(" ", text)))
+    if found:
+        found["storey_evidence"] = text[:120]
+    return found
+
+
+def storey_from_level_texts(texts: list[str] | tuple[str, ...]) -> dict[str, str]:
+    """One storey when every level marker text in a layout ('1FL', '2층', 'B1F') names the same storey.
+
+    Sections and elevations list several levels, so a layout whose markers disagree stays unassigned.
+    """
+    tokens: set[str] = set()
+    evidence: list[str] = []
+    for text in texts:
+        found = storey_tokens(text)
+        if found:
+            tokens |= found
+            evidence.append(str(text))
+        if len(tokens) > 1:
+            return {}
+    if len(tokens) != 1:
+        return {}
+    return {"storey": tokens.pop(), "storey_source": "level_text", "storey_evidence": " | ".join(evidence)[:120]}
+
+
 def normalize_storey(value: str | None) -> str | None:
     """Query-side normalisation: '2층', '2f', 'B1F', '지하1층' -> '2F', 'B1'; unknown text is returned stripped."""
     if value is None or not str(value).strip():

@@ -231,6 +231,13 @@ def _add_batch_commands(subparsers):
     p.add_argument("--yes", action="store_true",
                    help="Actually delete; without this flag the command only reports what it would remove")
 
+    p = subparsers.add_parser("backfill-storey",
+                              help="Fill empty storey of loaded objects from frames/layers/sheet names (no re-parse)")
+    p.add_argument("--batch-size", type=int, default=5000, help="Rows read and updated per commit")
+    p.add_argument("--project", default=None, help="Limit to one project id")
+    p.add_argument("--document", default=None, help="Limit to one document id")
+    p.add_argument("--dry-run", action="store_true", help="Only count what would be filled, per storey source")
+
     p = subparsers.add_parser("storage-report", help="Bytes per table/index and per document (embeddings vs the rest)")
 
     p = subparsers.add_parser("reembed", help="Re-embed objects lacking a vector of AEC_EMBEDDING_MODEL")
@@ -519,6 +526,17 @@ def _cmd_ingest_stats(parsed, settings, db):
     return result
 
 
+def _cmd_backfill_storey(parsed, settings, db):
+    from .storey_backfill import backfill_storey
+
+    result = backfill_storey(db, batch_size=parsed.batch_size, dry_run=parsed.dry_run, project=parsed.project,
+                             document=parsed.document,
+                             progress=lambda i, n, doc: print(f"[backfill-storey] {i}/{n} {doc['id']}",
+                                                              file=sys.stderr, flush=True))
+    _emit(result)
+    return result
+
+
 def _cmd_graph_indexes(parsed, settings, db):
     created = db.ensure_all_graph_indexes()
     _emit({"graphs": len(created), "created": {g: c for g, c in created.items() if c}})
@@ -530,6 +548,7 @@ BATCH_COMMANDS = {
     "bulk-census": _cmd_bulk_census,
     "report": _cmd_report, "backup": _cmd_backup, "restore": _cmd_restore,
     "reembed": _cmd_reembed, "convert-dwg": _cmd_convert_dwg, "graph-indexes": _cmd_graph_indexes,
+    "backfill-storey": _cmd_backfill_storey,
     "vectors-gc": _cmd_vectors_gc, "storage-report": _cmd_storage_report,
     "search-eval": _cmd_search_eval, "ingest-stats": _cmd_ingest_stats,
 }

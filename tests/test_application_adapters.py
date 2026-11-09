@@ -123,3 +123,21 @@ def test_qgis_child_environment_drops_other_python_envs_but_keeps_qgis_dir(monke
     monkeypatch.setenv("PATH", os.pathsep.join([linked_bin, str(outer_venv), str(other_conda), str(qgis_conda), str(system)]))
     env = QGISApplicationAdapter._environment(str(qgis_conda / "qgis_process"))
     assert env["PATH"].split(os.pathsep) == [str(qgis_conda), str(system)]
+
+
+def test_qgis_child_environment_survives_unresolvable_path_entries(monkeypatch):
+    """Windows realpath raises OSError (WinError 649) on some reparse points, e.g. npx cache dirs."""
+    import os
+
+    real = os.path.realpath
+
+    def flaky(path, *args, **kwargs):
+        if "unresolvable" in str(path):
+            raise OSError(649, "reparse point")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", flaky)
+    entry = os.path.join(os.path.abspath(os.sep), "unresolvable", "bin")
+    monkeypatch.setenv("PATH", os.pathsep.join([entry, os.environ.get("PATH", "")]))
+    env = QGISApplicationAdapter._environment()
+    assert entry in env["PATH"].split(os.pathsep)

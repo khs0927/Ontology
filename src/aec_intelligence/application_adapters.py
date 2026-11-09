@@ -113,9 +113,21 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
         return [str(path), *arguments]
 
     @staticmethod
+    def _real(path: str) -> str:
+        """os.path.realpath, falling back to abspath when Windows cannot resolve a reparse point.
+
+        realpath raises OSError (e.g. WinError 649 on npx/AppExecLink cache entries) for some
+        PATH directories; one unreadable entry must not stop QGIS from launching.
+        """
+        try:
+            return os.path.realpath(path)
+        except (OSError, ValueError):
+            return os.path.abspath(path)
+
+    @staticmethod
     def _is_python_env_bin(entry: str) -> bool:
         """A PATH entry that is the bin/Scripts directory of a virtualenv or conda environment."""
-        parent = os.path.dirname(os.path.realpath(entry))
+        parent = os.path.dirname(QGISApplicationAdapter._real(entry))
         return os.path.isfile(os.path.join(parent, "pyvenv.cfg")) or os.path.isdir(os.path.join(parent, "conda-meta"))
 
     @staticmethod
@@ -135,7 +147,7 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
             env.pop(name, None)
 
         def key(path: str) -> str:
-            return os.path.normcase(os.path.realpath(path))
+            return os.path.normcase(QGISApplicationAdapter._real(path))
 
         own_bins = set()
         if sys.prefix != sys.base_prefix:

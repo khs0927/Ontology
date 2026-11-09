@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import Any, Iterable
 
 from .cair import CAIRSnapshot
@@ -110,6 +112,57 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
             return ["cmd.exe", "/d", "/c", "call", QGISApplicationAdapter._cmd_quote(str(path)), *(QGISApplicationAdapter._cmd_quote(argument) for argument in arguments)]
         return [str(path), *arguments]
 
+    @staticmethod
+    def _real(path: str) -> str:
+        """os.path.realpath, falling back to abspath when Windows cannot resolve a reparse point.
+
+        realpath raises OSError (e.g. WinError 649 on npx/AppExecLink cache entries) for some
+        PATH directories; one unreadable entry must not stop QGIS from launching.
+        """
+        try:
+            return os.path.realpath(path)
+        except (OSError, ValueError):
+            return os.path.abspath(path)
+
+    @staticmethod
+    def _is_python_env_bin(entry: str) -> bool:
+        """A PATH entry that is the bin/Scripts directory of a virtualenv or conda environment."""
+        parent = os.path.dirname(QGISApplicationAdapter._real(entry))
+        return os.path.isfile(os.path.join(parent, "pyvenv.cfg")) or os.path.isdir(os.path.join(parent, "conda-meta"))
+
+    @staticmethod
+    def _environment(executable: str | None = None) -> dict[str, str]:
+        """The caller's environment without other Python installations' entries.
+
+        qgis_process embeds the system Python and takes its prefix from the first python on PATH.
+        Run from a virtualenv, it found the venv's interpreter, loaded the venv's site-packages
+        instead of the QGIS bindings ("No module named 'qgis'") and crashed with SIGSEGV. So the
+        child gets no VIRTUAL_ENV/PYTHONPATH/PYTHONHOME, and PATH loses the running venv's bin
+        (compared by real path, so a symlinked spelling matches) and any other venv/conda env bin.
+        The directory holding qgis_process itself is always kept (a conda-forge QGIS lives in
+        its env's bin). QGIS, and the OSGeo4W wrapper on Windows, set up their own Python.
+        """
+        env = dict(os.environ)
+        for name in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE"):
+            env.pop(name, None)
+
+        def key(path: str) -> str:
+            return os.path.normcase(QGISApplicationAdapter._real(path))
+
+        own_bins = set()
+        if sys.prefix != sys.base_prefix:
+            own_bins = {key(os.path.join(sys.prefix, sub)) for sub in ("bin", "Scripts")}
+        keep = {key(os.path.dirname(os.path.abspath(executable)))} if executable else set()
+        entries = [e for e in env.get("PATH", "").split(os.pathsep) if e]
+        env["PATH"] = os.pathsep.join(
+            e for e in entries
+            if key(e) in keep or (key(e) not in own_bins and not QGISApplicationAdapter._is_python_env_bin(e)))
+        # Headless Linux/macOS (CI, containers, SSH): without a display Qt aborts before the
+        # processing framework starts. 'offscreen' is what qgis_process documents for this case.
+        if os.name != "nt" and not env.get("QT_QPA_PLATFORM") and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+            env["QT_QPA_PLATFORM"] = "offscreen"
+        return env
+
     def _run(self, executable: str, arguments: Iterable[str], timeout: int) -> subprocess.CompletedProcess[str]:
         command = self._command(executable, *tuple(arguments))
         # Passing a pre-built command line is intentional here: Python's
@@ -125,6 +178,7 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
             errors="replace",
             timeout=timeout,
             check=False,
+            env=self._environment(executable),
         )
 
     def run_processing(self, executable: str | None, algorithm: str, parameters: dict[str, Any], timeout: int = 300) -> dict[str, Any]:

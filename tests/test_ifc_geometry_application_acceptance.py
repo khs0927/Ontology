@@ -2,13 +2,15 @@ from pathlib import Path
 
 import pytest
 
+from _runtimes import blender, freecad_cmd
+
 from aec_intelligence.blender_adapter import BlenderSceneAdapter
 from aec_intelligence.format_pipeline import SemanticFormatIngestionPipeline
 from aec_intelligence.freecad_adapter import FreeCADSceneAdapter, probe_native_ifc
 
 
-FREECAD = Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe")
-BLENDER = Path(r"C:\Users\USER\Documents\ChatGPT\온톨로지\runtime\external\blender-5.2.0\blender.exe")
+FREECAD = freecad_cmd()
+BLENDER = blender()
 
 
 @pytest.mark.skipif(
@@ -70,3 +72,32 @@ def test_native_ifc_probe_rejects_semantic_only_ifc(tmp_path: Path):
     assert result.non_null_shape_count == 0
     assert any("no non-null shape" in error for error in result.errors)
     assert result.checks["authoritative_source_unchanged"] is True
+
+
+@pytest.mark.skipif(not BLENDER.is_file(), reason="Blender runtime is not configured")
+def test_ifc_geometry_flows_to_blender_review_outputs(tmp_path: Path):
+    """Blender alone (the combined test above also needs FreeCAD)."""
+    result = SemanticFormatIngestionPipeline(tmp_path).ingest(
+        Path(__file__).parents[1] / "fixtures" / "simple_house_geometry.ifc",
+        "P-IFC-GEOMETRY-BLENDER",
+        "IFC Geometry Blender House",
+    )
+    assert result.status == "SUCCESS_WITH_WARNINGS"
+    blender = BlenderSceneAdapter(BLENDER).export_project(tmp_path, "P-IFC-GEOMETRY-BLENDER")
+    assert blender.status == "SUCCESS"
+    assert blender.geometry_count == 1
+    assert blender.checks["created_objects"] == 1
+    assert Path(blender.blend_path).is_file()
+    assert Path(blender.glb_path).is_file()
+    assert Path(blender.preview_path).is_file()
+
+
+@pytest.mark.skipif(not BLENDER.is_file(), reason="Blender runtime is not configured")
+def test_dxf_cair_flows_to_blender_review_outputs(tmp_path: Path):
+    from aec_intelligence.pipeline import DXFIngestionPipeline
+
+    DXFIngestionPipeline(tmp_path).ingest(Path(__file__).parents[1] / "fixtures" / "simple_house.dxf", "P-DXF-BLENDER")
+    blender = BlenderSceneAdapter(BLENDER).export_project(tmp_path, "P-DXF-BLENDER")
+    assert blender.status == "SUCCESS"
+    assert blender.checks["created_objects"] == 7
+    assert Path(blender.blend_path).is_file() and Path(blender.glb_path).is_file()

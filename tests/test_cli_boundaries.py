@@ -22,7 +22,11 @@ def test_cli_probe_apps_accepts_explicit_executable_paths(tmp_path: Path, capsys
     freecad.write_bytes(b"configured")
     blender.write_bytes(b"configured")
 
-    assert main(["probe-apps", "--freecad", str(freecad), "--blender", str(blender)]) == 0
+    # An explicit missing QGIS path: the REQUIRES_CONFIGURATION branch must not depend on whether
+    # the host happens to have qgis_process on PATH.
+    missing_qgis = tmp_path / "missing" / "qgis_process"
+    assert main(["probe-apps", "--freecad", str(freecad), "--blender", str(blender),
+                 "--qgis", str(missing_qgis)]) == 0
     output = capsys.readouterr().out
     assert '"status": "AVAILABLE"' in output
     assert '"status": "REQUIRES_CONFIGURATION"' in output

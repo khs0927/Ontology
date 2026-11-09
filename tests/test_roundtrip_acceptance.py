@@ -2,12 +2,14 @@ from pathlib import Path
 
 import pytest
 
+from _runtimes import freecad_cmd
+
 from aec_intelligence.freecad_adapter import FreeCADSceneAdapter
 from aec_intelligence.pipeline import DXFIngestionPipeline
 
 
 def test_dwg_derived_cair_freecad_step_preserves_planar_bbox(tmp_path: Path):
-    freecad = Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe")
+    freecad = freecad_cmd()
     if not freecad.is_file():
         pytest.skip("FreeCAD command-line runtime is not configured")
 

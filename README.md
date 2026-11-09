@@ -1,5 +1,7 @@
 # AEC Semantic Operating System — Prototype
 
+> **동결 안내 (2026-11-09):** 이 저장소의 개발은 [khs0927/Ontology-platform](https://github.com/khs0927/Ontology-platform) 의 `packages/aec` 로 옮겨졌습니다 (통합 계획 `docs/CONSOLIDATION_PLAN.md` 2단계). 이 `master` 는 참조용으로 동결되며, 새 변경은 Ontology-platform 에 보내 주세요. 마지막 동기화 지점은 Ontology-platform 의 `packages/aec/UPSTREAM.md` 에 기록됩니다.
+
 This repository is the first executable slice of the Global AEC Semantic Design Intelligence Framework.
 
 The initial milestone implements the requested sequence:

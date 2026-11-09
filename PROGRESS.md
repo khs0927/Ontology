@@ -8,7 +8,7 @@ copy is `C:\CODE\Ontology\PROGRESS.md`; this review copy is in `C:\CODE\Ontology
 
 ## Evidence paths
 
-- Original instructions: user attachment `C:\Users\khs09\.codex\attachments\c90c31a0-334d-4ae6-a259-db9a70b4b042\붙여넣은 텍스트.txt`.
+- Original instructions: a local user attachment (path withheld for privacy).
 - Requirement-by-requirement evidence: `D:\AECData\dev\completion-matrix.md`.
 - Timestamped operations: `D:\AECData\dev\speedup-log.md`.
 - Independent audit: `D:\AECData\waves\FINDINGS.md` (Wave5 corrections supersede early claims).

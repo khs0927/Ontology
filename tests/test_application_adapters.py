@@ -78,6 +78,7 @@ def test_qgis_child_environment_drops_the_callers_virtualenv(monkeypatch, tmp_pa
     monkeypatch.setenv("VIRTUAL_ENV", str(venv))
     monkeypatch.setenv("PYTHONPATH", str(tmp_path / "src"))
     monkeypatch.setenv("AEC_KEEP_ME", "1")
+    (tmp_path / "usr-bin").mkdir()
     env = QGISApplicationAdapter._environment()
     assert env["PATH"].split(os.pathsep) == [str(tmp_path / "usr-bin")]
     assert "VIRTUAL_ENV" not in env and "PYTHONPATH" not in env
@@ -93,3 +94,32 @@ def test_qgis_child_environment_goes_offscreen_without_a_display(monkeypatch):
     assert env.get("QT_QPA_PLATFORM") == (None if os.name == "nt" else "offscreen")
     monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
     assert QGISApplicationAdapter._environment()["QT_QPA_PLATFORM"] == "xcb"
+
+
+def test_qgis_child_environment_drops_other_python_envs_but_keeps_qgis_dir(monkeypatch, tmp_path: Path):
+    import os
+
+    def env_dir(name, marker):
+        root = tmp_path / name
+        bin_dir = root / ("Scripts" if os.name == "nt" else "bin")
+        bin_dir.mkdir(parents=True)
+        if marker == "venv":
+            (root / "pyvenv.cfg").write_text("home = /usr/bin\n")
+        else:
+            (root / "conda-meta").mkdir()
+        return bin_dir
+
+    outer_venv = env_dir("outer-venv", "venv")
+    other_conda = env_dir("other-conda", "conda")
+    qgis_conda = env_dir("qgis-conda", "conda")
+    system = tmp_path / "system-bin"
+    system.mkdir()
+    linked = tmp_path / "venv-link"
+    try:
+        linked.symlink_to(outer_venv.parent, target_is_directory=True)
+        linked_bin = str(linked / outer_venv.name)
+    except (OSError, NotImplementedError):  # no symlink privilege (Windows)
+        linked_bin = str(outer_venv)
+    monkeypatch.setenv("PATH", os.pathsep.join([linked_bin, str(outer_venv), str(other_conda), str(qgis_conda), str(system)]))
+    env = QGISApplicationAdapter._environment(str(qgis_conda / "qgis_process"))
+    assert env["PATH"].split(os.pathsep) == [str(qgis_conda), str(system)]

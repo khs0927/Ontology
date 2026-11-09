@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .config import Settings
 from .db import Database
+from .dotenv import load_repo_env
 from .ingest_jobs import ingest_job
 from .parsers import SUPPORTED
 from .search import SearchRouter
@@ -28,6 +29,8 @@ def redact_dsn(dsn: str) -> str:
 
 
 def main(args=None):
+    # Before any Settings are read: fill AEC_* from the repo-root .env without overriding the shell.
+    load_repo_env()
     parser = argparse.ArgumentParser(prog="aec operational", description="AEC Operational Services CLI")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 

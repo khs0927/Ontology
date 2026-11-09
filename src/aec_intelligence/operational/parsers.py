@@ -13,7 +13,8 @@ from xml.etree import ElementTree
 
 from ..cair import Classification
 from ..classifier import (_match, classify, detail_title, drawing_category, element_mark, room_from_text, semantic_class,
-                          steel_sections, storey_from, title_block_fields)
+                          steel_sections, storey_from, storey_from_layer, storey_from_level_texts,
+                          storey_tokens, title_block_fields)
 from ..dxf import (_normalize_entity, INSUNITS, NormalizedCADEntity, block_effective_name, decode_dxf_text,
                    effective_block_name, read_dxf)
 
@@ -218,6 +219,7 @@ class _DXFSemantics:
         self.is_paper = not sheet.is_modelspace
         self.title_blocks, self.title_texts, self.members, self.sections = [], [], [], []
         self.area_texts, self.text_spaces = [], []
+        self.level_texts = []  # short texts naming a storey ('1FL', '2층'), a fallback for the layout's storey
         self.layout_objects = []
         self.layout_drawn = 0  # entities other than the paper-space VIEWPORT itself
 
@@ -281,6 +283,8 @@ class _DXFSemantics:
                 self._detail_view(obj, detail, evidence)
         if len(text) <= 40 and drawing_category(('text', text))['drawing_category'] != '기타':
             self.title_texts.append((float(props.get('height') or 0.0), text))
+        elif len(text) <= 20 and storey_tokens(text):
+            self.level_texts.append(text)
 
     def _insert_attributes(self, obj, attributes, evidence):
         room, number, area = None, None, None
@@ -447,9 +451,12 @@ class _DXFSemantics:
             if region['properties'].get('drawingTitle'):
                 obj['properties']['drawingTitle'] = region['properties']['drawingTitle']
             obj['properties']['drawing_category'] = category['drawing_category']
-            if storey and obj['type'] == 'Space':
-                obj['properties']['storey'] = storey
+            if storey and region['properties'].get('storey'):
+                # Every element drawn inside a floor-plan frame is on that frame's storey.
+                obj['storey'] = storey
                 obj['properties']['storey_source'] = 'title_block_bbox_region'
+                if obj['type'] == 'Space':
+                    obj['properties']['storey'] = storey
             self.relate(region['id'], 'depicts', obj['id'], 'AI_INFERRED',
                         method='bbox_center_inside_title_block', confidence=0.9)
 
@@ -470,7 +477,8 @@ class _DXFSemantics:
         if self.is_paper:
             candidates += [('drawing_title_text', texts[0] if texts else ''), ('layout_name', sheet.name), ('file_name', self.name)]
         else:
-            candidates += [('file_name', self.name), ('drawing_title_text', texts[0] if texts else '')]
+            candidates += [('file_name', self.name), ('drawing_title_text', texts[0] if texts else ''),
+                           ('layout_name', sheet.name)]
         view['properties'].update(drawing_category(*candidates))
         view['properties']['layout_kind'] = 'paper' if self.is_paper else 'model'
         if title:
@@ -480,15 +488,24 @@ class _DXFSemantics:
             self.relate(view['id'], 'hasTitleBlock', title['id'], 'AI_INFERRED', method='title_block_attributes')
         view['search_text'] = f"{view['search_text']} {view['properties']['drawing_category']} {fields.get('drawingTitle', '')}"
         category = view['properties']['drawing_category']
-        storey = storey_from(*candidates)
+        # A multi-sheet modelspace has one storey per frame (set above), not one for the whole layout.
+        storey = storey_from(*candidates) or ({} if sheet_regions else storey_from_level_texts(self.level_texts))
         if storey:
             view['properties'].update(storey)
             view['storey'] = storey['storey']
         for obj in self.layout_objects:
             # Elements inherit their sheet's category; detail-view candidates keep their own.
             obj['properties'].setdefault('drawing_category', category)
-            if storey and not obj.get('storey'):
+            if obj.get('storey'):
+                continue
+            # Priority: own frame (above) > own layer ('A-2F-WALL') > the sheet/file/level text of the layout.
+            own = storey_from_layer(obj['properties'].get('layer'))
+            if own:
+                obj['storey'] = own['storey']
+                obj['properties']['storey_source'] = 'layer'
+            elif storey:
                 obj['storey'] = storey['storey']
+                obj['properties'].setdefault('storey_source', storey['storey_source'])
         self.layouts.append({'view': view, 'name': sheet.name, 'paper': self.is_paper, 'drawn': self.layout_drawn,
                              'regions': sheet_regions})
         self._link_area_texts()

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import Any, Iterable
 
 from .cair import CAIRSnapshot
@@ -110,6 +112,29 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
             return ["cmd.exe", "/d", "/c", "call", QGISApplicationAdapter._cmd_quote(str(path)), *(QGISApplicationAdapter._cmd_quote(argument) for argument in arguments)]
         return [str(path), *arguments]
 
+    @staticmethod
+    def _environment() -> dict[str, str]:
+        """The caller's environment without the caller's Python.
+
+        qgis_process embeds the system Python. Run from a virtualenv, it found the venv's
+        interpreter on PATH, loaded the venv's site-packages instead of the QGIS bindings
+        ("No module named 'qgis'") and crashed with SIGSEGV. QGIS (and the OSGeo4W wrapper on
+        Windows) sets up its own Python, so the venv entries are removed, nothing else.
+        """
+        env = dict(os.environ)
+        for name in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE"):
+            env.pop(name, None)
+        if sys.prefix != sys.base_prefix:
+            venv_bins = {os.path.normcase(os.path.abspath(os.path.join(sys.prefix, sub))) for sub in ("bin", "Scripts")}
+            entries = env.get("PATH", "").split(os.pathsep)
+            env["PATH"] = os.pathsep.join(e for e in entries
+                                          if e and os.path.normcase(os.path.abspath(e)) not in venv_bins)
+        # Headless Linux/macOS (CI, containers, SSH): without a display Qt aborts before the
+        # processing framework starts. 'offscreen' is what qgis_process documents for this case.
+        if os.name != "nt" and not env.get("QT_QPA_PLATFORM") and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+            env["QT_QPA_PLATFORM"] = "offscreen"
+        return env
+
     def _run(self, executable: str, arguments: Iterable[str], timeout: int) -> subprocess.CompletedProcess[str]:
         command = self._command(executable, *tuple(arguments))
         # Passing a pre-built command line is intentional here: Python's
@@ -125,6 +150,7 @@ class QGISApplicationAdapter(ExecutableApplicationAdapter):
             errors="replace",
             timeout=timeout,
             check=False,
+            env=self._environment(),
         )
 
     def run_processing(self, executable: str | None, algorithm: str, parameters: dict[str, Any], timeout: int = 300) -> dict[str, Any]:

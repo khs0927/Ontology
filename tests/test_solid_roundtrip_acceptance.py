@@ -2,17 +2,19 @@ from pathlib import Path
 
 import pytest
 
+from _runtimes import freecad_cmd
+
 from aec_intelligence.freecad_adapter import FreeCADSceneAdapter
 from aec_intelligence.mcp_gateway import MCPGateway
 from aec_intelligence.pipeline import DXFIngestionPipeline
 
 
 @pytest.mark.skipif(
-    not Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe").is_file(),
+    not freecad_cmd().is_file(),
     reason="FreeCAD command-line runtime is not configured",
 )
 def test_optional_solid_mode_extrudes_closed_cair_polylines(tmp_path: Path):
-    freecad = Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe")
+    freecad = freecad_cmd()
     fixture = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
     repository = tmp_path / "repository"
     DXFIngestionPipeline(repository).ingest(fixture, "P-SOLID")
@@ -38,11 +40,11 @@ def test_optional_solid_mode_extrudes_closed_cair_polylines(tmp_path: Path):
 
 
 @pytest.mark.skipif(
-    not Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe").is_file(),
+    not freecad_cmd().is_file(),
     reason="FreeCAD command-line runtime is not configured",
 )
 def test_mcp_freecad_solid_mode_is_explicit(tmp_path: Path):
-    freecad = Path(r"C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe")
+    freecad = freecad_cmd()
     fixture = Path(__file__).parents[1] / "fixtures" / "simple_house.dxf"
     repository = tmp_path / "repository"
     DXFIngestionPipeline(repository).ingest(fixture, "P-MCP-SOLID")

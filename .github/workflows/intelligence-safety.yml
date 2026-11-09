@@ -151,3 +151,39 @@ jobs:
         run: |
           docker run --rm aec-intelligence-app:ci python -c "import aec_intelligence.operational.api, ezdxf, fitz, psycopg; print('ok')"
           docker run --rm aec-intelligence-app:ci python -m aec_intelligence.operational.cli --help
+
+  desktop-runtimes:
+    # Host acceptance tests against real Blender and QGIS (Ubuntu 24.04 archive packages). FreeCAD,
+    # ODA and LibreDWG are not in that archive and stay host-only (see docs/status).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Blender and QGIS
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends blender qgis qgis-providers python3-qgis
+          blender --version | head -1
+          qgis_process --version | head -1
+
+      # A venv on the system Python (the one QGIS embeds), not setup-python: this is the setup the
+      # adapter's environment scrubbing was verified against.
+      - name: Install test runtime (venv on the system Python)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev,cad,bim]"
+
+      - name: Blender and QGIS acceptance (no skip allowed)
+        shell: bash
+        env:
+          AEC_BLENDER_EXECUTABLE: /usr/bin/blender
+          AEC_QGIS_EXECUTABLE: /usr/bin/qgis_process
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q -rs tests/test_application_adapters.py \
+            "tests/test_ifc_geometry_application_acceptance.py::test_ifc_geometry_flows_to_blender_review_outputs" \
+            "tests/test_ifc_geometry_application_acceptance.py::test_dxf_cair_flows_to_blender_review_outputs" | tee runtimes.log
+          if grep -E "^SKIPPED" runtimes.log; then echo "::error::a desktop-runtime test was skipped"; exit 1; fi

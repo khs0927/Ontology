@@ -64,3 +64,32 @@ def test_qgis_runtime_probe_accepts_real_wrapper_and_geopackage_processing(tmp_p
     assert result.processing is not None
     assert result.processing["status"] == "SUCCESS"
     assert result.processing["output_exists"] is True
+
+
+def test_qgis_child_environment_drops_the_callers_virtualenv(monkeypatch, tmp_path: Path):
+    import os
+    import sys
+
+    venv = tmp_path / "venv"
+    bin_dir = venv / ("Scripts" if os.name == "nt" else "bin")
+    monkeypatch.setattr(sys, "prefix", str(venv))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "system-python"))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), str(tmp_path / "usr-bin")]))
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "src"))
+    monkeypatch.setenv("AEC_KEEP_ME", "1")
+    env = QGISApplicationAdapter._environment()
+    assert env["PATH"].split(os.pathsep) == [str(tmp_path / "usr-bin")]
+    assert "VIRTUAL_ENV" not in env and "PYTHONPATH" not in env
+    assert env["AEC_KEEP_ME"] == "1"
+
+
+def test_qgis_child_environment_goes_offscreen_without_a_display(monkeypatch):
+    import os
+
+    for name in ("QT_QPA_PLATFORM", "DISPLAY", "WAYLAND_DISPLAY"):
+        monkeypatch.delenv(name, raising=False)
+    env = QGISApplicationAdapter._environment()
+    assert env.get("QT_QPA_PLATFORM") == (None if os.name == "nt" else "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
+    assert QGISApplicationAdapter._environment()["QT_QPA_PLATFORM"] == "xcb"

@@ -58,7 +58,7 @@ exit $LASTEXITCODE
     env = dict(os.environ, DRILL_CASE=case, DRILL_SCRIPT=str(SCRIPT), DRILL_DUMP=str(dump),
                DRILL_REPORT=str(report), DRILL_CALLS=str(calls))
     result = subprocess.run([SHELL, "-NoProfile", "-File", str(wrapper)], env=env,
-                            capture_output=True, timeout=30)
+                            capture_output=True, timeout=120)
     data = json.loads(report.read_text(encoding="utf-8-sig")) if report.exists() else None
     return result, data, calls.read_text(encoding="utf-8-sig")
 

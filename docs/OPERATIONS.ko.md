@@ -257,3 +257,31 @@ docker compose up -d --no-deps --force-recreate api
 powershell -ExecutionPolicy Bypass -File C:\CODE\_ops\grokbot-firewall.ps1
 # 되돌리기: Remove-NetFirewallRule -Name GrokBot-block-18080, GrokBot-block-22217
 ```
+
+## 재부팅·절전 후 전체 재개 (`resume-all.ps1`)
+
+PC가 재부팅·절전되면 Docker Desktop과 Ollama가 자동으로 뜨지 않을 수 있습니다. 아래 한 줄로 전체 파이프라인을 순서대로 재개합니다(관리자 권한 PowerShell, 저장소 루트에서).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ops\resume-all.ps1 -Resume
+# 큐가 다 비워진 뒤 지식그래프까지 재생성하려면
+powershell -ExecutionPolicy Bypass -File scripts\ops\resume-all.ps1 -Resume -AfterDrain
+```
+
+순서(각 단계는 여러 번 실행해도 안전, 로그 `D:\AECData\logs\resume-all-yyyyMMdd.log`):
+1. Docker 엔진이 응답하지 않을 때만 Docker Desktop 시작 → `docker compose up -d db` → `aec-db` healthy 대기. 컨테이너·볼륨은 삭제하지 않습니다.
+2. Ollama API(`127.0.0.1:11434`)가 없으면 `ollama-serve.ps1`(C:\AECLocal)을 숨김 실행 후 대기.
+3. 가용 RAM 게이트: 워커 1개당 2 GB(`-GbPerWorker`). 워커 수 = min(설정값, floor(가용GB/2)); 2 GB 미만이면 최대 `-MemoryWaitMin`(60분) 동안 1분마다 재확인.
+4. `-Resume`일 때만 `STOP-WORKERS`를 `STOP-WORKERS.resumed-<시각>`으로 **이름 변경**(삭제 안 함). 없이 실행하면 게이트가 있을 때 워커 단계를 건너뜁니다.
+5. `bulk-run.ps1`과 같은 호스트 환경으로 `run-workers` 1회(큐가 빌 때까지). 예약 작업 AEC-Bulk-Workers 루프가 이미 돌고 있으면(뮤텍스 `AEC-bulk-workers`) 중복 실행하지 않습니다. 이어서 `backfill-storey --batch-size 5000`, `-AfterDrain`이면 `kg-build --force`.
+6. `ingest-stats`로 상태별 작업 수 요약.
+
+DB 비밀번호는 출력하지 않으며, G:\는 읽기만 합니다. 워커 자체도 RAM이 하한(`AEC_MIN_AVAILABLE_MB`, 기본 2048 MB) 미만이면 종료하지 않고 일시정지 후 재시도합니다(`census.worker_memory_pause_reason`).
+
+선택: 로그온 시 자동 실행 작업으로 등록하려면(기존 `\AEC\` 작업은 건드리지 않고 별도 경로 사용):
+
+```powershell
+$a = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PWD\scripts\ops\resume-all.ps1`" -Resume" -WorkingDirectory $PWD
+$t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; $t.Delay = 'PT2M'
+Register-ScheduledTask -TaskPath '\AEC-Optional\' -TaskName 'AEC-Resume-All' -Action $a -Trigger $t -RunLevel Highest
+```
